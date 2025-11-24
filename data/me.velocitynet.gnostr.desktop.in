@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=gnostr
+Exec=gnostr
+Icon=me.velocitynet.gnostr
+Terminal=false
+Type=Application
+Categories=Utility;
+Keywords=GTK;
+StartupNotify=true
+DBusActivatable=true

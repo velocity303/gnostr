@@ -1,0 +1,8 @@
+# List of source files containing translatable strings.
+# Please keep this file sorted alphabetically.
+data/me.velocitynet.gnostr.desktop.in
+data/me.velocitynet.gnostr.metainfo.xml.in
+data/me.velocitynet.gnostr.gschema.xml
+src/main.py
+src/window.py
+src/window.ui
