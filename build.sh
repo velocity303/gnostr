@@ -28,6 +28,7 @@ python3 -c "import websocket; print('✅ Websocket imported successfully from:',
 echo "==> 3. INSTALLATION: Copying App Files..."
 mkdir -p /app/bin
 cp -v src/main.py /app/bin/gnostr
+cp -v src/key_manager.py /app/bin/key_manager.py
 chmod +x /app/bin/gnostr
 
 echo "==> Build Script Complete."
