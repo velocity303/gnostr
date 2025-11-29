@@ -150,3 +150,15 @@ def is_valid_hex_key(key_str):
         return True
     except ValueError:
         return False
+
+def extract_followed_pubkeys(event_json):
+    """
+    Parses a Kind 3 event (Contact List) and returns a list of hex pubkeys.
+    """
+    tags = event_json.get("tags", [])
+    followed = []
+    for tag in tags:
+        if len(tag) >= 2 and tag[0] == "p":
+            # Tag format: ["p", "pubkey_hex", "relay_url", "petname"]
+            followed.append(tag[1])
+    return followed
