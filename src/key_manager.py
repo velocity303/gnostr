@@ -1,12 +1,13 @@
 import gi
-from gi.repository import Libsecret, GLib
+# FIX: Namespace is 'Secret', not 'Libsecret'
+gi.require_version('Secret', '1')
+from gi.repository import Secret, GLib
 
 # Schema defines what "kind" of secret this is.
-# This helps the Keyring organize it.
-SECRET_SCHEMA = Libsecret.Schema.new("me.velocitynet.Gnostr.Schema",
-    Libsecret.SchemaFlags.NONE,
+SECRET_SCHEMA = Secret.Schema.new("me.velocitynet.Gnostr.Schema",
+    Secret.SchemaFlags.NONE,
     {
-        "application": Libsecret.SchemaAttributeType.STRING,
+        "application": Secret.SchemaAttributeType.STRING,
     }
 )
 
@@ -16,14 +17,12 @@ class KeyManager:
         """Saves the private key (nsec) securely to the keyring."""
         attributes = {"application": "gnostr"}
 
-        # This is a synchronous call for simplicity, but in a large app
-        # you might want the async version.
         try:
-            Libsecret.password_store_sync(
+            Secret.password_store_sync(
                 SECRET_SCHEMA,
                 attributes,
-                Libsecret.COLLECTION_DEFAULT,
-                "Gnostr Private Key", # Label visible in "Passwords and Keys" app
+                Secret.COLLECTION_DEFAULT,
+                "Gnostr Private Key",
                 nsec,
                 None
             )
@@ -39,7 +38,7 @@ class KeyManager:
         attributes = {"application": "gnostr"}
 
         try:
-            nsec = Libsecret.password_lookup_sync(
+            nsec = Secret.password_lookup_sync(
                 SECRET_SCHEMA,
                 attributes,
                 None
@@ -54,7 +53,7 @@ class KeyManager:
         """Removes the key (Log out)."""
         attributes = {"application": "gnostr"}
         try:
-            Libsecret.password_clear_sync(
+            Secret.password_clear_sync(
                 SECRET_SCHEMA,
                 attributes,
                 None
