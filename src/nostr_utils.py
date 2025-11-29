@@ -1,39 +1,17 @@
-# src/nostr_utils.py
-# Pure Python implementation of Bech32 (NIP-19)
 import binascii
+import time
+import json
 import hashlib
+
 try:
     import ecdsa
 except ImportError:
     ecdsa = None
 
-def get_public_key(priv_key_hex):
-    """
-    Derives the 32-byte public key (hex) from a private key (hex)
-    using the secp256k1 curve (Nostr standard).
-    """
-    if not ecdsa:
-        print("Error: ecdsa library not found. Cannot derive public key.")
-        return None
-
-    try:
-        sk = ecdsa.SigningKey.from_string(bytes.fromhex(priv_key_hex), curve=ecdsa.SECP256k1)
-        vk = sk.verifying_key
-        # Compressed key is 33 bytes (0x02/0x03 + 32 bytes x)
-        # Nostr uses the 32-byte x-coordinate (Schnorr-like)
-        # For pure ECDSA lib, we usually take the X coordinate directly.
-        # But standard compressed format is easiest to work with:
-        compressed = vk.to_string("compressed")
-        # Discard the first byte (0x02 or 0x03) to get the 32-byte X-coord
-        return compressed[1:].hex()
-    except Exception as e:
-        print(f"Key derivation error: {e}")
-        return None
-
 CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
 
+# --- Bech32 Implementation (Keep existing code) ---
 def _bech32_polymod(values):
-    """Internal function that computes the Bech32 checksum."""
     generator = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3]
     chk = 1
     for value in values:
@@ -44,26 +22,21 @@ def _bech32_polymod(values):
     return chk
 
 def _bech32_hrp_expand(hrp):
-    """Expand the HRP into values for checksum computation."""
     return [ord(x) >> 5 for x in hrp] + [0] + [ord(x) & 31 for x in hrp]
 
 def bech32_verify_checksum(hrp, data):
-    """Verify a checksum given HRP and data."""
     return _bech32_polymod(_bech32_hrp_expand(hrp) + data) == 1
 
 def bech32_create_checksum(hrp, data):
-    """Compute the checksum values given HRP and data."""
     values = _bech32_hrp_expand(hrp) + data
     polymod = _bech32_polymod(values + [0, 0, 0, 0, 0, 0]) ^ 1
     return [(polymod >> 5 * (5 - i)) & 31 for i in range(6)]
 
 def bech32_encode(hrp, data):
-    """Compute a Bech32 string given HRP and data values."""
     combined = data + bech32_create_checksum(hrp, data)
     return hrp + '1' + ''.join([CHARSET[d] for d in combined])
 
 def bech32_decode(bech):
-    """Validate a Bech32 string, and determine HRP and data."""
     if ((any(ord(x) < 33 or ord(x) > 126 for x in bech)) or
             (bech.lower() != bech and bech.upper() != bech)):
         return None, None
@@ -80,7 +53,6 @@ def bech32_decode(bech):
     return hrp, data[:-6]
 
 def convertbits(data, frombits, tobits, pad=True):
-    """General power-of-2 base conversion."""
     acc = 0
     bits = 0
     ret = []
@@ -101,64 +73,103 @@ def convertbits(data, frombits, tobits, pad=True):
         return None
     return ret
 
-# --- Public Helper Functions ---
+# --- Key Utils ---
 
 def nsec_to_hex(nsec):
-    """
-    Decodes an 'nsec1...' string into a raw 64-character hex string.
-    Returns None if invalid.
-    """
-    if not nsec.startswith("nsec"):
-        return None
-
+    if not nsec.startswith("nsec"): return None
     hrp, data = bech32_decode(nsec)
-    if hrp != "nsec" or data is None:
-        return None
-
+    if hrp != "nsec" or data is None: return None
     decoded = convertbits(data, 5, 8, False)
-    if decoded is None:
-        return None
-
+    if decoded is None: return None
     return bytes(decoded).hex()
 
 def hex_to_nsec(hex_key):
-    """
-    Encodes a 64-character hex string into 'nsec1...' format.
-    Returns None if invalid.
-    """
-    if len(hex_key) != 64:
-        return None
-
+    if len(hex_key) != 64: return None
     try:
         data = bytes.fromhex(hex_key)
-    except ValueError:
-        return None
-
-    # Convert 8-bit bytes to 5-bit groups
+    except ValueError: return None
     five_bit_data = convertbits(data, 8, 5, True)
-    if five_bit_data is None:
-        return None
-
+    if five_bit_data is None: return None
     return bech32_encode("nsec", five_bit_data)
 
 def is_valid_hex_key(key_str):
-    """Simple check if a string is a valid 64-char hex key."""
-    if len(key_str) != 64:
-        return False
+    if len(key_str) != 64: return False
     try:
         int(key_str, 16)
         return True
-    except ValueError:
-        return False
+    except ValueError: return False
+
+def get_public_key(priv_key_hex):
+    if not ecdsa: return None
+    try:
+        sk = ecdsa.SigningKey.from_string(bytes.fromhex(priv_key_hex), curve=ecdsa.SECP256k1)
+        vk = sk.verifying_key
+        compressed = vk.to_string("compressed")
+        return compressed[1:].hex()
+    except Exception as e:
+        print(f"Key derivation error: {e}")
+        return None
 
 def extract_followed_pubkeys(event_json):
-    """
-    Parses a Kind 3 event (Contact List) and returns a list of hex pubkeys.
-    """
     tags = event_json.get("tags", [])
     followed = []
     for tag in tags:
         if len(tag) >= 2 and tag[0] == "p":
-            # Tag format: ["p", "pubkey_hex", "relay_url", "petname"]
             followed.append(tag[1])
     return followed
+
+# --- NEW: Signing Logic ---
+
+def compute_event_id(event):
+    """
+    Calculates the sha256 hash ID of a Nostr event.
+    Serialized form: [0, pubkey, created_at, kind, tags, content]
+    """
+    data = [
+        0,
+        event['pubkey'],
+        event['created_at'],
+        event['kind'],
+        event['tags'],
+        event['content']
+    ]
+    json_str = json.dumps(data, separators=(',', ':'), ensure_ascii=False)
+    return hashlib.sha256(json_str.encode('utf-8')).hexdigest()
+
+def sign_event(event, priv_key_hex):
+    """
+    Computes ID and Signs the event. Returns the full event object with 'id' and 'sig'.
+    """
+    if not ecdsa:
+        print("Error: ECDSA not available for signing.")
+        return None
+
+    try:
+        # 1. Compute ID
+        event['id'] = compute_event_id(event)
+
+        # 2. Sign
+        sk = ecdsa.SigningKey.from_string(bytes.fromhex(priv_key_hex), curve=ecdsa.SECP256k1)
+        # Sign the binary bytes of the ID
+        sig_bytes = sk.sign_digest(bytes.fromhex(event['id']), sigencode=ecdsa.util.sigencode_schnorr)
+        event['sig'] = sig_bytes.hex()
+
+        return event
+    except Exception as e:
+        print(f"Signing Error: {e}")
+        return None
+
+def is_nostr_reference(text):
+    """
+    Checks if text starts with nostr:nevent, nostr:nprofile, nostr:note, or nostr:npub
+    """
+    prefixes = ("nostr:nevent", "nostr:nprofile", "nostr:note", "nostr:npub")
+    return text.startswith(prefixes)
+
+def extract_id_from_nostr_uri(uri):
+    """
+    Extracts the bech32 part from nostr:nevent1...
+    """
+    if uri.startswith("nostr:"):
+        return uri.split(":")[1]
+    return uri
