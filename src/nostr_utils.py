@@ -1,6 +1,34 @@
 # src/nostr_utils.py
 # Pure Python implementation of Bech32 (NIP-19)
 import binascii
+import hashlib
+try:
+    import ecdsa
+except ImportError:
+    ecdsa = None
+
+def get_public_key(priv_key_hex):
+    """
+    Derives the 32-byte public key (hex) from a private key (hex)
+    using the secp256k1 curve (Nostr standard).
+    """
+    if not ecdsa:
+        print("Error: ecdsa library not found. Cannot derive public key.")
+        return None
+
+    try:
+        sk = ecdsa.SigningKey.from_string(bytes.fromhex(priv_key_hex), curve=ecdsa.SECP256k1)
+        vk = sk.verifying_key
+        # Compressed key is 33 bytes (0x02/0x03 + 32 bytes x)
+        # Nostr uses the 32-byte x-coordinate (Schnorr-like)
+        # For pure ECDSA lib, we usually take the X coordinate directly.
+        # But standard compressed format is easiest to work with:
+        compressed = vk.to_string("compressed")
+        # Discard the first byte (0x02 or 0x03) to get the 32-byte X-coord
+        return compressed[1:].hex()
+    except Exception as e:
+        print(f"Key derivation error: {e}")
+        return None
 
 CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
 
