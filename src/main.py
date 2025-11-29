@@ -6,7 +6,7 @@ import time
 import urllib.request
 import os
 import re
-import html # Required for unescaping HTML entities
+import html
 import gi
 from key_manager import KeyManager
 import nostr_utils
@@ -22,7 +22,6 @@ except ImportError:
     print("❌ Websocket-client not found.")
     websocket = None
 
-# Default relays
 DEFAULT_RELAYS = [
     "wss://relay.damus.io",
     "wss://relay.nostr.band",
@@ -30,264 +29,152 @@ DEFAULT_RELAYS = [
     "wss://relay.primal.net"
 ]
 
-# --- Helper: Content Renderer ---
 class ContentRenderer:
-    # Regex to find URLs AND Nostr URIs
-    # Captures http(s) links OR nostr: links
     LINK_REGEX = re.compile(r'((?:https?://|nostr:)[^\s]+)')
-
     IMAGE_EXTS = ('.jpg', '.jpeg', '.png', '.gif', '.webp')
     VIDEO_EXTS = ('.mp4', '.mov', '.webm')
 
     @staticmethod
     def render(content):
-        """
-        Parses content and returns a Gtk.Box containing
-        clickable text labels, rendered images, and nostr cards.
-        """
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        if not content: return box
 
-        # 1. FIX: Unescape HTML entities first (e.g. &quot; -> ")
-        # This prevents double-escaping when we later call markup_escape_text
         clean_content = html.unescape(content)
-
-        # Split by URL/URI
         parts = ContentRenderer.LINK_REGEX.split(clean_content)
-
         current_text_buffer = []
 
         for part in parts:
             if not part: continue
-
             if ContentRenderer.LINK_REGEX.match(part):
-                # If we have buffered text, flush it first
                 if current_text_buffer:
                     ContentRenderer._add_text(box, "".join(current_text_buffer))
                     current_text_buffer = []
-
                 lower = part.lower()
+                if part.startswith("nostr:"): ContentRenderer._add_nostr_link(box, part)
+                elif lower.endswith(ContentRenderer.IMAGE_EXTS): ContentRenderer._add_image(box, part)
+                elif lower.endswith(ContentRenderer.VIDEO_EXTS): ContentRenderer._add_link_button(box, part, "▶ Watch Video")
+                else: ContentRenderer._add_link(box, part)
+            else: current_text_buffer.append(part)
 
-                # Case A: Nostr Reference (nevent, nprofile, etc.)
-                if part.startswith("nostr:"):
-                    # Render inline button for reference
-                    ContentRenderer._add_nostr_link(box, part)
-
-                # Case B: Image
-                elif lower.endswith(ContentRenderer.IMAGE_EXTS):
-                    ContentRenderer._add_image(box, part)
-
-                # Case C: Video (Link for now)
-                elif lower.endswith(ContentRenderer.VIDEO_EXTS):
-                    ContentRenderer._add_link_button(box, part, label="▶ Watch Video")
-
-                # Case D: Standard Link
-                else:
-                    ContentRenderer._add_link(box, part)
-            else:
-                # Buffer regular text to merge small chunks
-                current_text_buffer.append(part)
-
-        # Flush remaining text
-        if current_text_buffer:
-            ContentRenderer._add_text(box, "".join(current_text_buffer))
-
+        if current_text_buffer: ContentRenderer._add_text(box, "".join(current_text_buffer))
         return box
 
     @staticmethod
     def _add_text(box, text):
-        # Escape text for Pango markup
-        safe_text = GLib.markup_escape_text(text)
-        label = Gtk.Label(label=safe_text, xalign=0, wrap=True, selectable=True)
-        label.set_use_markup(False) # We manually escaped, but using set_label handles plain text
-        # actually for mixed links we want markup usually, but here we split components.
-        # So plain label is safer for the text chunks.
+        label = Gtk.Label(label=GLib.markup_escape_text(text), xalign=0, wrap=True, selectable=True)
+        label.set_use_markup(False)
         box.append(label)
 
     @staticmethod
     def _add_link(box, url, label=None):
-        display_text = label if label else url
-        if len(display_text) > 50:
-            display_text = display_text[:47] + "..."
-
-        safe_url = GLib.markup_escape_text(url)
-        safe_text = GLib.markup_escape_text(display_text)
-
-        # We use a LinkButton for clearer interactivity than a markup label
-        btn = Gtk.LinkButton(uri=url, label=display_text)
-        btn.set_halign(Gtk.Align.START)
-        # Remove the internal alignment padding to make it look more like inline text
-        btn.set_margin_top(0)
-        btn.set_margin_bottom(0)
-        box.append(btn)
+        disp = label if label else (url[:47] + "..." if len(url)>50 else url)
+        markup = f'<a href="{GLib.markup_escape_text(url)}">{GLib.markup_escape_text(disp)}</a>'
+        lbl = Gtk.Label(label=markup, xalign=0, wrap=True, selectable=True, use_markup=True)
+        box.append(lbl)
 
     @staticmethod
     def _add_link_button(box, url, label):
-        btn = Gtk.LinkButton(uri=url, label=label)
-        btn.set_halign(Gtk.Align.START)
+        btn = Gtk.LinkButton(uri=url, label=label, halign=Gtk.Align.START)
         box.append(btn)
 
     @staticmethod
     def _add_image(box, url):
-        img_box = Gtk.Box(halign=Gtk.Align.START)
-        img_box.set_margin_top(6)
-        img_box.set_margin_bottom(6)
-
-        spinner = Gtk.Spinner()
-        spinner.start()
-        img_box.append(spinner)
-        box.append(img_box)
+        img_box = Gtk.Box(halign=Gtk.Align.START, margin_top=6, margin_bottom=6)
+        spinner = Gtk.Spinner(); spinner.start(); img_box.append(spinner); box.append(img_box)
         ImageLoader.load_image_into_widget(url, img_box, spinner)
 
     @staticmethod
     def _add_nostr_link(box, uri):
-        # Render a small, distinct button for Nostr references
-        bech32_id = uri.split(":")[1] if ":" in uri else uri
-        short_id = bech32_id[:10] + "..." + bech32_id[-4:]
+        try:
+            parts = uri.split(":")
+            if len(parts) > 1:
+                bech32_id = parts[1]
+                short = bech32_id[:10] + "..."
+                btn = Gtk.LinkButton(uri=f"https://njump.me/{bech32_id}", label=f"Ref: {short}", halign=Gtk.Align.START)
+                box.append(btn)
+        except: pass
 
-        # Web viewer fallback
-        web_url = f"https://njump.me/{bech32_id}"
-
-        label = "Reference"
-        icon_name = "text-x-generic-symbolic"
-
-        if "nevent" in uri or "note" in uri:
-            label = f"Event: {short_id}"
-            icon_name = "document-open-symbolic"
-        elif "nprofile" in uri or "npub" in uri:
-            label = f"Profile: {short_id}"
-            icon_name = "avatar-default-symbolic"
-
-        btn = Gtk.LinkButton(uri=web_url, label=label)
-        btn.set_halign(Gtk.Align.START)
-        # Add a custom CSS class if you wanted styling, but standard link button is fine
-        box.append(btn)
-
-# --- Helper: Image Loader ---
 class ImageLoader:
     @staticmethod
-    def load_avatar(url, callback):
-        ImageLoader._fetch(url, callback, size=(64,64), circular=True)
-
+    def load_avatar(url, callback): ImageLoader._fetch(url, callback, size=(64,64))
     @staticmethod
     def load_image_into_widget(url, container, spinner):
         def on_ready(texture):
             if spinner: container.remove(spinner)
-
             if texture:
-                picture = Gtk.Picture.new_for_paintable(texture)
-                picture.set_can_shrink(True)
-                picture.set_content_fit(Gtk.ContentFit.SCALE_DOWN)
-                # Cap height so huge images don't push content off screen
-                # Note: GTK4 doesn't have set_height_request on Picture directly in same way
-                # Wrapping in a scrolled window or clamp is better, but this works:
-                picture.set_halign(Gtk.Align.START)
-                container.append(picture)
-            else:
-                icon = Gtk.Image.new_from_icon_name("image-missing-symbolic")
-                icon.set_pixel_size(48)
-                container.append(icon)
-
-        ImageLoader._fetch(url, on_ready, size=None)
-
+                p = Gtk.Picture.new_for_paintable(texture)
+                p.set_can_shrink(True); p.set_content_fit(Gtk.ContentFit.SCALE_DOWN); p.set_halign(Gtk.Align.START)
+                container.append(p)
+            else: container.append(Gtk.Image.new_from_icon_name("image-missing-symbolic"))
+        ImageLoader._fetch(url, on_ready)
     @staticmethod
-    def _fetch(url, callback, size=None, circular=False):
-        def _bg_task():
+    def _fetch(url, callback, size=None):
+        def _bg():
             try:
-                if not url or not url.startswith("http"):
-                    GLib.idle_add(callback, None)
-                    return
-
+                if not url or not url.startswith("http"): GLib.idle_add(callback, None); return
                 req = urllib.request.Request(url, headers={'User-Agent': 'Gnostr/1.0'})
-                with urllib.request.urlopen(req, timeout=10) as response:
-                    data = response.read()
-
-                loader = GdkPixbuf.PixbufLoader()
-                loader.write(data)
-                loader.close()
-                pixbuf = loader.get_pixbuf()
-
-                if not pixbuf:
-                    GLib.idle_add(callback, None)
-                    return
-
-                if size:
-                    w, h = size
-                    pixbuf = pixbuf.scale_simple(w, h, GdkPixbuf.InterpType.BILINEAR)
-
-                texture = Gdk.Texture.new_for_pixbuf(pixbuf)
-                GLib.idle_add(callback, texture)
-            except Exception:
-                GLib.idle_add(callback, None)
-
-        threading.Thread(target=_bg_task, daemon=True).start()
+                with urllib.request.urlopen(req, timeout=10) as r: data = r.read()
+                loader = GdkPixbuf.PixbufLoader(); loader.write(data); loader.close()
+                pix = loader.get_pixbuf()
+                if not pix: GLib.idle_add(callback, None); return
+                if size: pix = pix.scale_simple(size[0], size[1], GdkPixbuf.InterpType.BILINEAR)
+                GLib.idle_add(callback, Gdk.Texture.new_for_pixbuf(pix))
+            except: GLib.idle_add(callback, None)
+        threading.Thread(target=_bg, daemon=True).start()
 
 class NostrRelay(GObject.Object):
-    def __init__(self, url, on_event_callback, on_status_callback):
+    def __init__(self, url, on_event, on_status):
         super().__init__()
         self.url = url
+        self.on_event = on_event
+        self.on_status = on_status
         self.ws = None
-        self.on_event = on_event_callback
-        self.on_status = on_status_callback
         self.is_connected = False
-        self.current_sub_id = None
+        self.sub_id = None
 
     def start(self):
-        def on_message(ws, message):
+        def on_msg(ws, m):
             try:
-                data = json.loads(message)
-                if data[0] == "EVENT": self.on_event(data[2])
-                elif data[0] == "EOSE": pass
+                d = json.loads(m)
+                if d[0] == "EVENT": self.on_event(d[2])
             except: pass
-
-        def on_open(ws):
-            self.is_connected = True
-            GLib.idle_add(self.on_status, self.url, "Connected")
-
-        def on_error(ws, error):
-            self.is_connected = False
-            GLib.idle_add(self.on_status, self.url, "Error")
-
-        def on_close(ws, c, m):
-            self.is_connected = False
-            GLib.idle_add(self.on_status, self.url, "Disconnected")
-
-        self.ws = websocket.WebSocketApp(self.url, on_open=on_open, on_message=on_message, on_error=on_error, on_close=on_close)
-        wst = threading.Thread(target=self.ws.run_forever)
-        wst.daemon = True
-        wst.start()
+        def on_open(ws): self.is_connected=True; GLib.idle_add(self.on_status, self.url, "Connected")
+        def on_err(ws, e): self.is_connected=False; GLib.idle_add(self.on_status, self.url, "Error")
+        def on_close(ws, c, m): self.is_connected=False; GLib.idle_add(self.on_status, self.url, "Disconnected")
+        self.ws = websocket.WebSocketApp(self.url, on_open=on_open, on_message=on_msg, on_error=on_err, on_close=on_close)
+        threading.Thread(target=self.ws.run_forever, daemon=True).start()
 
     def subscribe(self, sub_id, filters):
         if not self.is_connected: return
-        if self.current_sub_id != sub_id:
-            try: self.ws.send(json.dumps(["CLOSE", self.current_sub_id]))
+        if self.sub_id != sub_id:
+            try: self.ws.send(json.dumps(["CLOSE", self.sub_id]))
             except: pass
-        self.current_sub_id = sub_id
+        self.sub_id = sub_id
         try: self.ws.send(json.dumps(["REQ", sub_id] + (filters if isinstance(filters, list) else [filters])))
         except: pass
 
     def request_once(self, sub_id, filters):
+        # FIX: Corrected syntax "if not self.is_connected"
         if not self.is_connected: return
         try: self.ws.send(json.dumps(["REQ", sub_id] + (filters if isinstance(filters, list) else [filters])))
         except: pass
 
     def publish(self, event_json):
         if not self.is_connected: return
-        try:
-            msg = json.dumps(["EVENT", event_json])
-            self.ws.send(msg)
-        except Exception as e:
-            print(f"Publish Error {self.url}: {e}")
+        try: self.ws.send(json.dumps(["EVENT", event_json]))
+        except: pass
 
     def close(self):
         if self.ws: self.ws.close()
 
 class NostrClient(GObject.Object):
     __gsignals__ = {
-        'event-received': (GObject.SignalFlags.RUN_FIRST, None, (str, str)),
+        'event-received': (GObject.SignalFlags.RUN_FIRST, None, (str, str, str)), # id, pubkey, content
         'profile-updated': (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         'contacts-updated': (GObject.SignalFlags.RUN_FIRST, None, ()),
         'status-changed': (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         'relay-list-updated': (GObject.SignalFlags.RUN_FIRST, None, ()),
+        'metrics-updated': (GObject.SignalFlags.RUN_FIRST, None, (str, int, int, int)),
     }
 
     def __init__(self, db):
@@ -299,9 +186,8 @@ class NostrClient(GObject.Object):
         self.my_pubkey = None
         self.my_privkey = None
         self.requested_profiles = set()
-
-        self.config_dir = os.path.join(GLib.get_user_config_dir(), "gnostr")
-        self.config_file = os.path.join(self.config_dir, "config.json")
+        self.metrics = {} # eid -> {likes, reposts, replies}
+        self.config_file = os.path.join(GLib.get_user_config_dir(), "gnostr", "config.json")
         self.load_config()
 
     def load_config(self):
@@ -309,131 +195,117 @@ class NostrClient(GObject.Object):
             try:
                 with open(self.config_file, 'r') as f:
                     data = json.load(f)
-                    saved = data.get("relays")
-                    if saved: self.relay_urls = set(saved)
+                    if data.get("relays"): self.relay_urls = set(data["relays"])
             except: pass
 
     def save_config(self):
-        if not os.path.exists(self.config_dir):
-            try: os.makedirs(self.config_dir, exist_ok=True)
-            except: return
+        d = os.path.dirname(self.config_file)
+        if not os.path.exists(d): os.makedirs(d, exist_ok=True)
         try:
-            with open(self.config_file, 'w') as f: json.dump({ "relays": list(self.relay_urls) }, f)
+            with open(self.config_file, 'w') as f:
+                json.dump({"relays": list(self.relay_urls)}, f)
         except: pass
 
-    def set_keys(self, pubkey, privkey=None):
-        self.my_pubkey = pubkey
-        self.my_privkey = privkey
+    def set_keys(self, pub, priv): self.my_pubkey = pub; self.my_privkey = priv
 
     def connect_all(self):
-        if not websocket: return
-        for url in list(self.relay_urls):
-            self.add_relay_connection(url)
+        for url in list(self.relay_urls): self.add_relay_connection(url)
 
     def add_relay_connection(self, url):
         if url in self.active_relays: return
-        relay = NostrRelay(url, self._handle_event, self._handle_status)
-        relay.start()
-        self.active_relays[url] = relay
+        r = NostrRelay(url, self._handle_event, self._handle_status)
+        r.start()
+        self.active_relays[url] = r
 
-    def add_relay(self, url, sync=True):
+    def add_relay(self, url):
         if url not in self.relay_urls:
-            self.relay_urls.add(url)
-            self.save_config()
-            self.add_relay_connection(url)
-            self.emit('relay-list-updated')
-            if sync and self.my_privkey: self.publish_relay_list()
+            self.relay_urls.add(url); self.save_config()
+            self.add_relay_connection(url); self.emit('relay-list-updated')
+            self.publish_relay_list()
 
     def remove_relay(self, url):
         if url in self.relay_urls:
-            self.relay_urls.remove(url)
-            self.save_config()
-            if url in self.active_relays:
-                self.active_relays[url].close()
-                del self.active_relays[url]
-            self.emit('relay-list-updated')
-            if self.my_privkey: self.publish_relay_list()
+            self.relay_urls.remove(url); self.save_config()
+            if url in self.active_relays: self.active_relays[url].close(); del self.active_relays[url]
+            self.emit('relay-list-updated'); self.publish_relay_list()
 
     def fetch_user_relays(self):
         if not self.my_pubkey: return
         filter = {"kinds": [10002], "authors": [self.my_pubkey], "limit": 1}
-        sub_id = f"relays_{self.my_pubkey[:8]}"
-        for relay in self.active_relays.values():
-            relay.request_once(sub_id, filter)
+        for r in self.active_relays.values(): r.request_once(f"relays_{self.my_pubkey[:8]}", filter)
 
     def publish_relay_list(self):
-        if not self.my_privkey or not self.my_pubkey: return
-        event = {
-            "pubkey": self.my_pubkey,
-            "created_at": int(time.time()),
-            "kind": 10002,
-            "tags": [['r', url] for url in self.relay_urls],
-            "content": ""
-        }
-        signed_event = nostr_utils.sign_event(event, self.my_privkey)
-        if signed_event:
-            for relay in self.active_relays.values():
-                relay.publish(signed_event)
+        if not self.my_privkey: return
+        event = {"pubkey": self.my_pubkey, "created_at": int(time.time()), "kind": 10002,
+                 "tags": [['r', u] for u in self.relay_urls], "content": ""}
+        signed = nostr_utils.sign_event(event, self.my_privkey)
+        if signed:
+            for r in self.active_relays.values(): r.publish(signed)
 
-    def _handle_event(self, event_data):
-        eid = event_data.get('id')
+    def get_ref_id(self, tags):
+        for t in tags:
+            if t[0] == 'e': return t[1]
+        return None
+
+    def _handle_event(self, ev):
+        eid = ev.get('id'); kind = ev['kind']; pubkey = ev['pubkey']
+
+        target = self.get_ref_id(ev.get('tags', []))
+        if target:
+            if target not in self.metrics: self.metrics[target] = {'likes':0,'reposts':0,'replies':0}
+            updated = False
+            if kind == 7: self.metrics[target]['likes']+=1; updated=True
+            elif kind == 6: self.metrics[target]['reposts']+=1; updated=True
+            elif kind == 1: self.metrics[target]['replies']+=1; updated=True
+            if updated:
+                m = self.metrics[target]
+                GLib.idle_add(self.emit, 'metrics-updated', target, m['likes'], m['reposts'], m['replies'])
+
         if eid in self.seen_events: return
         self.seen_events.add(eid)
-
-        kind = event_data['kind']
-        pubkey = event_data['pubkey']
-        self.db.save_event(event_data)
+        self.db.save_event(ev)
 
         if kind == 0:
-            self.db.save_profile(pubkey, event_data['content'], event_data['created_at'])
+            self.db.save_profile(pubkey, ev['content'], ev['created_at'])
             GLib.idle_add(self.emit, 'profile-updated', pubkey)
         elif kind == 3:
-            if self.my_pubkey and pubkey == self.my_pubkey:
-                contacts = nostr_utils.extract_followed_pubkeys(event_data)
-                self.db.save_contacts(self.my_pubkey, contacts)
+            if pubkey == self.my_pubkey:
+                c = nostr_utils.extract_followed_pubkeys(ev)
+                self.db.save_contacts(self.my_pubkey, c)
                 GLib.idle_add(self.emit, 'contacts-updated')
         elif kind == 10002:
-            if self.my_pubkey and pubkey == self.my_pubkey:
-                new_relays = []
-                for tag in event_data.get('tags', []):
-                    if tag[0] == 'r': new_relays.append(tag[1])
-                if new_relays:
-                    changed = False
-                    for r in new_relays:
+            if pubkey == self.my_pubkey:
+                nr = [t[1] for t in ev.get('tags', []) if t[0]=='r']
+                if nr:
+                    ch = False
+                    for r in nr:
                         if r.startswith("ws") and r not in self.relay_urls:
-                            self.relay_urls.add(r)
-                            self.add_relay_connection(r)
-                            changed = True
-                    if changed:
-                        self.save_config()
-                        GLib.idle_add(self.emit, 'relay-list-updated')
+                            self.relay_urls.add(r); self.add_relay_connection(r); ch=True
+                    if ch: self.save_config(); GLib.idle_add(self.emit, 'relay-list-updated')
         elif kind == 1:
-            content = event_data.get('content')
-            GLib.idle_add(self.emit, 'event-received', pubkey, content)
+            GLib.idle_add(self.emit, 'event-received', eid, pubkey, ev['content'])
 
-    def _handle_status(self, url, status):
-        self.emit('status-changed', f"{status}")
+    def _handle_status(self, url, status): self.emit('status-changed', status)
 
     def subscribe(self, sub_id, filters):
-        for relay in self.active_relays.values():
-            relay.subscribe(sub_id, filters)
+        for r in self.active_relays.values(): r.subscribe(sub_id, filters)
 
     def fetch_contacts(self):
-        if self.my_pubkey:
-            filter = {"kinds": [3], "authors": [self.my_pubkey], "limit": 1}
-            self.subscribe("sub_contacts", filter)
+        if self.my_pubkey: self.subscribe("sub_contacts", {"kinds": [3], "authors": [self.my_pubkey], "limit": 1})
 
     def fetch_profile(self, pubkey):
         if pubkey in self.requested_profiles: return
         self.requested_profiles.add(pubkey)
-        filter = {"kinds": [0], "authors": [pubkey], "limit": 1}
-        sub_id = f"meta_{pubkey[:8]}"
-        for relay in self.active_relays.values():
-            relay.request_once(sub_id, filter)
+        for r in self.active_relays.values(): r.request_once(f"meta_{pubkey[:8]}", {"kinds": [0], "authors": [pubkey], "limit": 1})
+
+    def fetch_thread(self, root_id):
+        f1 = {"ids": [root_id]}
+        f2 = {"kinds": [1], "#e": [root_id], "limit": 50}
+        f3 = {"kinds": [6, 7], "#e": [root_id], "limit": 100}
+        self.subscribe(f"thread_{root_id}", [f1, f2, f3])
 
     def close(self):
-        for relay in self.active_relays.values():
-            relay.close()
+        for r in self.active_relays.values(): r.close()
 
 class RelayPreferencesWindow(Adw.PreferencesWindow):
     def __init__(self, nostr_client, parent_window):
@@ -443,29 +315,19 @@ class RelayPreferencesWindow(Adw.PreferencesWindow):
         self.set_title("Relay Management")
         self.client = nostr_client
         self.relay_rows = []
-
         page = Adw.PreferencesPage()
         self.add(page)
-
         import_group = Adw.PreferencesGroup(title="Sync")
-        import_group.set_description("Manage synchronization with your NIP-65 relay list.")
         page.add(import_group)
-
         import_row = Adw.ActionRow(title="Import from Profile")
-        import_row.set_subtitle("Merge relays defined in your Nostr profile")
         import_btn = Gtk.Button(label="Import")
         import_btn.add_css_class("suggested-action")
         import_btn.connect("clicked", self.on_import_clicked)
-        if not self.client.my_pubkey:
-            import_btn.set_sensitive(False)
-            import_row.set_subtitle("Login required to import relays")
+        if not self.client.my_pubkey: import_btn.set_sensitive(False)
         import_row.add_suffix(import_btn)
         import_group.add(import_row)
-
         self.relay_group = Adw.PreferencesGroup(title="Active Relays")
-        self.relay_group.set_description("Changes made here are automatically saved to your profile.")
         page.add(self.relay_group)
-
         add_row = Adw.ActionRow(title="Add New Relay")
         self.new_relay_entry = Gtk.Entry(placeholder_text="wss://...")
         add_btn = Gtk.Button(icon_name="list-add-symbolic")
@@ -473,14 +335,12 @@ class RelayPreferencesWindow(Adw.PreferencesWindow):
         add_row.add_suffix(self.new_relay_entry)
         add_row.add_suffix(add_btn)
         self.relay_group.add(add_row)
-
         self.refresh_list()
         self.client.connect('relay-list-updated', self.refresh_list)
 
     def on_import_clicked(self, btn):
         self.client.fetch_user_relays()
-        toast = Adw.Toast(title=f"Requesting Relay List...")
-        self.add_toast(toast)
+        self.add_toast(Adw.Toast(title=f"Requesting Relay List..."))
 
     def on_add_clicked(self, btn):
         url = self.new_relay_entry.get_text().strip()
@@ -514,24 +374,19 @@ class LoginDialog(Adw.Window):
         self.set_modal(True)
         self.set_default_size(450, 400)
         self.set_title("Login")
-
         content = Adw.ToolbarView()
         self.set_content(content)
         header = Adw.HeaderBar()
         content.add_top_bar(header)
-
         page = Adw.PreferencesPage()
         content.set_content(page)
-
         group = Adw.PreferencesGroup()
         group.set_title("Credentials")
-        group.set_description("Enter your Nostr private key (nsec).")
         page.add(group)
-
         self.priv_entry = Adw.PasswordEntryRow()
         self.priv_entry.set_title("Private Key")
+        # FIX: Removed call to set_placeholder_text which caused crash
         group.add(self.priv_entry)
-
         btn_group = Adw.PreferencesGroup()
         page.add(btn_group)
         login_btn = Gtk.Button(label="Login")
@@ -562,8 +417,8 @@ class LoginDialog(Adw.Window):
                 if parent and hasattr(parent, 'perform_login'):
                     parent.perform_login(priv_hex)
                 self.close()
-            else: self.show_error("Invalid Key")
-        else: self.show_error("Invalid Private Key")
+            else: self.add_toast(Adw.Toast(title="Invalid Key"))
+        else: self.add_toast(Adw.Toast(title="Invalid Private Key"))
 
     def show_error(self, msg):
         toast = Adw.Toast(title=msg)
@@ -572,29 +427,27 @@ class LoginDialog(Adw.Window):
 class MainWindow(Adw.ApplicationWindow):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.set_title("Gnostr")
-        self.set_default_size(950, 700)
+        self.set_title("Gnostr"); self.set_default_size(950, 700)
         self.db = Database()
         self.client = NostrClient(self.db)
         self.client.connect("event-received", self.on_event_received)
         self.client.connect("status-changed", self.on_status_changed)
-        self.client.connect("contacts-updated", lambda c: self.switch_feed("following") if self.active_feed_type == "following" else None)
+        self.client.connect("contacts-updated", lambda c: self.switch_feed("following") if self.active_feed_type=="following" else None)
         self.client.connect("profile-updated", self.on_profile_updated)
-        self.priv_key = None
-        self.pub_key = None
-        self.active_feed_type = "global"
+        self.client.connect("metrics-updated", self.on_metrics_updated)
+
+        self.priv_key = None; self.pub_key = None; self.active_feed_type = "global"
+        self.event_widgets = {}
 
         self.split_view = Adw.NavigationSplitView()
         self.set_content(self.split_view)
-        breakpoint = Adw.Breakpoint.new(Adw.BreakpointCondition.new_length(Adw.BreakpointConditionLengthType.MAX_WIDTH, 800, Adw.LengthUnit.SP))
-        breakpoint.add_setter(self.split_view, "collapsed", True)
-        self.add_breakpoint(breakpoint)
+        bp = Adw.Breakpoint.new(Adw.BreakpointCondition.new_length(Adw.BreakpointConditionLengthType.MAX_WIDTH, 800, Adw.LengthUnit.SP))
+        bp.add_setter(self.split_view, "collapsed", True)
+        self.add_breakpoint(bp)
 
-        self.setup_sidebar()
-        self.setup_content_area()
+        self.setup_sidebar(); self.setup_content_area()
+        self.main_stack = Adw.ViewStack(); self.set_content(self.main_stack)
 
-        self.main_stack = Adw.ViewStack()
-        self.set_content(self.main_stack)
         self.login_page = Adw.StatusPage(title="Welcome to Gnostr", description="Secure, Native Nostr Client", icon_name="avatar-default-symbolic")
         login_btn = Gtk.Button(label="Login with Private Key", css_classes=["pill", "suggested-action"])
         login_btn.connect("clicked", self.on_login_clicked)
@@ -605,8 +458,8 @@ class MainWindow(Adw.ApplicationWindow):
         self.main_stack.add_named(self.login_page, "login")
         self.main_stack.add_named(self.split_view, "app")
 
-        saved_key = KeyManager.load_key()
-        if saved_key: self.perform_login(saved_key)
+        saved = KeyManager.load_key()
+        if saved: self.perform_login(saved)
         else: self.main_stack.set_visible_child_name("login")
         GLib.idle_add(self.client.connect_all)
 
@@ -650,36 +503,109 @@ class MainWindow(Adw.ApplicationWindow):
 
     def setup_content_area(self):
         self.content_nav = Adw.NavigationView()
-        self.content_wrapper_page = Adw.NavigationPage(title="Content", tag="content_wrapper")
-        self.content_wrapper_page.set_child(self.content_nav)
-        self.split_view.set_content(self.content_wrapper_page)
+        wrapper = Adw.NavigationPage(title="Content", tag="wrapper")
+        wrapper.set_child(self.content_nav)
+        self.split_view.set_content(wrapper)
 
         self.feed_page = Adw.NavigationPage(title="Feed", tag="feed")
-        feed_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        self.feed_header = Adw.HeaderBar()
-        feed_box.append(self.feed_header)
-        scrolled = Gtk.ScrolledWindow(vexpand=True)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        box.append(Adw.HeaderBar())
+        scroll = Gtk.ScrolledWindow(vexpand=True)
         clamp = Adw.Clamp(maximum_size=600)
         self.posts_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
         clamp.set_child(self.posts_box)
-        scrolled.set_child(clamp)
-        feed_box.append(scrolled)
-        self.feed_page.set_child(feed_box)
+        scroll.set_child(clamp)
+        box.append(scroll)
+        self.feed_page.set_child(box)
         self.content_nav.add(self.feed_page)
 
-        self.profile_page = Adw.NavigationPage(title="My Profile", tag="profile")
-        prof_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=20, margin_top=40)
-        prof_box.set_halign(Gtk.Align.CENTER)
-        prof_box.append(Adw.HeaderBar())
+        self.thread_page = Adw.NavigationPage(title="Thread", tag="thread")
+        t_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        t_box.append(Adw.HeaderBar())
+        t_scroll = Gtk.ScrolledWindow(vexpand=True)
+        t_clamp = Adw.Clamp(maximum_size=600)
+        self.thread_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
+        t_clamp.set_child(self.thread_container)
+        t_scroll.set_child(t_clamp)
+        t_box.append(t_scroll)
+        self.thread_page.set_child(t_box)
+
+        self.profile_page = Adw.NavigationPage(title="Profile", tag="profile")
+        p_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=20, margin_top=40)
+        p_box.set_halign(Gtk.Align.CENTER)
+        p_box.append(Adw.HeaderBar())
         self.prof_avatar = Adw.Avatar(size=96, show_initials=True)
-        prof_box.append(self.prof_avatar)
+        p_box.append(self.prof_avatar)
         self.lbl_name = Gtk.Label(css_classes=["title-1"])
-        prof_box.append(self.lbl_name)
+        p_box.append(self.lbl_name)
         self.lbl_npub = Gtk.Label(css_classes=["caption", "dim-label"], selectable=True)
-        prof_box.append(self.lbl_npub)
+        p_box.append(self.lbl_npub)
         self.lbl_about = Gtk.Label(wrap=True, justify=Gtk.Justification.CENTER, max_width_chars=40)
-        prof_box.append(self.lbl_about)
-        self.profile_page.set_child(prof_box)
+        p_box.append(self.lbl_about)
+        self.profile_page.set_child(p_box)
+
+    def show_thread(self, event_id, pubkey, content):
+        self.content_nav.push(self.thread_page)
+        c = self.thread_container.get_first_child()
+        while c: self.thread_container.remove(c); c = self.thread_container.get_first_child()
+        hero = self.create_post_widget(pubkey, content, event_id, is_hero=True)
+        self.thread_container.append(hero)
+        self.thread_container.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+        self.thread_container.append(Gtk.Label(label="Replies", css_classes=["heading"], xalign=0))
+        self.client.fetch_thread(event_id)
+
+    def create_post_widget(self, pubkey, content, event_id, is_hero=False):
+        card = Adw.Bin(css_classes=["card"])
+        if is_hero: card.add_css_class("hero")
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
+        hb = Gtk.Box(spacing=12)
+        prof = self.db.get_profile(pubkey)
+        name = pubkey[:8]
+        if prof: name = prof.get('display_name') or prof.get('name') or name
+        av = Adw.Avatar(size=48 if is_hero else 40, show_initials=True, text=name)
+        if prof and prof.get('picture'): ImageLoader.load_avatar(prof['picture'], lambda t: av.set_custom_image(t))
+        hb.append(av)
+        nb = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        nb.append(Gtk.Label(label=name, xalign=0, css_classes=["heading"]))
+        nb.append(Gtk.Label(label=pubkey[:12]+"...", xalign=0, css_classes=["caption", "dim-label"]))
+        hb.append(nb)
+        main_box.append(hb)
+        main_box.append(ContentRenderer.render(content))
+        footer = Gtk.Box(spacing=20, margin_top=8)
+        def mk_met(icon, count):
+            b = Gtk.Box(spacing=6)
+            b.append(Gtk.Image.new_from_icon_name(icon))
+            l = Gtk.Label(label=str(count), css_classes=["caption", "dim-label"])
+            b.append(l)
+            return b, l
+        r_box, l_rep = mk_met("chat-bubble-symbolic", 0)
+        rt_box, l_ret = mk_met("media-playlist-repeat-symbolic", 0)
+        l_box, l_like = mk_met("starred-symbolic", 0)
+        footer.append(r_box); footer.append(rt_box); footer.append(l_box)
+        main_box.append(footer)
+        card.set_child(main_box)
+        card.lbl_replies = l_rep; card.lbl_reposts = l_ret; card.lbl_likes = l_like
+        self.event_widgets[event_id] = card
+        if not is_hero:
+            ctrl = Gtk.GestureClick()
+            ctrl.connect("released", lambda c, n, x, y: self.show_thread(event_id, pubkey, content))
+            card.add_controller(ctrl)
+        return card
+
+    def on_event_received(self, client, eid, pubkey, content):
+        if not self.db.get_profile(pubkey): self.client.fetch_profile(pubkey)
+        target = self.posts_box
+        if self.content_nav.get_visible_page() == self.thread_page: target = self.thread_container
+        w = self.create_post_widget(pubkey, content, eid)
+        if target == self.posts_box: target.prepend(w)
+        else: target.append(w)
+
+    def on_metrics_updated(self, client, eid, likes, reposts, replies):
+        if eid in self.event_widgets:
+            w = self.event_widgets[eid]
+            if hasattr(w, 'lbl_likes'): w.lbl_likes.set_label(str(likes))
+            if hasattr(w, 'lbl_reposts'): w.lbl_reposts.set_label(str(reposts))
+            if hasattr(w, 'lbl_replies'): w.lbl_replies.set_label(str(replies))
 
     def perform_login(self, priv_hex):
         self.priv_key = priv_hex
@@ -688,7 +614,6 @@ class MainWindow(Adw.ApplicationWindow):
         self.main_stack.set_visible_child_name("app")
         self.active_feed_type = "global"
         self.load_my_profile_ui()
-
         GLib.timeout_add(1000, lambda: self.switch_feed("global"))
         GLib.timeout_add(2000, lambda: self.client.fetch_profile(self.pub_key))
         GLib.timeout_add(2500, self.client.fetch_contacts)
@@ -733,52 +658,22 @@ class MainWindow(Adw.ApplicationWindow):
     def on_status_changed(self, client, status):
         self.status_label.set_text(status)
 
-    def on_event_received(self, client, pubkey, content):
-        if not self.db.get_profile(pubkey): self.client.fetch_profile(pubkey)
-        self.render_event(pubkey, content)
-
-    def render_event(self, pubkey, content):
-        card = Adw.Bin(css_classes=["card"])
-
-        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
-
-        header_box = Gtk.Box(spacing=12)
-        profile = self.db.get_profile(pubkey)
-        name = pubkey[:8]
-        if profile:
-            name = profile.get('display_name') or profile.get('name') or name
-
-        avatar = Adw.Avatar(size=40, show_initials=True, text=name)
-        if profile and profile.get('picture'):
-            ImageLoader.load_avatar(profile['picture'], lambda t: avatar.set_custom_image(t))
-        header_box.append(avatar)
-
-        lbl_name = Gtk.Label(label=name, css_classes=["heading"])
-        header_box.append(lbl_name)
-        main_box.append(header_box)
-
-        content_widget = ContentRenderer.render(content)
-        main_box.append(content_widget)
-
-        card.set_child(main_box)
-        self.posts_box.prepend(card)
-
     def switch_feed(self, feed_type):
         self.active_feed_type = feed_type
-        if feed_type == "global": self.feed_page.set_title("Global Feed")
-        elif feed_type == "following": self.feed_page.set_title("Following")
-        elif feed_type == "me": self.feed_page.set_title("My Posts")
-
         self.content_nav.pop_to_page(self.feed_page)
+        self.feed_page.set_title("Feed")
 
-        child = self.posts_box.get_first_child()
-        while child: self.posts_box.remove(child); child = self.posts_box.get_first_child()
+        c = self.posts_box.get_first_child()
+        while c: self.posts_box.remove(c); c = self.posts_box.get_first_child()
+        self.event_widgets.clear()
 
         cached = []
         if feed_type == "me" and self.pub_key: cached = self.db.get_feed_for_user(self.pub_key)
         elif feed_type == "following" and self.pub_key: cached = self.db.get_feed_following(self.pub_key)
 
-        for ev in cached: self.render_event(ev['pubkey'], ev['content'])
+        for ev in cached:
+            w = self.create_post_widget(ev['pubkey'], ev['content'], ev['id'])
+            self.posts_box.prepend(w)
 
         if feed_type == "global":
             self.client.subscribe("sub_global", {"kinds": [1], "limit": 20})
