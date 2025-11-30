@@ -1,0 +1,6 @@
+build-bundle
+build-dir
+build-export
+repo
+*.flatpak
+.flatpak-builder
