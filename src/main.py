@@ -40,7 +40,6 @@ class ContentRenderer:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         if not content: return box
 
-        # Unescape HTML entities
         clean_content = html.unescape(content)
         parts = ContentRenderer.LINK_REGEX.split(clean_content)
         current_text_buffer = []
@@ -107,8 +106,13 @@ class ContentRenderer:
             is_event = "nevent" in uri or "note" in uri
             is_profile = "nprofile" in uri or "npub" in uri
 
+            # Wrap in a Button to stop click propagation to the parent post
+            btn = Gtk.Button(css_classes=["flat", "card"])
+
             row = Adw.ActionRow()
-            row.set_activatable(True)
+            # Disable activation on row since button handles click
+            row.set_activatable(False)
+
             short_id = bech32_str[:10] + "..." + bech32_str[-6:]
 
             if is_event:
@@ -116,44 +120,35 @@ class ContentRenderer:
                 row.set_subtitle(short_id)
                 row.add_prefix(Gtk.Image.new_from_icon_name("chat-bubble-symbolic"))
 
-                def on_click_event(x, y, z):
+                def on_click_event(b):
                     hex_id = ContentRenderer._extract_hex_id(bech32_str)
                     if hex_id:
-                        print(f"DEBUG: Navigating to thread {hex_id}")
+                        print(f"DEBUG: Internal Nav -> Thread {hex_id}")
                         window.show_thread(hex_id, "Unknown Author", "Loading quoted post...")
                     else:
-                        print(f"Error: Could not decode {bech32_str}")
                         launcher = Gtk.UriLauncher(uri=f"https://njump.me/{bech32_str}")
                         launcher.launch(window, None, None)
 
-                ctrl = Gtk.GestureClick()
-                ctrl.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
-                ctrl.connect("released", lambda c, n, x, y: on_click_event(0,0,0))
-                row.add_controller(ctrl)
+                btn.connect("clicked", on_click_event)
 
             elif is_profile:
                 row.set_title("User Profile")
                 row.set_subtitle(short_id)
                 row.add_prefix(Gtk.Image.new_from_icon_name("avatar-default-symbolic"))
 
-                def on_click_profile(x, y, z):
+                def on_click_profile(b):
                     hex_pk = ContentRenderer._extract_hex_id(bech32_str)
                     if hex_pk:
-                        print(f"DEBUG: Navigating to profile {hex_pk}")
+                        print(f"DEBUG: Internal Nav -> Profile {hex_pk}")
                         window.show_profile(hex_pk)
                     else:
                         launcher = Gtk.UriLauncher(uri=f"https://njump.me/{bech32_str}")
                         launcher.launch(window, None, None)
 
-                ctrl = Gtk.GestureClick()
-                ctrl.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
-                ctrl.connect("released", lambda c, n, x, y: on_click_profile(0,0,0))
-                row.add_controller(ctrl)
+                btn.connect("clicked", on_click_profile)
 
-            frame = Gtk.Frame()
-            frame.add_css_class("card")
-            frame.set_child(row)
-            box.append(frame)
+            btn.set_child(row)
+            box.append(btn)
 
         except Exception as e:
             print(f"Error rendering nostr card: {e}")
@@ -508,21 +503,7 @@ class MainWindow(Adw.ApplicationWindow):
         t_box.append(t_scroll)
         self.thread_page.set_child(t_box)
 
-        # Profile Page Setup (Corrected)
         self.profile_page = Adw.NavigationPage(title="Profile", tag="profile")
-
-        # Top-level layout (Full Width/Height)
-        p_main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-
-        # Header Bar (Top, Full Width)
-        p_header = Adw.HeaderBar()
-        p_main_box.append(p_header)
-
-        # Scrolled Area
-        p_scroll = Gtk.ScrolledWindow(vexpand=True)
-        p_clamp = Adw.Clamp(maximum_size=600)
-
-        # Content Box (Centered)
         p_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=20)
         p_box.set_margin_top(40)
         p_box.set_margin_bottom(20)
@@ -530,25 +511,28 @@ class MainWindow(Adw.ApplicationWindow):
         p_box.set_margin_end(12)
         p_box.set_halign(Gtk.Align.CENTER)
 
+        # Header inside
+        p_header_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        p_header_box.append(Adw.HeaderBar())
+
+        # Add scroll
+        p_scroll = Gtk.ScrolledWindow(vexpand=True)
+        p_clamp = Adw.Clamp(maximum_size=600)
+        p_clamp.set_child(p_box)
+        p_scroll.set_child(p_clamp)
+        p_header_box.append(p_scroll)
+        self.profile_page.set_child(p_header_box)
+
         self.prof_avatar = Adw.Avatar(size=96, show_initials=True)
         p_box.append(self.prof_avatar)
-
         self.lbl_name = Gtk.Label(css_classes=["title-1"])
         p_box.append(self.lbl_name)
-
         self.lbl_npub = Gtk.Label(css_classes=["caption", "dim-label"], selectable=True)
         self.lbl_npub.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
         p_box.append(self.lbl_npub)
-
         self.lbl_about = Gtk.Label(wrap=True, justify=Gtk.Justification.CENTER, max_width_chars=40)
         self.lbl_about.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
         p_box.append(self.lbl_about)
-
-        p_clamp.set_child(p_box)
-        p_scroll.set_child(p_clamp)
-        p_main_box.append(p_scroll)
-
-        self.profile_page.set_child(p_main_box)
 
     def show_thread(self, event_id, pubkey, content):
         page = Adw.NavigationPage(title="Thread")
@@ -560,14 +544,20 @@ class MainWindow(Adw.ApplicationWindow):
         c.set_child(container); s.set_child(c); b.append(s); page.set_child(b)
 
         self.content_nav.push(page)
+
+        # Render Hero
         hero = self.create_post_widget(pubkey, content, event_id, is_hero=True)
+        # Store hero so we can update it later
+        page.hero_widget = hero
+
         container.append(hero)
         container.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
         container.append(Gtk.Label(label="Replies", css_classes=["heading"], xalign=0))
         self.client.fetch_thread(event_id)
 
     def show_profile(self, pubkey):
-        self.content_nav.push(self.profile_page)
+        if self.content_nav.get_visible_page() != self.profile_page:
+             self.content_nav.push(self.profile_page)
         self.client.fetch_profile(pubkey)
         npub = nostr_utils.hex_to_nsec(pubkey).replace("nsec", "npub")
         self.lbl_npub.set_text(npub[:12] + "..." + npub[-12:])
@@ -584,18 +574,36 @@ class MainWindow(Adw.ApplicationWindow):
         if is_hero: card.add_css_class("hero")
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
         hb = Gtk.Box(spacing=12)
+
+        # Add references to labels so we can update them later
         prof = self.db.get_profile(pubkey)
         name = pubkey[:8]
         if prof: name = prof.get('display_name') or prof.get('name') or name
         av = Adw.Avatar(size=48 if is_hero else 40, show_initials=True, text=name)
         if prof and prof.get('picture'): ImageLoader.load_avatar(prof['picture'], lambda t: av.set_custom_image(t))
         hb.append(av)
+        card.avatar = av # Store ref
+
         nb = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        nb.append(Gtk.Label(label=name, xalign=0, css_classes=["heading"]))
+        lbl_name = Gtk.Label(label=name, xalign=0, css_classes=["heading"])
+        card.lbl_name = lbl_name # Store ref
+        nb.append(lbl_name)
         nb.append(Gtk.Label(label=pubkey[:12]+"...", xalign=0, css_classes=["caption", "dim-label"]))
         hb.append(nb)
         main_box.append(hb)
-        main_box.append(ContentRenderer.render(content, self))
+
+        # Content can't easily be updated in-place if we replace the widget,
+        # but for 'Loading...' we assume we are creating a placeholder.
+        # Actually, ContentRenderer creates a Box.
+        content_area = ContentRenderer.render(content, self)
+        card.content_area = content_area # Store ref? No, we might need to replace the whole box.
+        # Easier: Store the main_box so we can rebuild it if needed?
+        # Or just rebuild the whole card? No.
+        # Let's just update the parts we know are placeholders.
+        # For hero updates: We will want to replace the content label if it was "Loading..."
+
+        main_box.append(content_area)
+
         footer = Gtk.Box(spacing=20, margin_top=8)
         def mk_met(icon):
             b = Gtk.Box(spacing=6); b.append(Gtk.Image.new_from_icon_name(icon))
@@ -619,6 +627,27 @@ class MainWindow(Adw.ApplicationWindow):
         if not self.db.get_profile(pubkey): self.client.fetch_profile(pubkey)
         target = self.posts_box
         page = self.content_nav.get_visible_page()
+
+        # Check if we are in a thread view and this event IS the root ID we are waiting for
+        if hasattr(page, 'root_id') and page.root_id == eid and hasattr(page, 'hero_widget'):
+             # Update Hero Widget!
+             # We can't easily "edit" a GtkBox in place without clearing it.
+             # Simpler: Replace the hero widget in the container.
+             if hasattr(page, 'thread_container'):
+                 # We need to find the index of the hero widget (usually 0)
+                 # But GTK4 removed get_children list easily.
+                 # Alternatively, create a NEW widget and swap properties?
+                 # Or better: Just create a new one and replace the first child.
+                 new_hero = self.create_post_widget(pubkey, content, eid, is_hero=True)
+
+                 # Remove old hero (first child)
+                 first = page.thread_container.get_first_child()
+                 if first == page.hero_widget:
+                     page.thread_container.remove(first)
+                     page.thread_container.prepend(new_hero)
+                     page.hero_widget = new_hero
+             return
+
         if hasattr(page, 'root_id') and hasattr(page, 'thread_container'):
             try:
                 tags = json.loads(tags_json)
