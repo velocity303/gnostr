@@ -37,12 +37,13 @@ def bech32_encode(hrp, data):
     return hrp + '1' + ''.join([CHARSET[d] for d in combined])
 
 def bech32_decode(bech):
+    # FIX: Removed "or len(bech) > 90" check to support long Nostr entities
     if ((any(ord(x) < 33 or ord(x) > 126 for x in bech)) or
             (bech.lower() != bech and bech.upper() != bech)):
         return None, None
     bech = bech.lower()
     pos = bech.rfind('1')
-    if pos < 1 or pos + 7 > len(bech) or len(bech) > 90:
+    if pos < 1 or pos + 7 > len(bech):
         return None, None
     if not all(x in CHARSET for x in bech[pos+1:]):
         return None, None
@@ -118,13 +119,9 @@ def extract_followed_pubkeys(event_json):
             followed.append(tag[1])
     return followed
 
-# --- NEW: Signing Logic ---
+# --- Signing Logic ---
 
 def compute_event_id(event):
-    """
-    Calculates the sha256 hash ID of a Nostr event.
-    Serialized form: [0, pubkey, created_at, kind, tags, content]
-    """
     data = [
         0,
         event['pubkey'],
@@ -137,39 +134,25 @@ def compute_event_id(event):
     return hashlib.sha256(json_str.encode('utf-8')).hexdigest()
 
 def sign_event(event, priv_key_hex):
-    """
-    Computes ID and Signs the event. Returns the full event object with 'id' and 'sig'.
-    """
     if not ecdsa:
         print("Error: ECDSA not available for signing.")
         return None
 
     try:
-        # 1. Compute ID
         event['id'] = compute_event_id(event)
-
-        # 2. Sign
         sk = ecdsa.SigningKey.from_string(bytes.fromhex(priv_key_hex), curve=ecdsa.SECP256k1)
-        # Sign the binary bytes of the ID
         sig_bytes = sk.sign_digest(bytes.fromhex(event['id']), sigencode=ecdsa.util.sigencode_schnorr)
         event['sig'] = sig_bytes.hex()
-
         return event
     except Exception as e:
         print(f"Signing Error: {e}")
         return None
 
 def is_nostr_reference(text):
-    """
-    Checks if text starts with nostr:nevent, nostr:nprofile, nostr:note, or nostr:npub
-    """
     prefixes = ("nostr:nevent", "nostr:nprofile", "nostr:note", "nostr:npub")
     return text.startswith(prefixes)
 
 def extract_id_from_nostr_uri(uri):
-    """
-    Extracts the bech32 part from nostr:nevent1...
-    """
     if uri.startswith("nostr:"):
         return uri.split(":")[1]
     return uri
