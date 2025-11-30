@@ -1,3 +1,0 @@
-[D-BUS Service]
-Name=me.velocitynet.gnostr
-Exec=@bindir@/gnostr --gapplication-service
