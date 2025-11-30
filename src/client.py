@@ -32,17 +32,36 @@ class NostrRelay(GObject.Object):
         def on_msg(ws, m):
             try:
                 d = json.loads(m)
-                if d[0] == "EVENT": self.on_event(d[2])
-            except: pass
-        def on_open(ws): self.is_connected=True; GLib.idle_add(self.on_status, self.url, "Connected")
-        def on_err(ws, e): self.is_connected=False; GLib.idle_add(self.on_status, self.url, "Error")
-        def on_close(ws, c, m): self.is_connected=False; GLib.idle_add(self.on_status, self.url, "Disconnected")
+                if d[0] == "EVENT":
+                    self.on_event(d[2])
+                elif d[0] == "EOSE":
+                    print(f"DEBUG [{self.url}]: EOSE (End of Stored Events) for {d[1]}")
+                elif d[0] == "NOTICE":
+                    print(f"DEBUG [{self.url}]: NOTICE: {d[1]}")
+            except Exception as e:
+                print(f"DEBUG [{self.url}]: Parse Error: {e}")
+
+        def on_open(ws):
+            print(f"✅ [{self.url}] Connected.")
+            self.is_connected=True
+            GLib.idle_add(self.on_status, self.url, "Connected")
+
+        def on_err(ws, e):
+            print(f"❌ [{self.url}] Error: {e}")
+            self.is_connected=False
+            GLib.idle_add(self.on_status, self.url, "Error")
+
+        def on_close(ws, c, m):
+            # print(f"⚠️ [{self.url}] Closed.")
+            self.is_connected=False
+            GLib.idle_add(self.on_status, self.url, "Disconnected")
+
         self.ws = websocket.WebSocketApp(self.url, on_open=on_open, on_message=on_msg, on_error=on_err, on_close=on_close)
         threading.Thread(target=self.ws.run_forever, daemon=True).start()
 
     def subscribe(self, sub_id, filters):
         if not self.is_connected: return
-        if self.sub_id != sub_id:
+        if self.sub_id and self.sub_id != sub_id:
             try: self.ws.send(json.dumps(["CLOSE", self.sub_id]))
             except: pass
         self.sub_id = sub_id
@@ -50,9 +69,14 @@ class NostrRelay(GObject.Object):
         except: pass
 
     def request_once(self, sub_id, filters):
-        if not self.is_connected: return
-        try: self.ws.send(json.dumps(["REQ", sub_id] + (filters if isinstance(filters, list) else [filters])))
-        except: pass
+        if not self.is_connected:
+            # print(f"DEBUG [{self.url}]: Cannot request '{sub_id}', not connected.")
+            return
+        try:
+            print(f"DEBUG [{self.url}]: Sending REQ {sub_id}")
+            self.ws.send(json.dumps(["REQ", sub_id] + (filters if isinstance(filters, list) else [filters])))
+        except Exception as e:
+            print(f"DEBUG [{self.url}]: Send failed: {e}")
 
     def publish(self, event_json):
         if not self.is_connected: return
@@ -102,18 +126,22 @@ class NostrClient(GObject.Object):
         except: pass
 
     def set_keys(self, pub, priv): self.my_pubkey = pub; self.my_privkey = priv
+
     def connect_all(self):
         for url in list(self.relay_urls): self.add_relay_connection(url)
+
     def add_relay_connection(self, url):
         if url in self.active_relays: return
         r = NostrRelay(url, self._handle_event, self._handle_status)
         r.start()
         self.active_relays[url] = r
+
     def add_relay(self, url):
         if url not in self.relay_urls:
             self.relay_urls.add(url); self.save_config()
             self.add_relay_connection(url); self.emit('relay-list-updated')
             self.publish_relay_list()
+
     def remove_relay(self, url):
         if url in self.relay_urls:
             self.relay_urls.remove(url); self.save_config()
@@ -121,12 +149,20 @@ class NostrClient(GObject.Object):
             self.emit('relay-list-updated'); self.publish_relay_list()
 
     def fetch_user_relays(self):
-        # FIX: Use unique subscription ID to force relays to send data again
         if not self.my_pubkey: return
-        print(f"DEBUG: Requesting relay list (Kind 10002)...")
+        print(f"DEBUG: Requesting relay list (Kind 10002) for {self.my_pubkey[:8]}...")
         filter = {"kinds": [10002], "authors": [self.my_pubkey], "limit": 1}
+
+        # Use unique ID to force fresh response
+        sub_id = f"relays_{self.my_pubkey[:8]}_{int(time.time())}"
+
+        count = 0
         for r in self.active_relays.values(): 
-            r.request_once(f"relays_{self.my_pubkey[:8]}_{int(time.time())}", filter)
+            if r.is_connected:
+                r.request_once(sub_id, filter)
+                count += 1
+
+        print(f"DEBUG: Sent relay request to {count} connected relays.")
 
     def publish_relay_list(self):
         if not self.my_privkey: return
@@ -144,7 +180,12 @@ class NostrClient(GObject.Object):
     def _handle_event(self, ev):
         eid = ev.get('id'); kind = ev['kind']; pubkey = ev['pubkey']
         tags = ev.get('tags', [])
-        
+
+        # DEBUG: Catch-all to confirm if we receive anything
+        if kind == 10002 or kind == 3:
+            print(f"DEBUG: Received Metadata Event Kind {kind} from {pubkey[:8]}")
+
+        # Metrics handling
         target = self.get_ref_id(tags)
         if target:
             if target not in self.metrics: self.metrics[target] = {'likes':0,'reposts':0,'replies':0}
@@ -163,28 +204,48 @@ class NostrClient(GObject.Object):
         if kind == 0:
             self.db.save_profile(pubkey, ev['content'], ev['created_at'])
             GLib.idle_add(self.emit, 'profile-updated', pubkey)
+
         elif kind == 3:
             if pubkey == self.my_pubkey:
+                # 1. Contacts
                 c = nostr_utils.extract_followed_pubkeys(ev)
                 self.db.save_contacts(self.my_pubkey, c)
                 GLib.idle_add(self.emit, 'contacts-updated')
+
+                # 2. Relay Fallback (Old Standard)
+                # Kind 3 content is often: {"wss://...": {"read": true, "write": true}}
+                try:
+                    if ev['content']:
+                        relays_json = json.loads(ev['content'])
+                        if isinstance(relays_json, dict):
+                            print(f"DEBUG: Found relays in Kind 3 content: {list(relays_json.keys())}")
+                            self._merge_relays(relays_json.keys())
+                except: pass
+
         elif kind == 10002:
             if pubkey == self.my_pubkey:
-                print("DEBUG: Received Kind 10002 (Relay List)")
+                print("DEBUG: Processing Kind 10002 (Relay List)")
                 nr = [t[1] for t in tags if t[0]=='r' and len(t) > 1]
                 if nr:
-                    ch = False
-                    for r in nr:
-                        # Strip trailing slashes for consistency
-                        r = r.rstrip("/")
-                        if r.startswith("ws") and r not in self.relay_urls:
-                            self.relay_urls.add(r); self.add_relay_connection(r); ch=True
-                    if ch: 
-                        self.save_config()
-                        print("DEBUG: Synced new relays from network.")
-                        GLib.idle_add(self.emit, 'relay-list-updated')
+                    self._merge_relays(nr)
+                else:
+                    print("DEBUG: Kind 10002 received but contained no 'r' tags.")
+
         elif kind == 1:
             GLib.idle_add(self.emit, 'event-received', eid, pubkey, ev['content'], json.dumps(tags))
+
+    def _merge_relays(self, new_list):
+        changed = False
+        for r in new_list:
+            r = r.rstrip("/") # Normalize
+            if r.startswith("ws") and r not in self.relay_urls:
+                print(f"DEBUG: Adding new relay found in sync: {r}")
+                self.relay_urls.add(r)
+                self.add_relay_connection(r)
+                changed = True
+        if changed:
+            self.save_config()
+            GLib.idle_add(self.emit, 'relay-list-updated')
 
     def _handle_status(self, url, status): self.emit('status-changed', status)
     def subscribe(self, sub_id, filters):

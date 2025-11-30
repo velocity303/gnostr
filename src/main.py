@@ -173,6 +173,7 @@ class MainWindow(Adw.ApplicationWindow):
 
     def on_event_received(self, client, eid, pubkey, content, tags_json):
         if not self.db.get_profile(pubkey): self.client.fetch_profile(pubkey)
+        target = self.posts_box
         page = self.content_nav.get_visible_page()
         
         if hasattr(page, 'root_id') and page.root_id == eid and hasattr(page, 'hero_widget'):
