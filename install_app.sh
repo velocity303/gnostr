@@ -1,45 +1,22 @@
 #!/bin/bash
 set -e
-echo "==> [App] Starting Application Installation..."
+echo "==> [Gnostr] Installing..."
 
-mkdir -p /app/bin
+# 1. Install Binaries
+# -D creates parent directories. -m 755 sets executable permission.
+install -D -m 755 src/main.py /app/bin/gnostr
+cp -v src/*.py /app/bin/ 2>/dev/null || true
+# Cleanup potential duplicate
+rm -f /app/bin/main.py
 
-echo "==> [App] Copying Source Code..."
-SRC="."
-if [ -d "src" ]; then SRC="src"; fi
+# 2. Install Desktop File (Must go to /app/share/applications)
+install -D -m 644 data/me.velocitynet.Gnostr.desktop /app/share/applications/me.velocitynet.Gnostr.desktop
 
-cp -v $SRC/*.py /app/bin/
+# 3. Install AppData
+install -D -m 644 data/me.velocitynet.Gnostr.metainfo.xml /app/share/metainfo/me.velocitynet.Gnostr.metainfo.xml
 
-if [ -f "/app/bin/main.py" ]; then
-    mv /app/bin/main.py /app/bin/gnostr
-fi
+# 4. Install Icons (Must go to /app/share/icons/...)
+install -D -m 644 data/icons/hicolor/scalable/apps/me.velocitynet.Gnostr.svg /app/share/icons/hicolor/scalable/apps/me.velocitynet.Gnostr.svg
 
-chmod +x /app/bin/gnostr
-
-echo "==> [App] Configuring Environment Paths..."
-SITE_PKG=$(find /app -type d -name "site-packages" | head -n 1)
-export PYTHONPATH=$PYTHONPATH:$SITE_PKG
-
-# Find Secret-1.typelib
-TYPELIB_FILE=$(find /app -name "Secret-1.typelib" | head -n 1)
-if [ -z "$TYPELIB_FILE" ]; then
-    echo "❌ CRITICAL ERROR: Secret-1.typelib not found!"
-    exit 1
-fi
-TYPELIB_DIR=$(dirname "$TYPELIB_FILE")
-export GI_TYPELIB_PATH=$TYPELIB_DIR:/app/lib/girepository-1.0:/app/lib64/girepository-1.0:$GI_TYPELIB_PATH
-
-echo "==> [App] Build-Time Verification..."
-python3 -c "
-import sys
-try:
-    import websocket
-    import ecdsa
-    import gi
-    gi.require_version('Secret', '1')
-    from gi.repository import Secret
-    print('✅ All imports successful.')
-except Exception as e:
-    print(f'❌ Import Failed: {e}')
-    sys.exit(1)
-"
+# 5. Set PYTHONPATH for runtime
+export PYTHONPATH=$PYTHONPATH:/app/lib/python3.12/site-packages

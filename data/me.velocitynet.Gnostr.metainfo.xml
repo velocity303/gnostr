@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>me.velocitynet.Gnostr</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Gnostr</name>
+  <summary>A native Nostr client</summary>
+  <description>
+    <p>Gnostr is a lightweight, native Nostr client built for the GNOME desktop.</p>
+  </description>
+  <launchable type="desktop-id">me.velocitynet.Gnostr.desktop</launchable>
+</component>

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="64px" height="64px" viewBox="0 0 64 64" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <title>Ostrich Nostr Icon</title>
+    <defs>
+        <linearGradient x1="50%" y1="0%" x2="50%" y2="100%" id="linearGradient-1">
+            <stop stop-color="#8F4CBB" offset="0%"></stop>
+            <stop stop-color="#6D3B8F" offset="100%"></stop>
+        </linearGradient>
+        <filter x="-50%" y="-50%" width="200%" height="200%" filterUnits="objectBoundingBox" id="filter-2">
+            <feOffset dx="0" dy="1" in="SourceAlpha" result="shadowOffsetOuter1"></feOffset>
+            <feGaussianBlur stdDeviation="1" in="shadowOffsetOuter1" result="shadowBlurOuter1"></feGaussianBlur>
+            <feColorMatrix values="0 0 0 0 0   0 0 0 0 0   0 0 0 0 0  0 0 0 0.2 0" type="matrix" in="shadowBlurOuter1" result="shadowMatrixOuter1"></feColorMatrix>
+            <feMerge>
+                <feMergeNode in="shadowMatrixOuter1"></feMergeNode>
+                <feMergeNode in="SourceGraphic"></feMergeNode>
+            </feMerge>
+        </filter>
+    </defs>
+    <g id="Icon" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd">
+        <rect id="Background" fill="url(#linearGradient-1)" x="0" y="0" width="64" height="64" rx="8"></rect>
+        <g id="Ostrich" filter="url(#filter-2)" transform="translate(12.000000, 10.000000)">
+            <path d="M16,38 L14,50 M24,38 L26,50" id="Legs" stroke="#E0C0E0" stroke-width="3" stroke-linecap="round"></path>
+            <ellipse id="Body" fill="#E0C0E0" cx="20" cy="30" rx="14" ry="11"></ellipse>
+            <path d="M20,30 C20,15 24,8 30,8" id="Neck" stroke="#E0C0E0" stroke-width="6" stroke-linecap="round"></path>
+            <circle id="Head" fill="#E0C0E0" cx="30" cy="8" r="7"></circle>
+            <path d="M36,5 L42,8 L36,11 Z" id="Beak" fill="#FFC107"></path>
+            <circle id="Eye" fill="#FFFFFF" cx="28" cy="6" r="2.5"></circle>
+            <circle id="Pupil" fill="#000000" cx="28" cy="6" r="1.5"></circle>
+        </g>
+    </g>
+</svg>

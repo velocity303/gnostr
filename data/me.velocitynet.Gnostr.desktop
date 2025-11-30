@@ -1,9 +1,10 @@
 [Desktop Entry]
 Name=Gnostr
-Comment=A native Nostr client for GNOME
+Comment=Native Nostr Client
 Exec=gnostr
 Icon=me.velocitynet.Gnostr
 Terminal=false
 Type=Application
 Categories=Network;Chat;GTK;
 StartupNotify=true
+StartupWMClass=me.velocitynet.Gnostr
