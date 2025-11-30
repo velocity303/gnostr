@@ -93,6 +93,13 @@
             "build-commands": [
                 "./install_app.sh"
             ],
+            "build-options": {
+                "env": {
+                    "CFLAGS": "",
+                    "CXXFLAGS": "",
+                    "LDFLAGS": ""
+                }
+            },
             "sources": [
                 {
                     "type": "dir",
