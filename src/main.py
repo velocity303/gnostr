@@ -498,18 +498,57 @@ class MainWindow(Adw.ApplicationWindow):
         c.set_child(self.posts_box); s.set_child(c); b.append(s); self.feed_page.set_child(b); self.content_nav.add(self.feed_page)
 
         self.thread_page = Adw.NavigationPage(title="Thread", tag="thread")
-        self.thread_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        # Note: Dynamic page creation happens in show_thread
+        t_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        t_box.append(Adw.HeaderBar())
+        t_scroll = Gtk.ScrolledWindow(vexpand=True)
+        t_clamp = Adw.Clamp(maximum_size=600)
+        self.thread_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
+        t_clamp.set_child(self.thread_container)
+        t_scroll.set_child(t_clamp)
+        t_box.append(t_scroll)
+        self.thread_page.set_child(t_box)
 
+        # Profile Page Setup (Corrected)
         self.profile_page = Adw.NavigationPage(title="Profile", tag="profile")
-        p_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=20, margin_top=40, halign=Gtk.Align.CENTER)
-        p_box.append(Adw.HeaderBar())
+
+        # Top-level layout (Full Width/Height)
+        p_main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+
+        # Header Bar (Top, Full Width)
+        p_header = Adw.HeaderBar()
+        p_main_box.append(p_header)
+
+        # Scrolled Area
+        p_scroll = Gtk.ScrolledWindow(vexpand=True)
+        p_clamp = Adw.Clamp(maximum_size=600)
+
+        # Content Box (Centered)
+        p_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=20)
+        p_box.set_margin_top(40)
+        p_box.set_margin_bottom(20)
+        p_box.set_margin_start(12)
+        p_box.set_margin_end(12)
+        p_box.set_halign(Gtk.Align.CENTER)
+
         self.prof_avatar = Adw.Avatar(size=96, show_initials=True)
+        p_box.append(self.prof_avatar)
+
         self.lbl_name = Gtk.Label(css_classes=["title-1"])
+        p_box.append(self.lbl_name)
+
         self.lbl_npub = Gtk.Label(css_classes=["caption", "dim-label"], selectable=True)
+        self.lbl_npub.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+        p_box.append(self.lbl_npub)
+
         self.lbl_about = Gtk.Label(wrap=True, justify=Gtk.Justification.CENTER, max_width_chars=40)
-        for w in [self.prof_avatar, self.lbl_name, self.lbl_npub, self.lbl_about]: p_box.append(w)
-        self.profile_page.set_child(p_box)
+        self.lbl_about.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        p_box.append(self.lbl_about)
+
+        p_clamp.set_child(p_box)
+        p_scroll.set_child(p_clamp)
+        p_main_box.append(p_scroll)
+
+        self.profile_page.set_child(p_main_box)
 
     def show_thread(self, event_id, pubkey, content):
         page = Adw.NavigationPage(title="Thread")
@@ -532,12 +571,12 @@ class MainWindow(Adw.ApplicationWindow):
         self.client.fetch_profile(pubkey)
         npub = nostr_utils.hex_to_nsec(pubkey).replace("nsec", "npub")
         self.lbl_npub.set_text(npub[:12] + "..." + npub[-12:])
-        prof = self.db.get_profile(pubkey)
-        if prof:
-            name = prof.get('display_name') or prof.get('name') or "Anonymous"
+        profile = self.db.get_profile(pubkey)
+        if profile:
+            name = profile.get('display_name') or profile.get('name') or "Anonymous"
             self.lbl_name.set_text(name); self.prof_avatar.set_text(name)
-            self.lbl_about.set_text(prof.get('about') or "")
-            if prof.get('picture'): ImageLoader.load_avatar(prof['picture'], lambda t: self.prof_avatar.set_custom_image(t))
+            self.lbl_about.set_text(profile.get('about') or "")
+            if profile.get('picture'): ImageLoader.load_avatar(profile['picture'], lambda t: self.prof_avatar.set_custom_image(t))
         else: self.lbl_name.set_text("Loading..."); self.prof_avatar.set_text("?")
 
     def create_post_widget(self, pubkey, content, event_id, is_hero=False):
