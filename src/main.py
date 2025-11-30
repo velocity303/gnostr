@@ -40,31 +40,48 @@ class ContentRenderer:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         if not content: return box
 
-        clean_content = html.unescape(content)
-        parts = ContentRenderer.LINK_REGEX.split(clean_content)
-        current_text_buffer = []
+        try:
+            # Unescape HTML entities
+            clean_content = html.unescape(content)
+            parts = ContentRenderer.LINK_REGEX.split(clean_content)
+            current_text_buffer = []
 
-        for part in parts:
-            if not part: continue
-            if ContentRenderer.LINK_REGEX.match(part):
-                if current_text_buffer:
-                    ContentRenderer._add_text(box, "".join(current_text_buffer))
-                    current_text_buffer = []
+            for part in parts:
+                if not part: continue
+                if ContentRenderer.LINK_REGEX.match(part):
+                    # Flush previous text
+                    if current_text_buffer:
+                        ContentRenderer._add_text(box, "".join(current_text_buffer))
+                        current_text_buffer = []
 
-                lower = part.lower()
-                if part.startswith("nostr:"):
-                    ContentRenderer._add_nostr_card(box, part, window_ref)
-                elif lower.endswith(ContentRenderer.IMAGE_EXTS):
-                    ContentRenderer._add_image(box, part)
-                elif lower.endswith(ContentRenderer.VIDEO_EXTS):
-                    ContentRenderer._add_link_button(box, part, "▶ Watch Video")
+                    # Strip punctuation that might be captured at the end
+                    clean_part = part.rstrip(".,;!?)]}")
+                    trailing = part[len(clean_part):]
+
+                    lower = clean_part.lower()
+
+                    if clean_part.startswith("nostr:"):
+                        ContentRenderer._add_nostr_card(box, clean_part, window_ref)
+                    elif lower.endswith(ContentRenderer.IMAGE_EXTS):
+                        ContentRenderer._add_image(box, clean_part)
+                    elif lower.endswith(ContentRenderer.VIDEO_EXTS):
+                        ContentRenderer._add_link_button(box, clean_part, "▶ Watch Video")
+                    else:
+                        ContentRenderer._add_link(box, clean_part)
+
+                    if trailing:
+                        current_text_buffer.append(trailing)
                 else:
-                    ContentRenderer._add_link(box, part)
-            else:
-                current_text_buffer.append(part)
+                    current_text_buffer.append(part)
 
-        if current_text_buffer:
-            ContentRenderer._add_text(box, "".join(current_text_buffer))
+            if current_text_buffer:
+                ContentRenderer._add_text(box, "".join(current_text_buffer))
+
+        except Exception as e:
+            print(f"Render Error: {e}")
+            # Fallback: just show text
+            ContentRenderer._add_text(box, content)
+
         return box
 
     @staticmethod
@@ -73,7 +90,7 @@ class ContentRenderer:
         label.set_use_markup(False)
         label.set_wrap(True)
         label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-        label.set_max_width_chars(50)
+        label.set_max_width_chars(60) # Increased slightly
         box.append(label)
 
     @staticmethod
@@ -106,14 +123,11 @@ class ContentRenderer:
             is_event = "nevent" in uri or "note" in uri
             is_profile = "nprofile" in uri or "npub" in uri
 
-            # Wrap in a Button to stop click propagation to the parent post
-            btn = Gtk.Button(css_classes=["flat", "card"])
-
             row = Adw.ActionRow()
-            # Disable activation on row since button handles click
-            row.set_activatable(False)
+            row.set_activatable(False) # Handled by button wrapper
 
             short_id = bech32_str[:10] + "..." + bech32_str[-6:]
+            btn = Gtk.Button(css_classes=["flat", "card"])
 
             if is_event:
                 row.set_title("Quoted Event")
@@ -123,12 +137,12 @@ class ContentRenderer:
                 def on_click_event(b):
                     hex_id = ContentRenderer._extract_hex_id(bech32_str)
                     if hex_id:
-                        print(f"DEBUG: Internal Nav -> Thread {hex_id}")
+                        # Navigate internally
                         window.show_thread(hex_id, "Unknown Author", "Loading quoted post...")
                     else:
+                        # Fallback
                         launcher = Gtk.UriLauncher(uri=f"https://njump.me/{bech32_str}")
                         launcher.launch(window, None, None)
-
                 btn.connect("clicked", on_click_event)
 
             elif is_profile:
@@ -139,12 +153,11 @@ class ContentRenderer:
                 def on_click_profile(b):
                     hex_pk = ContentRenderer._extract_hex_id(bech32_str)
                     if hex_pk:
-                        print(f"DEBUG: Internal Nav -> Profile {hex_pk}")
+                        # Navigate internally
                         window.show_profile(hex_pk)
                     else:
                         launcher = Gtk.UriLauncher(uri=f"https://njump.me/{bech32_str}")
                         launcher.launch(window, None, None)
-
                 btn.connect("clicked", on_click_profile)
 
             btn.set_child(row)
@@ -331,7 +344,6 @@ class NostrClient(GObject.Object):
     def _handle_event(self, ev):
         eid = ev.get('id'); kind = ev['kind']; pubkey = ev['pubkey']
         tags = ev.get('tags', [])
-
         target = self.get_ref_id(tags)
         if target:
             if target not in self.metrics: self.metrics[target] = {'likes':0,'reposts':0,'replies':0}
@@ -342,11 +354,9 @@ class NostrClient(GObject.Object):
             if updated:
                 m = self.metrics[target]
                 GLib.idle_add(self.emit, 'metrics-updated', target, m['likes'], m['reposts'], m['replies'])
-
         if eid in self.seen_events: return
         self.seen_events.add(eid)
         self.db.save_event(ev)
-
         if kind == 0:
             self.db.save_profile(pubkey, ev['content'], ev['created_at'])
             GLib.idle_add(self.emit, 'profile-updated', pubkey)
@@ -503,107 +513,96 @@ class MainWindow(Adw.ApplicationWindow):
         t_box.append(t_scroll)
         self.thread_page.set_child(t_box)
 
-        self.profile_page = Adw.NavigationPage(title="Profile", tag="profile")
-        p_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=20)
-        p_box.set_margin_top(40)
-        p_box.set_margin_bottom(20)
-        p_box.set_margin_start(12)
-        p_box.set_margin_end(12)
-        p_box.set_halign(Gtk.Align.CENTER)
-
-        # Header inside
-        p_header_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        p_header_box.append(Adw.HeaderBar())
-
-        # Add scroll
-        p_scroll = Gtk.ScrolledWindow(vexpand=True)
-        p_clamp = Adw.Clamp(maximum_size=600)
-        p_clamp.set_child(p_box)
-        p_scroll.set_child(p_clamp)
-        p_header_box.append(p_scroll)
-        self.profile_page.set_child(p_header_box)
-
-        self.prof_avatar = Adw.Avatar(size=96, show_initials=True)
-        p_box.append(self.prof_avatar)
-        self.lbl_name = Gtk.Label(css_classes=["title-1"])
-        p_box.append(self.lbl_name)
-        self.lbl_npub = Gtk.Label(css_classes=["caption", "dim-label"], selectable=True)
-        self.lbl_npub.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
-        p_box.append(self.lbl_npub)
-        self.lbl_about = Gtk.Label(wrap=True, justify=Gtk.Justification.CENTER, max_width_chars=40)
-        self.lbl_about.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-        p_box.append(self.lbl_about)
+        # Dynamic Profile Pages Logic
+        # Note: We won't keep a single self.profile_page anymore.
+        # Instead, we create them on demand.
 
     def show_thread(self, event_id, pubkey, content):
+        # Dynamic Page for Thread
         page = Adw.NavigationPage(title="Thread")
         page.root_id = event_id
+
         b = Gtk.Box(orientation=Gtk.Orientation.VERTICAL); b.append(Adw.HeaderBar())
         s = Gtk.ScrolledWindow(vexpand=True); c = Adw.Clamp(maximum_size=600)
         container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
         page.thread_container = container
+
         c.set_child(container); s.set_child(c); b.append(s); page.set_child(b)
 
         self.content_nav.push(page)
 
-        # Render Hero
         hero = self.create_post_widget(pubkey, content, event_id, is_hero=True)
-        # Store hero so we can update it later
         page.hero_widget = hero
-
         container.append(hero)
         container.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
         container.append(Gtk.Label(label="Replies", css_classes=["heading"], xalign=0))
+
         self.client.fetch_thread(event_id)
 
     def show_profile(self, pubkey):
-        if self.content_nav.get_visible_page() != self.profile_page:
-             self.content_nav.push(self.profile_page)
+        # Dynamic Page for Profile
+        page = Adw.NavigationPage(title="Profile", tag=f"profile_{pubkey}")
+
+        p_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=20)
+        p_box.set_margin_top(40); p_box.set_margin_bottom(20); p_box.set_margin_start(12); p_box.set_margin_end(12)
+        p_box.set_halign(Gtk.Align.CENTER)
+
+        # Header wrapper
+        p_header_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        p_header_box.append(Adw.HeaderBar())
+
+        p_scroll = Gtk.ScrolledWindow(vexpand=True)
+        p_clamp = Adw.Clamp(maximum_size=600)
+        p_clamp.set_child(p_box); p_scroll.set_child(p_clamp)
+        p_header_box.append(p_scroll)
+        page.set_child(p_header_box)
+
+        # Elements
+        prof_avatar = Adw.Avatar(size=96, show_initials=True)
+        lbl_name = Gtk.Label(css_classes=["title-1"])
+        lbl_npub = Gtk.Label(css_classes=["caption", "dim-label"], selectable=True)
+        lbl_npub.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+        lbl_about = Gtk.Label(wrap=True, justify=Gtk.Justification.CENTER, max_width_chars=40)
+        lbl_about.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+
+        for w in [prof_avatar, lbl_name, lbl_npub, lbl_about]: p_box.append(w)
+
+        # Populate Data
         self.client.fetch_profile(pubkey)
         npub = nostr_utils.hex_to_nsec(pubkey).replace("nsec", "npub")
-        self.lbl_npub.set_text(npub[:12] + "..." + npub[-12:])
+        lbl_npub.set_text(npub[:12] + "..." + npub[-12:])
+
         profile = self.db.get_profile(pubkey)
         if profile:
             name = profile.get('display_name') or profile.get('name') or "Anonymous"
-            self.lbl_name.set_text(name); self.prof_avatar.set_text(name)
-            self.lbl_about.set_text(profile.get('about') or "")
-            if profile.get('picture'): ImageLoader.load_avatar(profile['picture'], lambda t: self.prof_avatar.set_custom_image(t))
-        else: self.lbl_name.set_text("Loading..."); self.prof_avatar.set_text("?")
+            lbl_name.set_text(name); prof_avatar.set_text(name)
+            lbl_about.set_text(profile.get('about') or "")
+            if profile.get('picture'): ImageLoader.load_avatar(profile['picture'], lambda t: prof_avatar.set_custom_image(t))
+        else:
+             lbl_name.set_text("Loading..."); prof_avatar.set_text("?")
+
+        self.content_nav.push(page)
+
+        # Force content view visible on mobile
+        self.split_view.set_show_content(True)
 
     def create_post_widget(self, pubkey, content, event_id, is_hero=False):
         card = Adw.Bin(css_classes=["card"])
         if is_hero: card.add_css_class("hero")
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
         hb = Gtk.Box(spacing=12)
-
-        # Add references to labels so we can update them later
         prof = self.db.get_profile(pubkey)
         name = pubkey[:8]
         if prof: name = prof.get('display_name') or prof.get('name') or name
         av = Adw.Avatar(size=48 if is_hero else 40, show_initials=True, text=name)
         if prof and prof.get('picture'): ImageLoader.load_avatar(prof['picture'], lambda t: av.set_custom_image(t))
         hb.append(av)
-        card.avatar = av # Store ref
-
         nb = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        lbl_name = Gtk.Label(label=name, xalign=0, css_classes=["heading"])
-        card.lbl_name = lbl_name # Store ref
-        nb.append(lbl_name)
+        nb.append(Gtk.Label(label=name, xalign=0, css_classes=["heading"]))
         nb.append(Gtk.Label(label=pubkey[:12]+"...", xalign=0, css_classes=["caption", "dim-label"]))
         hb.append(nb)
         main_box.append(hb)
-
-        # Content can't easily be updated in-place if we replace the widget,
-        # but for 'Loading...' we assume we are creating a placeholder.
-        # Actually, ContentRenderer creates a Box.
-        content_area = ContentRenderer.render(content, self)
-        card.content_area = content_area # Store ref? No, we might need to replace the whole box.
-        # Easier: Store the main_box so we can rebuild it if needed?
-        # Or just rebuild the whole card? No.
-        # Let's just update the parts we know are placeholders.
-        # For hero updates: We will want to replace the content label if it was "Loading..."
-
-        main_box.append(content_area)
-
+        main_box.append(ContentRenderer.render(content, self))
         footer = Gtk.Box(spacing=20, margin_top=8)
         def mk_met(icon):
             b = Gtk.Box(spacing=6); b.append(Gtk.Image.new_from_icon_name(icon))
@@ -628,19 +627,11 @@ class MainWindow(Adw.ApplicationWindow):
         target = self.posts_box
         page = self.content_nav.get_visible_page()
 
-        # Check if we are in a thread view and this event IS the root ID we are waiting for
+        # Hero Replacement Logic
         if hasattr(page, 'root_id') and page.root_id == eid and hasattr(page, 'hero_widget'):
-             # Update Hero Widget!
-             # We can't easily "edit" a GtkBox in place without clearing it.
-             # Simpler: Replace the hero widget in the container.
              if hasattr(page, 'thread_container'):
-                 # We need to find the index of the hero widget (usually 0)
-                 # But GTK4 removed get_children list easily.
-                 # Alternatively, create a NEW widget and swap properties?
-                 # Or better: Just create a new one and replace the first child.
                  new_hero = self.create_post_widget(pubkey, content, eid, is_hero=True)
-
-                 # Remove old hero (first child)
+                 # GTK4 doesn't have easy child list, but we know hero is first
                  first = page.thread_container.get_first_child()
                  if first == page.hero_widget:
                      page.thread_container.remove(first)
@@ -648,6 +639,7 @@ class MainWindow(Adw.ApplicationWindow):
                      page.hero_widget = new_hero
              return
 
+        # Thread Reply Logic
         if hasattr(page, 'root_id') and hasattr(page, 'thread_container'):
             try:
                 tags = json.loads(tags_json)
@@ -657,6 +649,7 @@ class MainWindow(Adw.ApplicationWindow):
                     page.thread_container.append(w)
                     return
             except: pass
+
         if page == self.feed_page:
              w = self.create_post_widget(pubkey, content, eid)
              self.posts_box.prepend(w)
@@ -673,24 +666,15 @@ class MainWindow(Adw.ApplicationWindow):
         self.client.set_keys(self.pub_key, self.priv_key)
         self.main_stack.set_visible_child_name("app")
         self.active_feed_type = "global"
-        self.load_my_profile_ui()
+        # Initially load profile
+        if self.pub_key: self.client.fetch_profile(self.pub_key)
+
         GLib.timeout_add(1000, lambda: self.switch_feed("global"))
-        GLib.timeout_add(2000, lambda: self.client.fetch_profile(self.pub_key))
         GLib.timeout_add(2500, self.client.fetch_contacts)
         GLib.timeout_add(4000, self.client.fetch_user_relays)
 
-    def load_my_profile_ui(self):
-        if not self.pub_key: return
-        npub = nostr_utils.hex_to_nsec(self.pub_key).replace("nsec", "npub")
-        self.lbl_npub.set_text(npub[:12] + "..." + npub[-12:])
-        profile = self.db.get_profile(self.pub_key)
-        if profile:
-            name = profile.get('display_name') or profile.get('name') or "Anonymous"
-            self.lbl_name.set_text(name); self.prof_avatar.set_text(name); self.lbl_about.set_text(profile.get('about') or "")
-            if profile.get('picture'): ImageLoader.load_avatar(profile['picture'], lambda t: self.prof_avatar.set_custom_image(t))
-
     def on_profile_updated(self, client, pubkey):
-        if pubkey == self.pub_key: self.load_my_profile_ui()
+        pass
 
     def on_login_clicked(self, btn): LoginDialog(self.client, self).present()
     def on_logout_clicked(self, btn):
