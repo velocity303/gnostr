@@ -3,7 +3,7 @@
 Gnostr is a native Linux Nostr client designed specifically for the GNOME Desktop environment.  It leverages an adaptive user interface, providing a great experience on both desktop and mobile Linux devices, such as the Librem 5 or PinePhone.
 
 ## Features
-
+[![Screenshot of Gnostr](screenshot.png)](screenshot.png)
 *   **Adaptive UI:** Utilizes `Adw.NavigationSplitView` for a sidebar layout on desktop and a navigation stack on mobile, ensuring a consistent and intuitive experience across different screen sizes.
 *   **Secure Storage:** Private keys (nsec) are stored securely in the system keyring using `libsecret`, preventing exposure of sensitive data in plain text.
 *   **Nostr Protocol:** Connects to relays via WebSockets to fetch and publish events. (Currently focused on read-only functionality).
