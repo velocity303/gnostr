@@ -3,6 +3,7 @@ import threading
 import time
 import os
 import gi
+import traceback
 from gi.repository import GObject, GLib
 import nostr_utils
 
@@ -37,27 +38,26 @@ class NostrRelay(GObject.Object):
                 if d[0] == "EVENT":
                     self.on_event(d[2])
                 elif d[0] == "EOSE":
-                    # Silence EOSE logs for metadata to reduce noise
                     if not d[1].startswith("meta_"):
-                        print(f"DEBUG [{self.url}]: EOSE {d[1]}")
+                        # print(f"DEBUG [{self.url}]: EOSE {d[1]}")
+                        pass
                 elif d[0] == "NOTICE":
                     print(f"NOTICE [{self.url}]: {d[1]}")
             except Exception as e:
-                pass # Silence parse errors for now
+                print(f"❌ ERROR [{self.url}] Message Handler Failed:")
+                print(f"   Msg: {m[:100]}...")
+                traceback.print_exc()
 
         def on_open(ws):
-            # print(f"✅ [{self.url}] Connected.")
             self.is_connected=True
             GLib.idle_add(self.on_status, self.url, "Connected")
             self.process_queue()
 
         def on_err(ws, e):
-            # print(f"❌ [{self.url}] Error: {e}")
             self.is_connected=False
             GLib.idle_add(self.on_status, self.url, "Error")
 
         def on_close(ws, c, m):
-            # print(f"⚠️ [{self.url}] Closed.")
             self.is_connected=False
             GLib.idle_add(self.on_status, self.url, "Disconnected")
 
@@ -74,7 +74,6 @@ class NostrRelay(GObject.Object):
         except: pass
 
     def request_once(self, sub_id, filters):
-        # Add to queue to prevent flooding
         self.request_queue.append((sub_id, filters))
         if self.is_connected:
             self.process_queue()
@@ -87,9 +86,7 @@ class NostrRelay(GObject.Object):
             while self.request_queue and self.is_connected:
                 sub_id, filters = self.request_queue.pop(0)
                 try:
-                    # print(f"DEBUG [{self.url}] REQ {sub_id}")
                     self.ws.send(json.dumps(["REQ", sub_id] + (filters if isinstance(filters, list) else [filters])))
-                    # Small delay to be polite to the relay
                     time.sleep(0.1)
                 except: break
             self.is_processing_queue = False
@@ -146,7 +143,6 @@ class NostrClient(GObject.Object):
     def set_keys(self, pub, priv): self.my_pubkey = pub; self.my_privkey = priv
 
     def connect_all(self):
-        # Stagger connection start to avoid CPU spike/network burst
         def _connect_loop():
             for url in list(self.relay_urls):
                 GLib.idle_add(self.add_relay_connection, url)
@@ -173,12 +169,8 @@ class NostrClient(GObject.Object):
 
     def fetch_user_relays(self):
         if not self.my_pubkey: return
-        print(f"DEBUG: Requesting relay list (Kind 10002) for {self.my_pubkey[:8]}...")
         filter = {"kinds": [10002], "authors": [self.my_pubkey], "limit": 1}
         sub_id = f"relays_{self.my_pubkey[:8]}_{int(time.time())}"
-
-        # Only ask 2 random relays initially to avoid rate limits, or stagger them
-        # For now, we stagger requests via the queue in NostrRelay
         for r in self.active_relays.values(): 
             r.request_once(sub_id, filter)
 
@@ -196,11 +188,12 @@ class NostrClient(GObject.Object):
         return None
 
     def _handle_event(self, ev):
-        eid = ev.get('id'); kind = ev['kind']; pubkey = ev['pubkey']
-        tags = ev.get('tags', [])
-
-        # Minimal debug for key events only
-        if kind == 10002: print(f"DEBUG: Recv Kind 10002 from {pubkey[:8]}")
+        try:
+            eid = ev.get('id'); kind = ev['kind']; pubkey = ev['pubkey']
+            tags = ev.get('tags', [])
+        except KeyError as e:
+            print(f"❌ ERROR: Malformed Event: {e}")
+            return
 
         target = self.get_ref_id(tags)
         if target:
@@ -213,7 +206,11 @@ class NostrClient(GObject.Object):
                 m = self.metrics[target]
                 GLib.idle_add(self.emit, 'metrics-updated', target, m['likes'], m['reposts'], m['replies'])
 
-        if eid in self.seen_events: return
+        if eid in self.seen_events:
+            # DEBUG: Uncomment to trace ignored events
+            # if kind == 1: print(f"DEBUG: [Client] Ignored known event {eid[:8]}")
+            return
+
         self.seen_events.add(eid)
         self.db.save_event(ev)
 
@@ -226,7 +223,6 @@ class NostrClient(GObject.Object):
                 c = nostr_utils.extract_followed_pubkeys(ev)
                 self.db.save_contacts(self.my_pubkey, c)
                 GLib.idle_add(self.emit, 'contacts-updated')
-                # Fallback relay check (Kind 3 content)
                 try:
                     if ev['content']:
                         rj = json.loads(ev['content'])
@@ -239,6 +235,7 @@ class NostrClient(GObject.Object):
                 if nr: self._merge_relays(nr)
 
         elif kind == 1:
+            # print(f"DEBUG: [Client] Emitting kind 1 {eid[:8]}")
             GLib.idle_add(self.emit, 'event-received', eid, pubkey, ev['content'], json.dumps(tags))
 
     def _merge_relays(self, new_list):
@@ -246,7 +243,6 @@ class NostrClient(GObject.Object):
         for r in new_list:
             r = r.rstrip("/")
             if r.startswith("ws") and r not in self.relay_urls:
-                print(f"DEBUG: Sync found new relay: {r}")
                 self.relay_urls.add(r); self.add_relay_connection(r); changed=True
         if changed:
             self.save_config()

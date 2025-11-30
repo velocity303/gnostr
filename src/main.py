@@ -3,6 +3,7 @@ import sys
 import json
 import time
 import gi
+import traceback
 from key_manager import KeyManager
 import nostr_utils
 from database import Database
@@ -25,6 +26,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.client.connect("profile-updated", self.on_profile_updated)
         self.client.connect("metrics-updated", self.on_metrics_updated)
         self.priv_key = None; self.pub_key = None; self.active_feed_type = "global"; self.event_widgets = {} 
+        self.active_profile_pubkey = None
 
         self.split_view = Adw.NavigationSplitView(); self.set_content(self.split_view)
         bp = Adw.Breakpoint.new(Adw.BreakpointCondition.new_length(Adw.BreakpointConditionLengthType.MAX_WIDTH, 800, Adw.LengthUnit.SP))
@@ -54,7 +56,15 @@ class MainWindow(Adw.ApplicationWindow):
         ml.set_activate_on_single_click(True); ml.connect("row-activated", self.on_menu_selected)
         
         self.rows = {}
-        for r_id, title, icon in [("global","Global","network-server"), ("following","Following","system-users"), ("me","My Posts","user-info"), ("profile","Profile","avatar-default")]:
+        items = [
+            ("global","Global","network-server"),
+            ("following","Following","system-users"),
+            ("me","My Posts","user-info"),
+            ("profile","Profile","avatar-default"),
+            ("search", "Search User", "system-search")
+        ]
+
+        for r_id, title, icon in items:
             r = Adw.ActionRow(title=title, icon_name=f"{icon}-symbolic"); r.set_activatable(True)
             ml.append(r); self.rows[r_id] = r
         
@@ -105,6 +115,12 @@ class MainWindow(Adw.ApplicationWindow):
         self.lbl_about.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
         for w in [self.prof_avatar, self.lbl_name, self.lbl_npub, self.lbl_about]: p_box.append(w)
 
+        # Profile Posts Section
+        p_box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+        p_box.append(Gtk.Label(label="Recent Posts", css_classes=["heading"], xalign=0))
+        self.profile_posts_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        p_box.append(self.profile_posts_box)
+
     def show_thread(self, event_id, pubkey, content):
         page = Adw.NavigationPage(title="Thread"); page.root_id = event_id
         b = Gtk.Box(orientation=Gtk.Orientation.VERTICAL); b.append(Adw.HeaderBar())
@@ -116,16 +132,39 @@ class MainWindow(Adw.ApplicationWindow):
         
         hero = self.create_post_widget(pubkey, content, event_id, is_hero=True)
         page.hero_widget = hero
+        page.is_loaded = False
+
         container.append(hero)
         container.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
         container.append(Gtk.Label(label="Replies", css_classes=["heading"], xalign=0))
         self.client.fetch_thread(event_id)
 
+        if pubkey == "Unknown" and content == "Loading...":
+            self.schedule_refresh(page, event_id)
+
+    def schedule_refresh(self, page, event_id, attempt=1):
+        def _refresh():
+            if page.is_loaded: return False
+            if attempt > 5:
+                print(f"❌ Give up loading thread {event_id} after 5 attempts.")
+                return False
+
+            print(f"🔄 Auto-refreshing thread {event_id} (Attempt {attempt})...")
+            self.client.fetch_thread(event_id)
+            GLib.timeout_add(3000, lambda: self.schedule_refresh(page, event_id, attempt + 1))
+            return False
+
+        GLib.timeout_add(3000, _refresh)
+
     def show_profile(self, pubkey):
-        self.content_nav.push(self.profile_page)
+        self.active_profile_pubkey = pubkey
+        if self.content_nav.get_visible_page() != self.profile_page:
+            self.content_nav.push(self.profile_page)
+
         self.client.fetch_profile(pubkey)
         npub = nostr_utils.hex_to_nsec(pubkey).replace("nsec", "npub")
         self.lbl_npub.set_text(npub[:12] + "..." + npub[-12:])
+
         profile = self.db.get_profile(pubkey)
         if profile:
             name = profile.get('display_name') or profile.get('name') or "Anonymous"
@@ -133,7 +172,62 @@ class MainWindow(Adw.ApplicationWindow):
             self.lbl_about.set_text(profile.get('about') or "")
             if profile.get('picture'): ImageLoader.load_avatar(profile['picture'], lambda t: self.prof_avatar.set_custom_image(t))
         else: self.lbl_name.set_text("Loading..."); self.prof_avatar.set_text("?")
+
+        c = self.profile_posts_box.get_first_child()
+        while c: self.profile_posts_box.remove(c); c = self.profile_posts_box.get_first_child()
+
+        posts = self.db.get_feed_for_user(pubkey, limit=20)
+        for ev in posts:
+            w = self.create_post_widget(ev['pubkey'], ev['content'], ev['id'])
+            self.profile_posts_box.append(w)
+
+        self.client.subscribe("sub_profile_view", {"kinds": [1], "authors": [pubkey], "limit": 20})
         self.split_view.set_show_content(True)
+
+    def show_search_dialog(self):
+        dialog = Adw.Window(title="Search User", modal=True, transient_for=self)
+        dialog.set_default_size(400, 150)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=24, margin_bottom=24, margin_start=24, margin_end=24)
+        lbl = Gtk.Label(label="Enter npub (nostr:npub1...)", xalign=0)
+        box.append(lbl)
+
+        entry = Gtk.Entry(placeholder_text="npub1...")
+        box.append(entry)
+
+        # Action Buttons
+        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12, halign=Gtk.Align.END)
+
+        btn_cancel = Gtk.Button(label="Cancel")
+        btn_cancel.connect("clicked", lambda b: dialog.close())
+        btn_box.append(btn_cancel)
+
+        btn_go = Gtk.Button(label="Go", css_classes=["suggested-action"])
+
+        def _on_go(*args):
+            text = entry.get_text().strip().replace("nostr:", "")
+            try:
+                if text.startswith("npub"):
+                    hrp, data = nostr_utils.bech32_decode(text)
+                    if hrp == "npub" and data:
+                        decoded = nostr_utils.convertbits(data, 5, 8, False)
+                        if decoded:
+                            hex_key = bytes(decoded).hex()
+                            dialog.close()
+                            self.show_profile(hex_key)
+                            return
+            except Exception as e:
+                print(f"Search Error: {e}")
+
+            entry.add_css_class("error")
+
+        btn_go.connect("clicked", _on_go)
+        btn_box.append(btn_go)
+
+        box.append(btn_box)
+
+        dialog.set_content(box)
+        dialog.present()
 
     def create_post_widget(self, pubkey, content, event_id, is_hero=False):
         card = Adw.Bin(css_classes=["card"])
@@ -145,7 +239,13 @@ class MainWindow(Adw.ApplicationWindow):
         if prof: name = prof.get('display_name') or prof.get('name') or name
         av = Adw.Avatar(size=48 if is_hero else 40, show_initials=True, text=name)
         if prof and prof.get('picture'): ImageLoader.load_avatar(prof['picture'], lambda t: av.set_custom_image(t))
-        hb.append(av)
+
+        # Clickable Avatar
+        btn_av = Gtk.Button(css_classes=["flat"])
+        btn_av.set_child(av)
+        btn_av.connect("clicked", lambda b: self.show_profile(pubkey))
+        hb.append(btn_av)
+
         nb = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         nb.append(Gtk.Label(label=name, xalign=0, css_classes=["heading"]))
         nb.append(Gtk.Label(label=pubkey[:12]+"...", xalign=0, css_classes=["caption", "dim-label"]))
@@ -176,7 +276,12 @@ class MainWindow(Adw.ApplicationWindow):
         target = self.posts_box
         page = self.content_nav.get_visible_page()
         
+        if page == self.profile_page and pubkey == self.active_profile_pubkey:
+            w = self.create_post_widget(pubkey, content, eid)
+            self.profile_posts_box.prepend(w)
+
         if hasattr(page, 'root_id') and page.root_id == eid and hasattr(page, 'hero_widget'):
+             page.is_loaded = True
              if hasattr(page, 'thread_container'):
                  new_hero = self.create_post_widget(pubkey, content, eid, is_hero=True)
                  first = page.thread_container.get_first_child()
@@ -194,7 +299,11 @@ class MainWindow(Adw.ApplicationWindow):
                     w = self.create_post_widget(pubkey, content, eid)
                     page.thread_container.append(w)
                     return
-            except: pass
+            except Exception as e:
+                print(f"❌ ERROR: [Main] Thread Render Failed for {eid[:8]}: {e}")
+                traceback.print_exc()
+                pass
+
         if page == self.feed_page:
              w = self.create_post_widget(pubkey, content, eid)
              self.posts_box.prepend(w)
@@ -240,7 +349,11 @@ class MainWindow(Adw.ApplicationWindow):
         elif row == self.rows["me"]: self.switch_feed("me")
         elif row == self.rows["profile"]: 
              if self.pub_key: self.show_profile(self.pub_key)
+        elif row == self.rows["search"]:
+             self.show_search_dialog()
+
         self.split_view.set_show_content(True)
+
     def on_settings_clicked(self, btn): RelayPreferencesWindow(self.client, self).present()
     def on_status_changed(self, client, status): self.status_label.set_text(status)
 
