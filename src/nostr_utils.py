@@ -2,15 +2,11 @@ import binascii
 import time
 import json
 import hashlib
+import ecdsa
 
-try:
-    import ecdsa
-except ImportError:
-    ecdsa = None
-
+# --- Bech32 Implementation ---
 CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
 
-# --- Bech32 Implementation (Keep existing code) ---
 def _bech32_polymod(values):
     generator = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3]
     chk = 1
@@ -37,7 +33,6 @@ def bech32_encode(hrp, data):
     return hrp + '1' + ''.join([CHARSET[d] for d in combined])
 
 def bech32_decode(bech):
-    # FIX: Removed "or len(bech) > 90" check to support long Nostr entities
     if ((any(ord(x) < 33 or ord(x) > 126 for x in bech)) or
             (bech.lower() != bech and bech.upper() != bech)):
         return None, None
@@ -119,7 +114,22 @@ def extract_followed_pubkeys(event_json):
             followed.append(tag[1])
     return followed
 
-# --- Signing Logic ---
+def get_thread_root(tags):
+    """Finds the root event ID from tags based on NIP-10."""
+    root_id = None
+    first_e = None
+
+    for t in tags:
+        if t[0] == 'e':
+            if not first_e: first_e = t[1]
+            # Check for explicit root marker
+            if len(t) >= 4 and t[3] == 'root':
+                return t[1]
+
+    # Fallback to first 'e' tag if no marker found (NIP-10 legacy)
+    return first_e
+
+# --- BIP-340 Signing Logic (Using ecdsa lib primitives) ---
 
 def compute_event_id(event):
     data = [
@@ -133,16 +143,53 @@ def compute_event_id(event):
     json_str = json.dumps(data, separators=(',', ':'), ensure_ascii=False)
     return hashlib.sha256(json_str.encode('utf-8')).hexdigest()
 
+def sha256(b):
+    return hashlib.sha256(b).digest()
+
+def tagged_hash(tag, data):
+    tag_hash = sha256(tag.encode())
+    return sha256(tag_hash + tag_hash + data)
+
+def schnorr_sign_with_key(msg_bytes, sk):
+    curve = sk.curve
+    n = curve.order
+    p = curve.curve.p()
+    G_point = curve.generator
+    d0 = sk.privkey.secret_multiplier
+
+    P_point = sk.verifying_key.pubkey.point
+
+    if P_point.y() % 2 != 0:
+        d0 = n - d0
+
+    t_data = d0.to_bytes(32, 'big') + msg_bytes
+    aux = sha256(t_data)
+    t = (d0 ^ int.from_bytes(tagged_hash("BIP0340/aux", aux), 'big'))
+
+    rand = tagged_hash("BIP0340/nonce", t.to_bytes(32, 'big') + P_point.x().to_bytes(32, 'big') + msg_bytes)
+    k = int.from_bytes(rand, 'big') % n
+    if k == 0: raise ValueError("Failure in nonce generation")
+
+    R_point = G_point * k
+    if R_point.y() % 2 != 0:
+        k = n - k
+
+    e_bytes = tagged_hash("BIP0340/challenge", R_point.x().to_bytes(32, 'big') + P_point.x().to_bytes(32, 'big') + msg_bytes)
+    e = int.from_bytes(e_bytes, 'big') % n
+
+    s = (k + e * d0) % n
+
+    return R_point.x().to_bytes(32, 'big').hex() + s.to_bytes(32, 'big').hex()
+
 def sign_event(event, priv_key_hex):
     if not ecdsa:
-        print("Error: ECDSA not available for signing.")
+        print("Error: ECDSA not available.")
         return None
 
     try:
         event['id'] = compute_event_id(event)
         sk = ecdsa.SigningKey.from_string(bytes.fromhex(priv_key_hex), curve=ecdsa.SECP256k1)
-        sig_bytes = sk.sign_digest(bytes.fromhex(event['id']), sigencode=ecdsa.util.sigencode_schnorr)
-        event['sig'] = sig_bytes.hex()
+        event['sig'] = schnorr_sign_with_key(bytes.fromhex(event['id']), sk)
         return event
     except Exception as e:
         print(f"Signing Error: {e}")

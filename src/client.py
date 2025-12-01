@@ -38,9 +38,7 @@ class NostrRelay(GObject.Object):
                 if d[0] == "EVENT":
                     self.on_event(d[2])
                 elif d[0] == "EOSE":
-                    if not d[1].startswith("meta_"):
-                        # print(f"DEBUG [{self.url}]: EOSE {d[1]}")
-                        pass
+                    pass
                 elif d[0] == "NOTICE":
                     print(f"NOTICE [{self.url}]: {d[1]}")
             except Exception as e:
@@ -174,13 +172,48 @@ class NostrClient(GObject.Object):
         for r in self.active_relays.values(): 
             r.request_once(sub_id, filter)
 
+    def publish(self, event):
+        for r in self.active_relays.values():
+            r.publish(event)
+
     def publish_relay_list(self):
         if not self.my_privkey: return
         event = {"pubkey": self.my_pubkey, "created_at": int(time.time()), "kind": 10002, 
                  "tags": [['r', u] for u in self.relay_urls], "content": ""}
         signed = nostr_utils.sign_event(event, self.my_privkey)
         if signed: 
-            for r in self.active_relays.values(): r.publish(signed)
+            self.publish(signed)
+
+    def follow_user(self, target_pubkey):
+        if not self.my_pubkey or not self.my_privkey: return
+        following = self.db.get_following_list(self.my_pubkey)
+        if target_pubkey in following: return
+        following.append(target_pubkey)
+        self._publish_contact_list(following)
+        print(f"✅ Followed {target_pubkey[:8]}...")
+
+    def unfollow_user(self, target_pubkey):
+        if not self.my_pubkey or not self.my_privkey: return
+        following = self.db.get_following_list(self.my_pubkey)
+        if target_pubkey not in following: return
+        following.remove(target_pubkey)
+        self._publish_contact_list(following)
+        print(f"✅ Unfollowed {target_pubkey[:8]}...")
+
+    def _publish_contact_list(self, following):
+        tags = [['p', pk] for pk in following]
+        event = {
+            "pubkey": self.my_pubkey,
+            "created_at": int(time.time()),
+            "kind": 3,
+            "tags": tags,
+            "content": ""
+        }
+        signed = nostr_utils.sign_event(event, self.my_privkey)
+        if signed:
+            self.publish(signed)
+            self.db.save_contacts(self.my_pubkey, following)
+            GLib.idle_add(self.emit, 'contacts-updated')
 
     def get_ref_id(self, tags):
         for t in tags: 
@@ -207,8 +240,6 @@ class NostrClient(GObject.Object):
                 GLib.idle_add(self.emit, 'metrics-updated', target, m['likes'], m['reposts'], m['replies'])
 
         if eid in self.seen_events:
-            # DEBUG: Uncomment to trace ignored events
-            # if kind == 1: print(f"DEBUG: [Client] Ignored known event {eid[:8]}")
             return
 
         self.seen_events.add(eid)
@@ -235,7 +266,6 @@ class NostrClient(GObject.Object):
                 if nr: self._merge_relays(nr)
 
         elif kind == 1:
-            # print(f"DEBUG: [Client] Emitting kind 1 {eid[:8]}")
             GLib.idle_add(self.emit, 'event-received', eid, pubkey, ev['content'], json.dumps(tags))
 
     def _merge_relays(self, new_list):
@@ -257,10 +287,14 @@ class NostrClient(GObject.Object):
         if pubkey in self.requested_profiles: return
         self.requested_profiles.add(pubkey)
         for r in self.active_relays.values(): r.request_once(f"meta_{pubkey[:8]}", {"kinds": [0], "authors": [pubkey], "limit": 1})
+
     def fetch_thread(self, root_id):
         f1 = {"ids": [root_id]}
-        f2 = {"kinds": [1], "#e": [root_id], "limit": 50}
+        # Fetch replies to root (covers both direct and nested usually if tags are propagated)
+        # Also fetch the root itself
+        f2 = {"kinds": [1], "#e": [root_id], "limit": 100}
         f3 = {"kinds": [6, 7], "#e": [root_id], "limit": 100}
         self.subscribe(f"thread_{root_id}", [f1, f2, f3])
+
     def close(self): 
         for r in self.active_relays.values(): r.close()
