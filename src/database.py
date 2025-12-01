@@ -11,7 +11,7 @@ class Database:
         self.data_dir = GLib.get_user_data_dir()
         self.db_path = os.path.join(self.data_dir, "gnostr.db")
         self.conn = None
-        self.lock = threading.Lock() # CRITICAL: Prevent concurrent write crashes
+        self.lock = threading.Lock()
         self.init_db()
 
     def init_db(self):
@@ -19,8 +19,6 @@ class Database:
             if not os.path.exists(self.data_dir):
                 os.makedirs(self.data_dir)
 
-            # check_same_thread=False allows read/write from different threads
-            # BUT we still need the Lock() to prevent race conditions.
             self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
             cursor = self.conn.cursor()
 
@@ -36,7 +34,6 @@ class Database:
                 )
             ''')
 
-            # Profiles Table (Metadata)
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS profiles (
                     pubkey TEXT PRIMARY KEY,
@@ -84,7 +81,6 @@ class Database:
                 print(f"⚠️ DB Save Event Error: {e}")
 
     def save_profile(self, pubkey, content_json, created_at):
-        """Parses Kind 0 content and saves to profiles table."""
         if not self.conn: return
         try:
             data = json.loads(content_json)
@@ -107,12 +103,10 @@ class Database:
                     WHERE excluded.updated_at > profiles.updated_at
                 ''', (pubkey, name, display_name, about, picture, created_at))
                 self.conn.commit()
-                # print(f"✅ Saved Profile for {name or pubkey[:8]}")
         except Exception as e:
             print(f"⚠️ DB Save Profile Error: {e}")
 
     def get_profile(self, pubkey):
-        """Returns dict of profile data or None."""
         if not self.conn: return None
         with self.lock:
             cursor = self.conn.cursor()
@@ -126,6 +120,16 @@ class Database:
                     "picture": row[3]
                 }
             return None
+
+    def get_event_by_id(self, event_id):
+        """Fetch a single event by ID."""
+        if not self.conn: return None
+        with self.lock:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT * FROM events WHERE id = ?", (event_id,))
+            rows = cursor.fetchall()
+            events = self._rows_to_events(rows)
+            return events[0] if events else None
 
     def get_feed_for_user(self, pubkey, limit=50):
         if not self.conn: return []

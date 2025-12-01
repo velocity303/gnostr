@@ -13,7 +13,7 @@ from dialogs import LoginDialog, RelayPreferencesWindow
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
-from gi.repository import Gtk, Adw, GLib, Gio, Pango
+from gi.repository import Gtk, Adw, GLib, Gio, Pango, Gdk
 
 class MainWindow(Adw.ApplicationWindow):
     def __init__(self, *args, **kwargs):
@@ -41,10 +41,34 @@ class MainWindow(Adw.ApplicationWindow):
         self.login_page.set_child(bx)
 
         self.main_stack.add_named(self.login_page, "login"); self.main_stack.add_named(self.split_view, "app")
+
+        # Detect Screen and Configure Images
+        self.detect_display_metrics()
+
         saved = KeyManager.load_key()
         if saved: self.perform_login(saved)
         else: self.main_stack.set_visible_child_name("login")
         GLib.idle_add(self.client.connect_all)
+
+    def detect_display_metrics(self):
+        try:
+            display = Gdk.Display.get_default()
+            monitors = display.get_monitors()
+            if monitors.get_n_items() > 0:
+                monitor = monitors.get_item(0)
+                geo = monitor.get_geometry()
+                scale = monitor.get_scale_factor()
+
+                # Check for narrow screens (Mobile)
+                if geo.width < 600:
+                    target_width = geo.width * scale
+                    print(f"DEBUG: Mobile Display Detected ({geo.width}px logical). Setting Max Image Width: {target_width}px")
+                    ImageLoader.MAX_WIDTH = int(target_width)
+                else:
+                    ImageLoader.MAX_WIDTH = 800
+        except Exception as e:
+            print(f"Display Detection Error: {e}")
+            ImageLoader.MAX_WIDTH = 800
 
     def setup_sidebar(self):
         self.sidebar_page = Adw.NavigationPage(title="Menu", tag="sidebar")
@@ -80,14 +104,19 @@ class MainWindow(Adw.ApplicationWindow):
 
         self.feed_page = Adw.NavigationPage(title="Feed", tag="feed")
         b = Gtk.Box(orientation=Gtk.Orientation.VERTICAL); b.append(Adw.HeaderBar())
-        s = Gtk.ScrolledWindow(vexpand=True); c = Adw.Clamp(maximum_size=600)
+
+        s = Gtk.ScrolledWindow(vexpand=True)
+        s.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        c = Adw.Clamp(maximum_size=600)
         self.posts_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
         c.set_child(self.posts_box); s.set_child(c); b.append(s); self.feed_page.set_child(b); self.content_nav.add(self.feed_page)
 
         self.thread_page = Adw.NavigationPage(title="Thread", tag="thread")
         t_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         t_box.append(Adw.HeaderBar())
+
         t_scroll = Gtk.ScrolledWindow(vexpand=True)
+        t_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         t_clamp = Adw.Clamp(maximum_size=600)
         self.thread_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
         t_clamp.set_child(self.thread_container)
@@ -109,62 +138,79 @@ class MainWindow(Adw.ApplicationWindow):
 
         self.prof_avatar = Adw.Avatar(size=96, show_initials=True)
         self.lbl_name = Gtk.Label(css_classes=["title-1"])
+
+        npub_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8, halign=Gtk.Align.CENTER)
         self.lbl_npub = Gtk.Label(css_classes=["caption", "dim-label"], selectable=True)
         self.lbl_npub.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+        self.lbl_npub.set_max_width_chars(25)
+
+        btn_copy = Gtk.Button(icon_name="edit-copy-symbolic", css_classes=["flat", "circular"])
+        btn_copy.set_tooltip_text("Copy npub")
+        btn_copy.connect("clicked", self.on_copy_npub)
+
+        npub_box.append(self.lbl_npub)
+        npub_box.append(btn_copy)
+
         self.lbl_about = Gtk.Label(wrap=True, justify=Gtk.Justification.CENTER, max_width_chars=40)
         self.lbl_about.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
 
         self.follow_btn_box = Gtk.Box(halign=Gtk.Align.CENTER, margin_top=10)
 
-        for w in [self.prof_avatar, self.lbl_name, self.lbl_npub, self.lbl_about, self.follow_btn_box]: p_box.append(w)
+        for w in [self.prof_avatar, self.lbl_name, npub_box, self.lbl_about, self.follow_btn_box]: p_box.append(w)
 
         p_box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
         p_box.append(Gtk.Label(label="Recent Posts", css_classes=["heading"], xalign=0))
         self.profile_posts_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         p_box.append(self.profile_posts_box)
 
+    def on_copy_npub(self, btn):
+        if self.active_profile_pubkey:
+            npub = nostr_utils.hex_to_nsec(self.active_profile_pubkey).replace("nsec", "npub")
+            clipboard = Gdk.Display.get_default().get_clipboard()
+            clipboard.set(npub)
+            self.add_toast(Adw.Toast(title="Npub Copied"))
+
+    def add_toast(self, toast):
+        self.split_view.add_toast(toast)
+
     def show_thread(self, event_id, pubkey, content, tags=[]):
         page = Adw.NavigationPage(title="Thread")
-
-        # Determine logical root of the thread to fetch context
-        # If the clicked event has a root tag, that is the root.
-        # Otherwise, the clicked event itself is the root start point for us.
         root_id = nostr_utils.get_thread_root(tags)
-
-        # We track both the ID of the clicked post (hero) and the thread root
         page.hero_id = event_id
         page.root_id = root_id if root_id else event_id
 
         b = Gtk.Box(orientation=Gtk.Orientation.VERTICAL); b.append(Adw.HeaderBar())
-        s = Gtk.ScrolledWindow(vexpand=True); c = Adw.Clamp(maximum_size=600)
+        s = Gtk.ScrolledWindow(vexpand=True)
+        s.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        c = Adw.Clamp(maximum_size=600)
         container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
         
-        # Structure: Ancestors -> Hero -> Replies
         page.ancestors_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         page.replies_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
 
         container.append(page.ancestors_box)
 
-        hero = self.create_post_widget(pubkey, content, event_id, tags, is_hero=True)
-        # Store hero timestamp for sorting logic later
-        hero.created_at = time.time() # Approximation until loaded, but usually we just treat it as pivot
-        page.hero_widget = hero
-        page.is_loaded = False
+        # Check DB for content first
+        cached_event = self.db.get_event_by_id(event_id)
+        if cached_event:
+            pubkey = cached_event['pubkey']
+            content = cached_event['content']
+            tags = cached_event.get('tags', [])
 
+        hero = self.create_post_widget(pubkey, content, event_id, tags, is_hero=True)
+        page.hero_widget = hero
+        page.is_loaded = (cached_event is not None)
         container.append(hero)
         container.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
         container.append(Gtk.Label(label="Replies", css_classes=["heading"], xalign=0))
         container.append(page.replies_box)
 
-        page.thread_container = container # Keep ref just in case
-
+        page.thread_container = container
         c.set_child(container); s.set_child(c); b.append(s); page.set_child(b)
         self.content_nav.push(page)
 
-        # Fetch the entire conversation tree starting from the root
         self.client.fetch_thread(page.root_id)
-
-        if pubkey == "Unknown" and content == "Loading...":
+        if not cached_event and pubkey == "Unknown" and content == "Loading...":
             self.schedule_refresh(page, page.root_id)
 
     def schedule_refresh(self, page, event_id, attempt=1):
@@ -173,12 +219,10 @@ class MainWindow(Adw.ApplicationWindow):
             if attempt > 5:
                 print(f"❌ Give up loading thread {event_id} after 5 attempts.")
                 return False
-
             print(f"🔄 Auto-refreshing thread {event_id} (Attempt {attempt})...")
             self.client.fetch_thread(event_id)
             GLib.timeout_add(3000, lambda: self.schedule_refresh(page, event_id, attempt + 1))
             return False
-
         GLib.timeout_add(3000, _refresh)
 
     def show_profile(self, pubkey):
@@ -188,7 +232,7 @@ class MainWindow(Adw.ApplicationWindow):
 
         self.client.fetch_profile(pubkey)
         npub = nostr_utils.hex_to_nsec(pubkey).replace("nsec", "npub")
-        self.lbl_npub.set_text(npub[:12] + "..." + npub[-12:])
+        self.lbl_npub.set_text(npub)
 
         profile = self.db.get_profile(pubkey)
         if profile:
@@ -232,12 +276,7 @@ class MainWindow(Adw.ApplicationWindow):
         def _refresh():
             if self.active_profile_pubkey != pubkey: return False
             if self.lbl_name.get_text() != "Loading...": return False
-
-            if attempt > 5:
-                print(f"❌ Give up loading profile {pubkey[:8]} after 5 attempts.")
-                return False
-
-            print(f"🔄 Auto-refreshing profile {pubkey[:8]} (Attempt {attempt})...")
+            if attempt > 5: return False
             self.client.fetch_profile(pubkey)
             GLib.timeout_add(2000, lambda: self.schedule_profile_refresh(pubkey, attempt + 1))
             return False
@@ -246,21 +285,15 @@ class MainWindow(Adw.ApplicationWindow):
     def show_search_dialog(self):
         dialog = Adw.Window(title="Search User", modal=True, transient_for=self)
         dialog.set_default_size(400, 150)
-
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=24, margin_bottom=24, margin_start=24, margin_end=24)
         lbl = Gtk.Label(label="Enter npub (nostr:npub1...)", xalign=0)
         box.append(lbl)
-
         entry = Gtk.Entry(placeholder_text="npub1...")
         box.append(entry)
-
         btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12, halign=Gtk.Align.END)
-        btn_cancel = Gtk.Button(label="Cancel")
-        btn_cancel.connect("clicked", lambda b: dialog.close())
+        btn_cancel = Gtk.Button(label="Cancel"); btn_cancel.connect("clicked", lambda b: dialog.close())
         btn_box.append(btn_cancel)
-
         btn_go = Gtk.Button(label="Go", css_classes=["suggested-action"])
-
         def _on_go(*args):
             text = entry.get_text().strip().replace("nostr:", "")
             try:
@@ -273,16 +306,10 @@ class MainWindow(Adw.ApplicationWindow):
                             dialog.close()
                             self.show_profile(hex_key)
                             return
-            except Exception as e:
-                print(f"Search Error: {e}")
-
+            except: pass
             entry.add_css_class("error")
-
         btn_go.connect("clicked", _on_go)
-        btn_box.append(btn_go)
-        box.append(btn_box)
-        dialog.set_content(box)
-        dialog.present()
+        btn_box.append(btn_go); box.append(btn_box); dialog.set_content(box); dialog.present()
 
     def create_post_widget(self, pubkey, content, event_id, tags=[], is_hero=False):
         try:
@@ -290,10 +317,15 @@ class MainWindow(Adw.ApplicationWindow):
             if is_hero: card.add_css_class("hero")
             main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
             hb = Gtk.Box(spacing=12)
+
+            card.pubkey = pubkey
+
             prof = self.db.get_profile(pubkey)
             name = pubkey[:8]
             if prof: name = prof.get('display_name') or prof.get('name') or name
+
             av = Adw.Avatar(size=48 if is_hero else 40, show_initials=True, text=name)
+            card.avatar = av
             if prof and prof.get('picture'): ImageLoader.load_avatar(prof['picture'], lambda t: av.set_custom_image(t))
 
             btn_av = Gtk.Button(css_classes=["flat"])
@@ -302,18 +334,19 @@ class MainWindow(Adw.ApplicationWindow):
             hb.append(btn_av)
 
             nb = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-            nb.append(Gtk.Label(label=name, xalign=0, css_classes=["heading"]))
-            nb.append(Gtk.Label(label=pubkey[:12]+"...", xalign=0, css_classes=["caption", "dim-label"]))
+            lbl_name = Gtk.Label(label=name, xalign=0, css_classes=["heading"])
+            card.lbl_name = lbl_name
+            nb.append(lbl_name)
+
+            lbl_npub = Gtk.Label(label=pubkey[:12]+"...", xalign=0, css_classes=["caption", "dim-label"])
+            nb.append(lbl_npub)
             hb.append(nb)
             main_box.append(hb)
 
-            try:
-                main_box.append(ContentRenderer.render(content, self))
+            try: main_box.append(ContentRenderer.render(content, self, card))
             except Exception as re:
-                print(f"❌ ERROR [Widget]: Render failed for {event_id[:8]}. Content repr: {repr(content)}")
-                print(f"   Reason: {re}")
-                lbl = Gtk.Label(label=f"[Content Render Failed: {re}]")
-                main_box.append(lbl)
+                print(f"Render Error: {re}")
+                main_box.append(Gtk.Label(label=f"[Content Error]"))
 
             footer = Gtk.Box(spacing=20, margin_top=8)
             def mk_met(icon):
@@ -330,42 +363,28 @@ class MainWindow(Adw.ApplicationWindow):
             self.event_widgets[event_id] = card
             if not is_hero:
                 ctrl = Gtk.GestureClick()
-                # Pass tags here correctly
                 ctrl.connect("released", lambda c, n, x, y: self.show_thread(event_id, pubkey, content, tags))
                 card.add_controller(ctrl)
             return card
         except Exception as e:
-            print(f"❌ CRITICAL [Widget]: Failed to create post widget for {event_id[:8]}: {e}")
             traceback.print_exc()
             return Gtk.Label(label="[Widget Error]")
 
     def on_event_received(self, client, eid, pubkey, content, tags_json):
         if not self.db.get_profile(pubkey): self.client.fetch_profile(pubkey)
-        target = self.posts_box
         page = self.content_nav.get_visible_page()
-        
-        try:
-            tags = json.loads(tags_json)
+        try: tags = json.loads(tags_json)
         except: tags = []
 
         if page == self.profile_page and pubkey == self.active_profile_pubkey:
             w = self.create_post_widget(pubkey, content, eid, tags)
             self.profile_posts_box.prepend(w)
 
-        # Thread View Logic
         if hasattr(page, 'hero_id'):
-            # If this is the hero (clicked) event updating
             if eid == page.hero_id:
                  page.is_loaded = True
                  if hasattr(page, 'thread_container'):
-                     new_hero = self.create_post_widget(pubkey, content, eid, tags, is_hero=True)
-                     # Swap logic roughly... actually simply replacing the child in box is hard in Gtk4 without refs
-                     # For now, we assume the hero widget is already set and static content doesn't change much
-                     # except metadata. We skip replacing it to avoid flicker, or could refine this.
                      return
-
-            # If it's part of the thread context
-            # Simplistic check: does it reference the root? Or is it the root?
             is_relevant = False
             if eid == page.root_id: is_relevant = True
             else:
@@ -374,13 +393,6 @@ class MainWindow(Adw.ApplicationWindow):
 
             if is_relevant:
                 w = self.create_post_widget(pubkey, content, eid, tags)
-                w.created_at = time.time() # Needs actual event timestamp from client for proper sort
-
-                # Sort into Ancestors or Replies based on Hero ID comparison
-                # Since we don't have easy timestamps passed in event-received (it's separate),
-                # we rely on the fact that Ancestors usually come before Hero in a full fetch,
-                # but let's use a heuristic: if it IS the root, it's an ancestor.
-
                 if eid == page.root_id and eid != page.hero_id:
                     self._insert_sorted(page.ancestors_box, w)
                 elif eid != page.hero_id:
@@ -391,21 +403,47 @@ class MainWindow(Adw.ApplicationWindow):
              w = self.create_post_widget(pubkey, content, eid, tags)
              self.posts_box.prepend(w)
 
+        for wid, widget in self.event_widgets.items():
+            if hasattr(widget, 'quote_widgets'):
+                for (quoted_id, quote_box) in widget.quote_widgets:
+                    if quoted_id == eid:
+                        child = quote_box.get_first_child()
+                        if child: quote_box.remove(child)
+                        event = self.db.get_event_by_id(eid)
+                        if event: ContentRenderer._build_quote_content(quote_box, event, self)
+
     def _insert_sorted(self, box, widget):
-        # Naive append for now as we lack easy timestamp access in this scope without DB lookup
-        # Ideally, we would sort by created_at.
         box.append(widget)
 
     def on_contacts_updated(self, client):
-        if self.active_feed_type == "following":
-            self.switch_feed("following")
+        if self.active_feed_type == "following": self.switch_feed("following")
         if self.content_nav.get_visible_page() == self.profile_page and self.active_profile_pubkey:
             self.show_profile(self.active_profile_pubkey)
 
     def on_profile_updated(self, client, pubkey):
         if pubkey == self.pub_key: self.load_my_profile_ui()
+
         if pubkey == self.active_profile_pubkey and self.content_nav.get_visible_page() == self.profile_page:
              self.show_profile(pubkey)
+
+        profile = self.db.get_profile(pubkey)
+        if not profile: return
+
+        name = profile.get('display_name') or profile.get('name') or pubkey[:8]
+
+        for eid, widget in self.event_widgets.items():
+            if hasattr(widget, 'pubkey') and widget.pubkey == pubkey:
+                if hasattr(widget, 'lbl_name'): widget.lbl_name.set_label(name)
+                if hasattr(widget, 'avatar') and profile.get('picture'):
+                    ImageLoader.load_avatar(profile['picture'], lambda t, w=widget: w.avatar.set_custom_image(t))
+
+            if hasattr(widget, 'mention_widgets'):
+                for (btn_pubkey, lbl_name, av) in widget.mention_widgets:
+                    if btn_pubkey == pubkey:
+                        lbl_name.set_label(name)
+                        av.set_text(name)
+                        if profile.get('picture'):
+                            ImageLoader.load_avatar(profile['picture'], lambda t, a=av: a.set_custom_image(t))
 
     def on_metrics_updated(self, client, eid, likes, reposts, replies):
         if eid in self.event_widgets:
@@ -445,11 +483,8 @@ class MainWindow(Adw.ApplicationWindow):
         elif row == self.rows["me"]: self.switch_feed("me")
         elif row == self.rows["profile"]: 
              if self.pub_key: self.show_profile(self.pub_key)
-        elif row == self.rows["search"]:
-             self.show_search_dialog()
-
+        elif row == self.rows["search"]: self.show_search_dialog()
         self.split_view.set_show_content(True)
-
     def on_settings_clicked(self, btn): RelayPreferencesWindow(self.client, self).present()
     def on_status_changed(self, client, status): self.status_label.set_text(status)
 
@@ -460,14 +495,12 @@ class MainWindow(Adw.ApplicationWindow):
         c = self.posts_box.get_first_child()
         while c: self.posts_box.remove(c); c = self.posts_box.get_first_child()
         self.event_widgets.clear()
-
         cached = []
         if feed_type == "me" and self.pub_key: cached = self.db.get_feed_for_user(self.pub_key)
         elif feed_type == "following" and self.pub_key: cached = self.db.get_feed_following(self.pub_key)
         for ev in cached:
             w = self.create_post_widget(ev['pubkey'], ev['content'], ev['id'], ev.get('tags', []))
             self.posts_box.prepend(w)
-
         if feed_type == "global": self.client.subscribe("sub_global", {"kinds": [1], "limit": 20})
         elif feed_type == "me" and self.pub_key: self.client.subscribe("sub_me", {"kinds": [1], "authors": [self.pub_key], "limit": 20})
         elif feed_type == "following" and self.pub_key:

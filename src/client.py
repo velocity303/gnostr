@@ -172,7 +172,14 @@ class NostrClient(GObject.Object):
         for r in self.active_relays.values(): 
             r.request_once(sub_id, filter)
 
+    # --- NEW: Added request_once ---
+    def request_once(self, sub_id, filters):
+        """Broadcasts a one-time request to all connected relays."""
+        for r in self.active_relays.values():
+            r.request_once(sub_id, filters)
+
     def publish(self, event):
+        """Broadcasts a signed event to all active relays."""
         for r in self.active_relays.values():
             r.publish(event)
 
@@ -287,14 +294,10 @@ class NostrClient(GObject.Object):
         if pubkey in self.requested_profiles: return
         self.requested_profiles.add(pubkey)
         for r in self.active_relays.values(): r.request_once(f"meta_{pubkey[:8]}", {"kinds": [0], "authors": [pubkey], "limit": 1})
-
     def fetch_thread(self, root_id):
         f1 = {"ids": [root_id]}
-        # Fetch replies to root (covers both direct and nested usually if tags are propagated)
-        # Also fetch the root itself
-        f2 = {"kinds": [1], "#e": [root_id], "limit": 100}
+        f2 = {"kinds": [1], "#e": [root_id], "limit": 50}
         f3 = {"kinds": [6, 7], "#e": [root_id], "limit": 100}
         self.subscribe(f"thread_{root_id}", [f1, f2, f3])
-
     def close(self): 
         for r in self.active_relays.values(): r.close()
