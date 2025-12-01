@@ -41,34 +41,10 @@ class MainWindow(Adw.ApplicationWindow):
         self.login_page.set_child(bx)
 
         self.main_stack.add_named(self.login_page, "login"); self.main_stack.add_named(self.split_view, "app")
-
-        # Detect Screen and Configure Images
-        self.detect_display_metrics()
-
         saved = KeyManager.load_key()
         if saved: self.perform_login(saved)
         else: self.main_stack.set_visible_child_name("login")
         GLib.idle_add(self.client.connect_all)
-
-    def detect_display_metrics(self):
-        try:
-            display = Gdk.Display.get_default()
-            monitors = display.get_monitors()
-            if monitors.get_n_items() > 0:
-                monitor = monitors.get_item(0)
-                geo = monitor.get_geometry()
-                scale = monitor.get_scale_factor()
-
-                # Check for narrow screens (Mobile)
-                if geo.width < 600:
-                    target_width = geo.width * scale
-                    print(f"DEBUG: Mobile Display Detected ({geo.width}px logical). Setting Max Image Width: {target_width}px")
-                    ImageLoader.MAX_WIDTH = int(target_width)
-                else:
-                    ImageLoader.MAX_WIDTH = 800
-        except Exception as e:
-            print(f"Display Detection Error: {e}")
-            ImageLoader.MAX_WIDTH = 800
 
     def setup_sidebar(self):
         self.sidebar_page = Adw.NavigationPage(title="Menu", tag="sidebar")
@@ -105,8 +81,10 @@ class MainWindow(Adw.ApplicationWindow):
         self.feed_page = Adw.NavigationPage(title="Feed", tag="feed")
         b = Gtk.Box(orientation=Gtk.Orientation.VERTICAL); b.append(Adw.HeaderBar())
 
+        # FIX: Keep the policy fix from previous turn
         s = Gtk.ScrolledWindow(vexpand=True)
         s.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+
         c = Adw.Clamp(maximum_size=600)
         self.posts_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
         c.set_child(self.posts_box); s.set_child(c); b.append(s); self.feed_page.set_child(b); self.content_nav.add(self.feed_page)
@@ -117,6 +95,7 @@ class MainWindow(Adw.ApplicationWindow):
 
         t_scroll = Gtk.ScrolledWindow(vexpand=True)
         t_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+
         t_clamp = Adw.Clamp(maximum_size=600)
         self.thread_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
         t_clamp.set_child(self.thread_container)
@@ -190,7 +169,6 @@ class MainWindow(Adw.ApplicationWindow):
 
         container.append(page.ancestors_box)
 
-        # Check DB for content first
         cached_event = self.db.get_event_by_id(event_id)
         if cached_event:
             pubkey = cached_event['pubkey']

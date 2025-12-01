@@ -5,6 +5,8 @@ import urllib.request
 import threading
 import concurrent.futures
 from urllib.parse import urlparse
+import traceback
+
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 gi.require_version('Pango', '1.0')
@@ -54,7 +56,8 @@ class ContentRenderer:
                     if clean_part.startswith("nostr:"): 
                         ContentRenderer._add_nostr_card(box, clean_part, window_ref, post_widget_ref)
                     elif ContentRenderer.is_image_url(clean_part):
-                        ContentRenderer._add_image(box, clean_part)
+                        # Pass window_ref to calculate proper sizing
+                        ContentRenderer._add_image(box, clean_part, window_ref)
                     elif ContentRenderer.is_video_url(clean_part):
                         ContentRenderer._add_link_button(box, clean_part, "▶ Watch Video")
                     else: 
@@ -98,16 +101,22 @@ class ContentRenderer:
         box.append(btn)
 
     @staticmethod
-    def _add_image(box, url):
-        img_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        img_box.set_halign(Gtk.Align.START)
+    def _add_image(box, url, window_ref):
+        # Container
+        img_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        img_box.set_halign(Gtk.Align.FILL)
+        img_box.set_hexpand(True)
+        img_box.set_size_request(-1, 200) # Placeholder height
 
         spinner = Gtk.Spinner()
         spinner.start()
+        spinner.set_halign(Gtk.Align.CENTER)
+        spinner.set_valign(Gtk.Align.CENTER)
+        spinner.set_vexpand(True)
         img_box.append(spinner)
         box.append(img_box)
 
-        ImageLoader.load_image_into_widget(url, img_box, spinner)
+        ImageLoader.load_image_into_widget(url, img_box, spinner, window_ref)
 
     @staticmethod
     def _add_nostr_card(box, uri, window, post_widget_ref=None):
@@ -248,23 +257,43 @@ class ImageLoader:
     _ongoing = {}
     _ongoing_lock = threading.Lock()
 
-    # Default Desktop Limit
-    MAX_WIDTH = 800
-
     @staticmethod
     def load_avatar(url, callback):
         ImageLoader._request_image(url, callback, size=(64,64))
 
     @staticmethod
-    def load_image_into_widget(url, container, spinner):
+    def load_image_into_widget(url, container, spinner, window_ref=None):
         def on_ready(texture):
             if spinner and spinner.get_parent() == container:
                 container.remove(spinner)
 
             if texture:
+                # Calculate layout height to prevent collapse
+                width = texture.get_width()
+                height = texture.get_height()
+                ratio = width / height if height > 0 else 1.0
+
+                # Determine available width based on window context
+                available_width = 600 # Default feed clamp width
+                if window_ref:
+                    win_w = window_ref.get_width()
+                    # On mobile (narrow window), use full width. On desktop, stick to clamp max.
+                    if win_w < 650:
+                        available_width = win_w - 40 # accounting for margins
+                    else:
+                        available_width = 600
+
+                # Calculate height needed to fit this width
+                req_height = int(available_width / ratio)
+
+                # Set request. -1 width means "don't care", height is enforced.
+                container.set_size_request(-1, req_height)
+
                 p = Gtk.Picture.new_for_paintable(texture)
-                p.set_can_shrink(False)
-                p.set_halign(Gtk.Align.START)
+                p.set_can_shrink(True)
+                p.set_content_fit(Gtk.ContentFit.CONTAIN)
+                p.set_halign(Gtk.Align.FILL)
+
                 container.append(p)
             else:
                 container.append(Gtk.Image.new_from_icon_name("image-missing-symbolic"))
@@ -298,27 +327,12 @@ class ImageLoader:
                 req = urllib.request.Request(url, headers={'User-Agent': 'Gnostr/1.0'})
                 with urllib.request.urlopen(req, timeout=15) as r:
                     data = r.read()
-
                 loader = GdkPixbuf.PixbufLoader()
                 loader.write(data)
                 loader.close()
                 pix = loader.get_pixbuf()
-
-                if pix:
-                    # DYNAMIC SCALING LOGIC
-                    limit = ImageLoader.MAX_WIDTH
-                    w = pix.get_width()
-                    h = pix.get_height()
-
-                    if w > limit:
-                        scale = limit / w
-                        new_w = limit
-                        new_h = int(h * scale)
-                        pix = pix.scale_simple(new_w, new_h, GdkPixbuf.InterpType.BILINEAR)
-
-                    texture = Gdk.Texture.new_for_pixbuf(pix)
+                if pix: texture = Gdk.Texture.new_for_pixbuf(pix)
         except: pass
-
         GLib.idle_add(ImageLoader._notify_main_thread, url, texture)
 
     @staticmethod
