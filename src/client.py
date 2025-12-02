@@ -30,6 +30,7 @@ class NostrRelay(GObject.Object):
         self.sub_id = None
         self.request_queue = []
         self.is_processing_queue = False
+        self.snapshot_ids = set() # Track subscriptions that should close on EOSE
 
     def start(self):
         def on_msg(ws, m):
@@ -38,7 +39,12 @@ class NostrRelay(GObject.Object):
                 if d[0] == "EVENT":
                     self.on_event(d[2])
                 elif d[0] == "EOSE":
-                    pass
+                    sub_id = d[1]
+                    if sub_id in self.snapshot_ids:
+                        # Auto-close snapshot subscription
+                        # print(f"DEBUG [{self.url}] Closing Snapshot {sub_id}")
+                        self.ws.send(json.dumps(["CLOSE", sub_id]))
+                        self.snapshot_ids.remove(sub_id)
                 elif d[0] == "NOTICE":
                     print(f"NOTICE [{self.url}]: {d[1]}")
             except Exception as e:
@@ -62,11 +68,24 @@ class NostrRelay(GObject.Object):
         self.ws = websocket.WebSocketApp(self.url, on_open=on_open, on_message=on_msg, on_error=on_err, on_close=on_close)
         threading.Thread(target=self.ws.run_forever, daemon=True).start()
 
-    def subscribe(self, sub_id, filters):
+    def restart(self):
+        if not self.is_connected:
+            # Simple restart check: if thread is dead, start new one?
+            # WebSocketApp run_forever blocks, so if it exited, the thread died.
+            # We can just call start() again.
+            self.start()
+
+    def subscribe(self, sub_id, filters, snapshot=False):
         if not self.is_connected: return
-        if self.sub_id and self.sub_id != sub_id:
-            try: self.ws.send(json.dumps(["CLOSE", self.sub_id]))
-            except: pass
+
+        # If it's a new subscription or different ID, close old one?
+        # Typically we just send REQ.
+        # For snapshots, track the ID.
+        if snapshot:
+            self.snapshot_ids.add(sub_id)
+        elif sub_id in self.snapshot_ids:
+            self.snapshot_ids.remove(sub_id)
+
         self.sub_id = sub_id
         try: self.ws.send(json.dumps(["REQ", sub_id] + (filters if isinstance(filters, list) else [filters])))
         except: pass
@@ -148,10 +167,20 @@ class NostrClient(GObject.Object):
         threading.Thread(target=_connect_loop, daemon=True).start()
 
     def add_relay_connection(self, url):
-        if url in self.active_relays: return
+        if url in self.active_relays:
+            # If exists but disconnected, consider restarting?
+            # Handled by check_connections
+            return
         r = NostrRelay(url, self._handle_event, self._handle_status)
         r.start()
         self.active_relays[url] = r
+
+    def check_connections(self):
+        # Scan active relays, if disconnected, restart them
+        for url, relay in self.active_relays.items():
+            if not relay.is_connected:
+                print(f"🔄 Reconnecting to {url}...")
+                relay.restart()
 
     def add_relay(self, url):
         if url not in self.relay_urls:
@@ -172,14 +201,14 @@ class NostrClient(GObject.Object):
         for r in self.active_relays.values(): 
             r.request_once(sub_id, filter)
 
-    # --- NEW: Added request_once ---
     def request_once(self, sub_id, filters):
-        """Broadcasts a one-time request to all connected relays."""
         for r in self.active_relays.values():
             r.request_once(sub_id, filters)
 
+    def subscribe(self, sub_id, filters, snapshot=False):
+        for r in self.active_relays.values(): r.subscribe(sub_id, filters, snapshot=snapshot)
+
     def publish(self, event):
-        """Broadcasts a signed event to all active relays."""
         for r in self.active_relays.values():
             r.publish(event)
 
@@ -286,8 +315,6 @@ class NostrClient(GObject.Object):
             GLib.idle_add(self.emit, 'relay-list-updated')
 
     def _handle_status(self, url, status): self.emit('status-changed', status)
-    def subscribe(self, sub_id, filters):
-        for r in self.active_relays.values(): r.subscribe(sub_id, filters)
     def fetch_contacts(self):
         if self.my_pubkey: self.subscribe("sub_contacts", {"kinds": [3], "authors": [self.my_pubkey], "limit": 1})
     def fetch_profile(self, pubkey):

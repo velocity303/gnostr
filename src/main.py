@@ -28,23 +28,60 @@ class MainWindow(Adw.ApplicationWindow):
         self.priv_key = None; self.pub_key = None; self.active_feed_type = "global"; self.event_widgets = {} 
         self.active_profile_pubkey = None
 
-        self.split_view = Adw.NavigationSplitView(); self.set_content(self.split_view)
+        # 1. Root: Toast Overlay (handles popups)
+        self.toast_overlay = Adw.ToastOverlay()
+        self.set_content(self.toast_overlay)
+
+        # 2. Child: Main Stack (swaps between Login and App)
+        self.main_stack = Adw.ViewStack()
+        self.toast_overlay.set_child(self.main_stack)
+
+        # 3. App View: Split View (Sidebar + Content)
+        self.split_view = Adw.NavigationSplitView()
+
+        # Breakpoints for responsiveness
         bp = Adw.Breakpoint.new(Adw.BreakpointCondition.new_length(Adw.BreakpointConditionLengthType.MAX_WIDTH, 800, Adw.LengthUnit.SP))
         bp.add_setter(self.split_view, "collapsed", True); self.add_breakpoint(bp)
 
-        self.setup_sidebar(); self.setup_content_area()
-        self.main_stack = Adw.ViewStack(); self.set_content(self.main_stack)
+        # Initialize App Components
+        self.setup_sidebar()
+        self.setup_content_area()
         
+        # 4. Login View
         self.login_page = Adw.StatusPage(title="Welcome", icon_name="avatar-default-symbolic")
         lb = Gtk.Button(label="Login", css_classes=["pill", "suggested-action"]); lb.connect("clicked", self.on_login_clicked)
         bx = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER); bx.append(lb)
         self.login_page.set_child(bx)
 
-        self.main_stack.add_named(self.login_page, "login"); self.main_stack.add_named(self.split_view, "app")
+        # 5. Assemble Stack
+        self.main_stack.add_named(self.login_page, "login")
+        self.main_stack.add_named(self.split_view, "app")
+
+        # Initial Setup
+        self.detect_display_metrics()
+
         saved = KeyManager.load_key()
         if saved: self.perform_login(saved)
         else: self.main_stack.set_visible_child_name("login")
         GLib.idle_add(self.client.connect_all)
+
+        # Auto-refresh timer
+        GLib.timeout_add_seconds(300, self.on_auto_refresh)
+
+    def detect_display_metrics(self):
+        try:
+            display = Gdk.Display.get_default()
+            monitors = display.get_monitors()
+            if monitors.get_n_items() > 0:
+                monitor = monitors.get_item(0)
+                geo = monitor.get_geometry()
+                scale = monitor.get_scale_factor()
+                if geo.width < 600:
+                    target_width = geo.width * scale
+                    ImageLoader.MAX_WIDTH = int(target_width)
+                else:
+                    ImageLoader.MAX_WIDTH = 800
+        except: ImageLoader.MAX_WIDTH = 800
 
     def setup_sidebar(self):
         self.sidebar_page = Adw.NavigationPage(title="Menu", tag="sidebar")
@@ -59,7 +96,6 @@ class MainWindow(Adw.ApplicationWindow):
         items = [
             ("global","Global","network-server"),
             ("following","Following","system-users"),
-            ("me","My Posts","user-info"),
             ("profile","Profile","avatar-default"),
             ("search", "Search User", "system-search")
         ]
@@ -75,27 +111,36 @@ class MainWindow(Adw.ApplicationWindow):
 
     def setup_content_area(self):
         self.content_nav = Adw.NavigationView()
+        # Wrapper is required because SplitView content must be a NavigationPage
         wrapper = Adw.NavigationPage(title="Content", tag="wrapper"); wrapper.set_child(self.content_nav)
         self.split_view.set_content(wrapper)
 
         self.feed_page = Adw.NavigationPage(title="Feed", tag="feed")
-        b = Gtk.Box(orientation=Gtk.Orientation.VERTICAL); b.append(Adw.HeaderBar())
+        b = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        hb = Adw.HeaderBar()
+        btn_refresh = Gtk.Button(icon_name="view-refresh-symbolic")
+        btn_refresh.set_tooltip_text("Refresh Feed")
+        btn_refresh.connect("clicked", self.on_refresh_clicked)
+        hb.pack_end(btn_refresh)
+        b.append(hb)
 
-        # FIX: Keep the policy fix from previous turn
         s = Gtk.ScrolledWindow(vexpand=True)
         s.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-
         c = Adw.Clamp(maximum_size=600)
         self.posts_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
         c.set_child(self.posts_box); s.set_child(c); b.append(s); self.feed_page.set_child(b); self.content_nav.add(self.feed_page)
 
         self.thread_page = Adw.NavigationPage(title="Thread", tag="thread")
         t_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        t_box.append(Adw.HeaderBar())
+        thb = Adw.HeaderBar()
+        t_refresh = Gtk.Button(icon_name="view-refresh-symbolic")
+        t_refresh.set_tooltip_text("Refresh Thread")
+        t_refresh.connect("clicked", self.on_refresh_clicked)
+        thb.pack_end(t_refresh)
+        t_box.append(thb)
 
         t_scroll = Gtk.ScrolledWindow(vexpand=True)
         t_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-
         t_clamp = Adw.Clamp(maximum_size=600)
         self.thread_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
         t_clamp.set_child(self.thread_container)
@@ -142,6 +187,22 @@ class MainWindow(Adw.ApplicationWindow):
         self.profile_posts_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         p_box.append(self.profile_posts_box)
 
+    def on_refresh_clicked(self, btn):
+        self.client.check_connections()
+        page = self.content_nav.get_visible_page()
+        if page == self.feed_page:
+            self.switch_feed(self.active_feed_type)
+        elif page == self.thread_page and hasattr(page, 'root_id'):
+            self.client.fetch_thread(page.root_id)
+        elif page == self.profile_page and self.active_profile_pubkey:
+            self.show_profile(self.active_profile_pubkey)
+        self.add_toast(Adw.Toast(title="Refreshing..."))
+
+    def on_auto_refresh(self):
+        # print("⏰ Auto-refreshing connections...")
+        self.client.check_connections()
+        return True
+
     def on_copy_npub(self, btn):
         if self.active_profile_pubkey:
             npub = nostr_utils.hex_to_nsec(self.active_profile_pubkey).replace("nsec", "npub")
@@ -150,7 +211,7 @@ class MainWindow(Adw.ApplicationWindow):
             self.add_toast(Adw.Toast(title="Npub Copied"))
 
     def add_toast(self, toast):
-        self.split_view.add_toast(toast)
+        self.toast_overlay.add_toast(toast)
 
     def show_thread(self, event_id, pubkey, content, tags=[]):
         page = Adw.NavigationPage(title="Thread")
@@ -158,7 +219,13 @@ class MainWindow(Adw.ApplicationWindow):
         page.hero_id = event_id
         page.root_id = root_id if root_id else event_id
 
-        b = Gtk.Box(orientation=Gtk.Orientation.VERTICAL); b.append(Adw.HeaderBar())
+        b = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        hb = Adw.HeaderBar()
+        btn_ref = Gtk.Button(icon_name="view-refresh-symbolic")
+        btn_ref.connect("clicked", self.on_refresh_clicked)
+        hb.pack_end(btn_ref)
+        b.append(hb)
+
         s = Gtk.ScrolledWindow(vexpand=True)
         s.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         c = Adw.Clamp(maximum_size=600)
@@ -166,7 +233,6 @@ class MainWindow(Adw.ApplicationWindow):
         
         page.ancestors_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         page.replies_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-
         container.append(page.ancestors_box)
 
         cached_event = self.db.get_event_by_id(event_id)
@@ -194,10 +260,7 @@ class MainWindow(Adw.ApplicationWindow):
     def schedule_refresh(self, page, event_id, attempt=1):
         def _refresh():
             if page.is_loaded: return False
-            if attempt > 5:
-                print(f"❌ Give up loading thread {event_id} after 5 attempts.")
-                return False
-            print(f"🔄 Auto-refreshing thread {event_id} (Attempt {attempt})...")
+            if attempt > 5: return False
             self.client.fetch_thread(event_id)
             GLib.timeout_add(3000, lambda: self.schedule_refresh(page, event_id, attempt + 1))
             return False
@@ -323,7 +386,6 @@ class MainWindow(Adw.ApplicationWindow):
 
             try: main_box.append(ContentRenderer.render(content, self, card))
             except Exception as re:
-                print(f"Render Error: {re}")
                 main_box.append(Gtk.Label(label=f"[Content Error]"))
 
             footer = Gtk.Box(spacing=20, margin_top=8)
@@ -474,16 +536,18 @@ class MainWindow(Adw.ApplicationWindow):
         while c: self.posts_box.remove(c); c = self.posts_box.get_first_child()
         self.event_widgets.clear()
         cached = []
-        if feed_type == "me" and self.pub_key: cached = self.db.get_feed_for_user(self.pub_key)
-        elif feed_type == "following" and self.pub_key: cached = self.db.get_feed_following(self.pub_key)
+        if feed_type == "following" and self.pub_key:
+            cached = self.db.get_feed_following(self.pub_key)
+            contacts = self.db.get_following_list(self.pub_key)
+            if contacts: self.client.subscribe("sub_following", {"kinds": [1], "authors": contacts[:300], "limit": 50})
+        elif feed_type == "global":
+            self.client.subscribe("sub_global", {"kinds": [1], "limit": 50}, snapshot=True)
+        elif feed_type == "me" and self.pub_key:
+            cached = self.db.get_feed_for_user(self.pub_key)
+            self.client.subscribe("sub_me", {"kinds": [1], "authors": [self.pub_key], "limit": 20})
         for ev in cached:
             w = self.create_post_widget(ev['pubkey'], ev['content'], ev['id'], ev.get('tags', []))
             self.posts_box.prepend(w)
-        if feed_type == "global": self.client.subscribe("sub_global", {"kinds": [1], "limit": 20})
-        elif feed_type == "me" and self.pub_key: self.client.subscribe("sub_me", {"kinds": [1], "authors": [self.pub_key], "limit": 20})
-        elif feed_type == "following" and self.pub_key:
-            contacts = self.db.get_following_list(self.pub_key)
-            if contacts: self.client.subscribe("sub_following", {"kinds": [1], "authors": contacts[:300], "limit": 50})
 
 class GnostrApp(Adw.Application):
     def __init__(self, **kwargs):
