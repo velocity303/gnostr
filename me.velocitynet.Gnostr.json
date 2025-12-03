@@ -36,8 +36,7 @@
             "buildsystem": "simple",
             "build-commands": [
                 "python3 -m pip install --verbose --prefix=/app --no-deps --no-build-isolation .",
-                "mkdir -p /app/lib",
-                "test -d /app/lib64 && cp -r /app/lib64/. /app/lib/ && rm -rf /app/lib64 || true"
+                "sh -c 'mkdir -p /app/lib && if [ -d /app/lib64 ]; then cp -r /app/lib64/. /app/lib/; rm -rf /app/lib64; fi'"
             ],
             "sources": [
                 {
@@ -52,8 +51,7 @@
             "buildsystem": "simple",
             "build-commands": [
                 "python3 -m pip install --verbose --prefix=/app --no-deps --no-build-isolation .",
-                "mkdir -p /app/lib",
-                "test -d /app/lib64 && cp -r /app/lib64/. /app/lib/ && rm -rf /app/lib64 || true"
+                "sh -c 'mkdir -p /app/lib && if [ -d /app/lib64 ]; then cp -r /app/lib64/. /app/lib/; rm -rf /app/lib64; fi'"
             ],
             "sources": [
                 {
