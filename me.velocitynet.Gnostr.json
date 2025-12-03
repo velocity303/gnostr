@@ -36,7 +36,6 @@
             "buildsystem": "simple",
             "build-commands": [
                 "python3 -m pip install --verbose --prefix=/app --no-deps --no-build-isolation .",
-                "python3 -c \"import os, shutil; src='/app/lib64'; dst='/app/lib/python3.12/site-packages'; os.makedirs(dst, exist_ok=True); src_site=os.path.join(src, 'python3.12/site-packages'); shutil.copytree(src_site, dst, dirs_exist_ok=True) if os.path.exists(src_site) else None; shutil.rmtree(src) if os.path.exists(src) else None\""
             ],
             "sources": [
                 {
@@ -51,7 +50,6 @@
             "buildsystem": "simple",
             "build-commands": [
                 "python3 -m pip install --verbose --prefix=/app --no-deps --no-build-isolation .",
-                "python3 -c \"import os, shutil; src='/app/lib64'; dst='/app/lib/python3.12/site-packages'; os.makedirs(dst, exist_ok=True); src_site=os.path.join(src, 'python3.12/site-packages'); shutil.copytree(src_site, dst, dirs_exist_ok=True) if os.path.exists(src_site) else None; shutil.rmtree(src) if os.path.exists(src) else None\""
             ],
             "sources": [
                 {
