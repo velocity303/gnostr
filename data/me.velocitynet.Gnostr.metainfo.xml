@@ -2,11 +2,65 @@
 <component type="desktop-application">
   <id>me.velocitynet.Gnostr</id>
   <metadata_license>CC0-1.0</metadata_license>
-  <project_license>MIT</project_license>
+  <project_license>GPL-3.0-or-later</project_license>
   <name>Gnostr</name>
-  <summary>A native Nostr client</summary>
+  <summary>A native, adaptive Nostr client</summary>
   <description>
-    <p>Gnostr is a lightweight, native Nostr client built for the GNOME desktop.</p>
+    <p>Gnostr is a lightweight, native Nostr client built for the GNOME desktop. It allows you to connect to the decentralized Nostr network to share notes, follow friends, and interact with the community without relying on central servers.</p>
+    <p>Designed with a modern, adaptive interface, Gnostr scales perfectly from desktop workstations to mobile phones (Librem 5, PinePhone).</p>
+    <p>Features include:</p>
+    <ul>
+      <li>Global and Following feeds</li>
+      <li>Thread view for conversations</li>
+      <li>Profile management and editing</li>
+      <li>Customizable relay selection</li>
+      <li>Adaptive layout for mobile and desktop</li>
+    </ul>
   </description>
+
   <launchable type="desktop-id">me.velocitynet.Gnostr.desktop</launchable>
+
+  <developer id="me.velocitynet">
+    <name>James Jones</name>
+  </developer>
+
+  <url type="homepage">https://github.com/velocity303/gnostr</url>
+  <url type="bugtracker">https://github.com/velocity303/gnostr/issues</url>
+  <url type="vcs-browser">https://github.com/velocity303/gnostr</url>
+
+  <screenshots>
+    <screenshot type="default">
+      <caption>Main Feed View</caption>
+      <image>https://raw.githubusercontent.com/velocity303/gnostr/main/screenshot.png</image>
+    </screenshot>
+  </screenshots>
+
+  <content_rating type="oars-1.1">
+    <content_attribute id="social-chat">intense</content_attribute>
+    <content_attribute id="social-info">moderate</content_attribute>
+    <content_attribute id="social-audio">none</content_attribute>
+    <content_attribute id="social-location">none</content_attribute>
+    <content_attribute id="social-contacts">intense</content_attribute>
+    <content_attribute id="money-purchasing">none</content_attribute>
+    <content_attribute id="money-gambling">none</content_attribute>
+  </content_rating>
+
+  <!-- Indicates mobile support/adaptiveness -->
+  <kudos>
+    <kudo>HiDpiIcon</kudo>
+    <kudo>ModernToolkit</kudo>
+  </kudos>
+
+  <!-- Requires a display of at least 360 logical pixels wide (standard mobile width) -->
+  <requires>
+    <display_length compare="ge">360</display_length>
+  </requires>
+
+  <releases>
+    <release version="0.1.0" date="2025-10-27">
+      <description>
+        <p>Initial release of Gnostr.</p>
+      </description>
+    </release>
+  </releases>
 </component>

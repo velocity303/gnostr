@@ -8,3 +8,4 @@ Type=Application
 Categories=Network;Chat;GTK;
 StartupNotify=true
 StartupWMClass=me.velocitynet.Gnostr
+X-Purism-FormFactor=Workstation;Mobile;
