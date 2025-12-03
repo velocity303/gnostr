@@ -3,3 +3,4 @@ build-dir
 build-export
 repo
 .flatpak-builder
+*.flatpak
