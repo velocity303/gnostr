@@ -10,7 +10,8 @@
         "--socket=fallback-x11",
         "--device=dri",
         "--socket=wayland",
-        "--talk-name=org.freedesktop.secrets"
+        "--talk-name=org.freedesktop.secrets",
+        "--env=PYTHONPATH=/app/lib/python3.12/site-packages"
     ],
     "cleanup": [
         "/include",
@@ -26,8 +27,7 @@
         "env": {
             "CFLAGS": "",
             "CXXFLAGS": "",
-            "LDFLAGS": "",
-            "PYTHONUSERBASE": "/app"
+            "LDFLAGS": ""
         }
     },
     "modules": [
@@ -36,12 +36,12 @@
             "buildsystem": "simple",
             "build-commands": [
                 "python3 -m pip install --verbose --prefix=/app --no-deps --no-build-isolation .",
-                "if [ -d /app/lib64 ]; then cp -r /app/lib64/* /app/lib/ || true; rm -rf /app/lib64; fi"
+                "if [ -d /app/lib64 ]; then cp -r /app/lib64/* /app/lib/ && rm -rf /app/lib64; fi"
             ],
             "sources": [
                 {
                     "type": "archive",
-                    "url": "https://files.pythonhosted.org/packages/source/e/ecdsa/ecdsa-0.19.1.tar.gz",
+                    "url": "https://files.pythonhosted.org/packages/c0/1f/924e3caae75f471eae4b26bd13b698f6af2c44279f67af317439c2f4c46a/ecdsa-0.19.1.tar.gz",
                     "sha256": "478cba7b62555866fcb3bb3fe985e06decbdb68ef55713c4e5ab98c57d508e61"
                 }
             ]
@@ -51,7 +51,7 @@
             "buildsystem": "simple",
             "build-commands": [
                 "python3 -m pip install --verbose --prefix=/app --no-deps --no-build-isolation .",
-                "if [ -d /app/lib64 ]; then cp -r /app/lib64/* /app/lib/ || true; rm -rf /app/lib64; fi"
+                "if [ -d /app/lib64 ]; then cp -r /app/lib64/* /app/lib/ && rm -rf /app/lib64; fi"
             ],
             "sources": [
                 {
