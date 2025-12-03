@@ -35,7 +35,7 @@
             "name": "python3-ecdsa",
             "buildsystem": "simple",
             "build-commands": [
-                "python3 setup.py install --prefix=/app --root=/"
+                "python3 -m pip install --user --verbose --no-deps --no-build-isolation ."
             ],
             "sources": [
                 {
@@ -49,7 +49,7 @@
             "name": "python3-websocket-client",
             "buildsystem": "simple",
             "build-commands": [
-                "python3 setup.py install --prefix=/app --root=/"
+                "python3 -m pip install --user --verbose --no-deps --no-build-isolation ."
             ],
             "sources": [
                 {
