@@ -38,7 +38,6 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
-
 #!@PYTHON@
 import os
 import sys
@@ -50,21 +49,15 @@ VERSION = '@VERSION@'
 pkgdatadir = '@pkgdatadir@'
 localedir = '@localedir@'
 
-# --- DYNAMIC PATH LOADER ---
-# Python 3.12 (GNOME 47) might be in lib or lib64 depending on architecture.
-# We add both potential site-packages paths to ensure dependencies are found.
-possible_paths = [
-    '/app/lib/python3.12/site-packages',
-    '/app/lib64/python3.12/site-packages'
-]
+# --- STANDARD PATH ---
+# Since we merged lib64 into lib during build, we only need to check one path.
+site_pkg = '/app/lib/python3.12/site-packages'
+if os.path.exists(site_pkg) and site_pkg not in sys.path:
+    sys.path.insert(0, site_pkg)
 
-for path in possible_paths:
-    if os.path.exists(path) and path not in sys.path:
-        sys.path.insert(0, path)
-
-# Add the 'gnostr' package subdirectory so 'import main' works
+# Add application source
 sys.path.insert(1, os.path.join(pkgdatadir, 'gnostr'))
-# ---------------------------
+# ---------------------
 
 signal.signal(signal.SIGINT, signal.SIG_DFL)
 locale.bindtextdomain('gnostr', localedir)

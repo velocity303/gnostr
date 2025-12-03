@@ -35,7 +35,8 @@
             "name": "python3-ecdsa",
             "buildsystem": "simple",
             "build-commands": [
-                "python3 -m pip install --user --verbose --no-deps --no-build-isolation ."
+                "python3 -m pip install --verbose --prefix=/app --no-deps --no-build-isolation .",
+                "if [ -d /app/lib64 ]; then cp -r /app/lib64/* /app/lib/ || true; rm -rf /app/lib64; fi"
             ],
             "sources": [
                 {
@@ -49,7 +50,8 @@
             "name": "python3-websocket-client",
             "buildsystem": "simple",
             "build-commands": [
-                "python3 -m pip install --user --verbose --no-deps --no-build-isolation ."
+                "python3 -m pip install --verbose --prefix=/app --no-deps --no-build-isolation .",
+                "if [ -d /app/lib64 ]; then cp -r /app/lib64/* /app/lib/ || true; rm -rf /app/lib64; fi"
             ],
             "sources": [
                 {
