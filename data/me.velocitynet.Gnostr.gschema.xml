@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<schemalist gettext-domain="gnostr">
-	<schema id="me.velocitynet.Gnostr" path="/me/velocitynet/gnostr/">
+<schemalist gettext-domain="Gnostr">
+	<schema id="me.velocitynet.Gnostr" path="/me/velocitynet/Gnostr/">
 	</schema>
 </schemalist>

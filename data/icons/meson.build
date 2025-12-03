@@ -1,4 +1,4 @@
-application_id = 'me.velocitynet.gnostr'
+application_id = 'me.velocitynet.Gnostr'
 
 scalable_dir = 'hicolor' / 'scalable' / 'apps'
 install_data(

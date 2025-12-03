@@ -1,7 +1,7 @@
 {
     "app-id": "me.velocitynet.Gnostr",
     "runtime": "org.gnome.Platform",
-    "runtime-version": "48",
+    "runtime-version": "47",
     "sdk": "org.gnome.Sdk",
     "command": "gnostr",
     "finish-args": [
@@ -11,8 +11,7 @@
         "--device=dri",
         "--socket=wayland",
         "--talk-name=org.freedesktop.secrets",
-        "--env=PYTHONPATH=/app/lib/python3.12/site-packages:/app/lib64/python3.12/site-packages",
-        "--env=GI_TYPELIB_PATH=/app/lib/girepository-1.0:/app/lib64/girepository-1.0:/app/lib/aarch64-linux-gnu/girepository-1.0"
+        "--env=PYTHONPATH=/app/lib/python3.12/site-packages"
     ],
     "cleanup": [
         "/include",
@@ -24,82 +23,38 @@
         "*.la",
         "*.a"
     ],
-    "modules": [
+"modules": [
         {
-            "name": "libsecret",
-            "buildsystem": "meson",
-            "config-opts": [
-                "-Dmanpage=false",
-                "-Dgtk_doc=false",
-                "-Dvapi=false",
-                "-Dintrospection=true"
+            "name": "python3-ecdsa",
+            "buildsystem": "simple",
+            "build-commands": [
+                "pip3 install --verbose --prefix=/app --no-deps --no-build-isolation ."
             ],
-            "build-options": {
-                "env": {
-                    "CFLAGS": "",
-                    "CXXFLAGS": "",
-                    "LDFLAGS": ""
-                }
-            },
             "sources": [
                 {
-                    "type": "git",
-                    "url": "https://gitlab.gnome.org/GNOME/libsecret.git",
-                    "tag": "0.21.4"
+                    "type": "archive",
+                    "url": "https://files.pythonhosted.org/packages/source/e/ecdsa/ecdsa-0.19.1.tar.gz",
+                    "sha256": "478cba7b62555866fcb3bb3fe985e06decbdb68ef55713c4e5ab98c57d508e61"
                 }
             ]
         },
         {
-            "name": "python3-deps",
+            "name": "python3-websocket-client",
             "buildsystem": "simple",
-            "build-options": {
-                "env": {
-                    "CFLAGS": "",
-                    "CXXFLAGS": "",
-                    "LDFLAGS": ""
-                }
-            },
             "build-commands": [
-                "./install_deps.sh"
+                "pip3 install --verbose --prefix=/app --no-deps --no-build-isolation ."
             ],
             "sources": [
                 {
-                    "type": "file",
-                    "url": "https://files.pythonhosted.org/packages/34/db/b10e48aa8fff7407e67470363eac595018441cf32d5e1001567a7aeba5d2/websocket_client-1.9.0-py3-none-any.whl",
-                    "sha256": "af248a825037ef591efbf6ed20cc5faa03d3b47b9e5a2230a529eeee1c1fc3ef",
-                    "dest-filename": "websocket_client-1.9.0-py3-none-any.whl"
-                },
-                {
-                    "type": "file",
-                    "url": "https://files.pythonhosted.org/packages/cb/a3/460c57f094a4a165c84a1341c373b0a4f5ec6ac244b998d5021aade89b77/ecdsa-0.19.1-py2.py3-none-any.whl",
-                    "sha256": "30638e27cf77b7e15c4c4cc1973720149e1033827cfd00661ca5c8cc0cdb24c3",
-                    "dest-filename": "ecdsa-0.19.1-py2.py3-none-any.whl"
-                },
-                {
-                    "type": "file",
-                    "url": "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl",
-                    "sha256": "4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274",
-                    "dest-filename": "six-1.17.0-py2.py3-none-any.whl"
-                },
-                {
-                    "type": "file",
-                    "path": "install_deps.sh"
+                    "type": "archive",
+                    "url": "https://files.pythonhosted.org/packages/2c/41/aa4bf9664e4cda14c3b39865b12251e8e7d239f4cd0e3cc1b6c2ccde25c1/websocket_client-1.9.0.tar.gz",
+                    "sha256": "9e813624b6eb619999a97dc7958469217c3176312b3a16a4bd1bc7e08a46ec98"
                 }
             ]
         },
         {
             "name": "gnostr",
-            "buildsystem": "simple",
-            "build-commands": [
-                "./install_app.sh"
-            ],
-            "build-options": {
-                "env": {
-                    "CFLAGS": "",
-                    "CXXFLAGS": "",
-                    "LDFLAGS": ""
-                }
-            },
+            "buildsystem": "meson",
             "sources": [
                 {
                     "type": "dir",

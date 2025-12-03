@@ -29,7 +29,11 @@ VERSION = '@VERSION@'
 pkgdatadir = '@pkgdatadir@'
 localedir = '@localedir@'
 
-sys.path.insert(1, pkgdatadir)
+# Add the 'gnostr' subdirectory to the Python path.
+# This allows imports like 'from key_manager import KeyManager' to work
+# even though the files are installed inside /app/share/gnostr/gnostr/
+sys.path.insert(1, os.path.join(pkgdatadir, 'gnostr'))
+
 signal.signal(signal.SIGINT, signal.SIG_DFL)
 locale.bindtextdomain('gnostr', localedir)
 locale.textdomain('gnostr')
@@ -39,8 +43,10 @@ if __name__ == '__main__':
     import gi
 
     from gi.repository import Gio
+    # The resource file is in the parent dir (pkgdatadir), not the source dir
     resource = Gio.Resource.load(os.path.join(pkgdatadir, 'gnostr.gresource'))
     resource._register()
 
-    from gnostr import main
+    # Import main directly now that the source dir is in sys.path
+    import main
     sys.exit(main.main(VERSION))
