@@ -40,6 +40,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 #!@PYTHON@
+
 import os
 import sys
 import signal
@@ -50,14 +51,27 @@ VERSION = '@VERSION@'
 pkgdatadir = '@pkgdatadir@'
 localedir = '@localedir@'
 
-# --- PATH CONFIGURATION ---
-# Explicitly add both potential install locations for Flatpak libraries.
-# This fixes issues where ARM installs to lib64 but Python looks in lib.
-# We assume Python 3.12 for GNOME 47 Runtime.
-sys.path.insert(0, '/app/lib64/python3.12/site-packages')
-sys.path.insert(0, '/app/lib/python3.12/site-packages')
+# --- ROBUST PATH FINDER ---
+# Walk the /app directory to find where 'ecdsa' was actually installed.
+# This works around arch differences (lib vs lib64) and prefix issues.
+found_path = None
+for root, dirs, files in os.walk('/app'):
+    if 'ecdsa' in dirs:
+        # We found the folder containing ecdsa, add its parent to path
+        found_path = root
+        break
 
-# Add the application source directory
+if found_path:
+    if found_path not in sys.path:
+        sys.path.insert(0, found_path)
+        # print(f"DEBUG: Found and added python path: {found_path}")
+else:
+    # Fallback: try adding common paths just in case os.walk missed it
+    sys.path.insert(0, '/app/lib/python3.12/site-packages')
+    sys.path.insert(0, '/app/lib64/python3.12/site-packages')
+    # print("DEBUG: Could not locate ecdsa automatically, using fallbacks.")
+
+# Add the 'gnostr' package subdirectory
 sys.path.insert(1, os.path.join(pkgdatadir, 'gnostr'))
 # --------------------------
 
@@ -69,22 +83,6 @@ gettext.install('gnostr', localedir)
 if __name__ == '__main__':
     import gi
     from gi.repository import Gio
-
-    # Try to import dependencies early to fail fast with a clear error
-    try:
-        import ecdsa
-        import websocket
-    except ImportError as e:
-        print(f"CRITICAL ERROR: Failed to import dependency: {e}")
-        print(f"Current sys.path: {sys.path}")
-        # List directories to help debugging if it still fails
-        for p in ['/app/lib/python3.12/site-packages', '/app/lib64/python3.12/site-packages']:
-            if os.path.exists(p):
-                print(f"Contents of {p}: {os.listdir(p)}")
-            else:
-                print(f"Path does not exist: {p}")
-        sys.exit(1)
-
     resource = Gio.Resource.load(os.path.join(pkgdatadir, 'gnostr.gresource'))
     resource._register()
 
