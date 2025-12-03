@@ -26,7 +26,8 @@
         "env": {
             "CFLAGS": "",
             "CXXFLAGS": "",
-            "LDFLAGS": ""
+            "LDFLAGS": "",
+            "PYTHONUSERBASE": "/app"
         }
     },
     "modules": [
