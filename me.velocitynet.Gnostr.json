@@ -23,7 +23,13 @@
         "*.la",
         "*.a"
     ],
-"modules": [
+    "build-options": {
+        "env": {
+            "CFLAGS": "-O2",
+            "CXXFLAGS": "-O2"
+        }
+    },
+    "modules": [
         {
             "name": "python3-ecdsa",
             "buildsystem": "simple",
