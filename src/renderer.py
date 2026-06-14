@@ -11,7 +11,7 @@ gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 gi.require_version('Pango', '1.0')
 from gi.repository import Gtk, Adw, GLib, Gdk, GdkPixbuf, Pango
-import nostr_utils
+import gnostr.nostr_utils
 
 class ContentRenderer:
     LINK_REGEX = re.compile(r'((?:https?://|nostr:)[^\s]+)')

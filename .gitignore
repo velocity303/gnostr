@@ -4,3 +4,6 @@ build-export
 repo
 .flatpak-builder
 *.flatpak
+.hermes_learnings.md
+opencode.json
+.refactor_notes.md

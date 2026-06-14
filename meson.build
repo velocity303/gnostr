@@ -1,26 +1,51 @@
-project('gnostr',
-  version: '0.1.0',
-  meson_version: '>= 0.59.0',
+project(
+  'gnostr',
+  [],
+  version: '0.1.0'
 )
 
-i18n = import('i18n')
-gnome = import('gnome')
-python = import('python')
+# 1. Fetch the python site-packages path from the container environment
+py_mod = import('python')
+py_installation = py_mod.find_installation('python3')
+python_site_packages = py_installation.get_install_dir()
 
-# Locate Python installation
-python_installation = python.find_installation('python3')
+pytest_exe = find_program('pytest', required: true)
+build_root = meson.project_source_root()
 
-# Standard variables
-prefix = get_option('prefix')
-bindir = prefix / get_option('bindir')
-datadir = prefix / get_option('datadir')
-pkgdatadir = datadir / meson.project_name()
-localedir = prefix / get_option('localedir')
+# --- TESTING CONFIGURATION ---
+test(
+  'unit-tests',
+  pytest_exe,
+  args : [
+    '--verbose',
+    build_root / 'tests'
+  ],
+  env : ['PYTHONPATH=' + build_root]
+)
 
-# Dependencies
-dependency('gtk4', version: '>= 4.10.0')
-dependency('libadwaita-1', version: '>= 1.2.0')
+# --- INSTALLATION CONFIGURATION ---
 
-subdir('data')
-subdir('src')
-subdir('po')
+# 2. FIXED: Use install_data for an explicit file list, targeting site-packages/gnostr/
+install_data(
+  [
+    'src/__init__.py',       # Don't forget your init file if you have one!
+    'src/main.py',
+    'src/key_manager.py',    # Make sure your key_manager is included here too
+    'src/service/profile_service.py',
+    'src/service/profile_metadata_service.py',
+    'src/service/feed_service.py',
+    'src/nostr_utils.py',
+    'src/database.py',
+    'src/renderer.py',
+    'src/dialogs.py',
+    'src/client.py'
+  ],
+  install_dir: python_site_packages / 'gnostr'
+)
+
+# 3. Install the application executable launcher wrapper script
+install_data(
+  'src/gnostr',
+  install_dir : get_option('bindir'),
+  install_mode: 'rwxr-xr-x'
+)

@@ -4,12 +4,12 @@ import json
 import time
 import gi
 import traceback
-from key_manager import KeyManager
-import nostr_utils
-from database import Database
-from client import NostrClient
-from renderer import ContentRenderer, ImageLoader
-from dialogs import LoginDialog, RelayPreferencesWindow
+from .key_manager import KeyManager
+import gnostr.nostr_utils
+from .database import Database
+from .client import NostrClient
+from .renderer import ContentRenderer, ImageLoader
+from .dialogs import LoginDialog, RelayPreferencesWindow
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
@@ -249,7 +249,7 @@ class MainWindow(Adw.ApplicationWindow):
 
     def on_copy_npub(self, btn):
         if self.active_profile_pubkey:
-            npub = nostr_utils.hex_to_nsec(self.active_profile_pubkey).replace("nsec", "npub")
+            npub = gnostr.nostr_utils.hex_to_nsec(self.active_profile_pubkey).replace("nsec", "npub")
             clipboard = Gdk.Display.get_default().get_clipboard()
             clipboard.set(npub)
             self.add_toast(Adw.Toast(title="Npub Copied"))
@@ -259,7 +259,7 @@ class MainWindow(Adw.ApplicationWindow):
 
     def show_thread(self, event_id, pubkey, content, tags=[]):
         page = Adw.NavigationPage(title="Thread")
-        root_id = nostr_utils.get_thread_root(tags)
+        root_id = gnostr.nostr_utils.get_thread_root(tags)
         page.hero_id = event_id
         page.root_id = root_id if root_id else event_id
 
@@ -319,7 +319,7 @@ class MainWindow(Adw.ApplicationWindow):
             self.content_nav.push(self.profile_page)
 
         self.client.fetch_profile(pubkey)
-        npub = nostr_utils.hex_to_nsec(pubkey).replace("nsec", "npub")
+        npub = gnostr.nostr_utils.hex_to_nsec(pubkey).replace("nsec", "npub")
         self.lbl_npub.set_text(npub)
 
         profile = self.db.get_profile(pubkey)
@@ -391,9 +391,9 @@ class MainWindow(Adw.ApplicationWindow):
             text = entry.get_text().strip().replace("nostr:", "")
             try:
                 if text.startswith("npub"):
-                    hrp, data = nostr_utils.bech32_decode(text)
+                    hrp, data = gnostr.nostr_utils.bech32_decode(text)
                     if hrp == "npub" and data:
-                        decoded = nostr_utils.convertbits(data, 5, 8, False)
+                        decoded = gnostr.nostr_utils.convertbits(data, 5, 8, False)
                         if decoded:
                             hex_key = bytes(decoded).hex()
                             dialog.close()
@@ -556,7 +556,7 @@ class MainWindow(Adw.ApplicationWindow):
 
     def perform_login(self, priv_hex):
         self.priv_key = priv_hex
-        self.pub_key = nostr_utils.get_public_key(priv_hex)
+        self.pub_key = gnostr.nostr_utils.get_public_key(priv_hex)
         self.client.set_keys(self.pub_key, self.priv_key)
         self.main_stack.set_visible_child_name("app")
 
@@ -572,7 +572,7 @@ class MainWindow(Adw.ApplicationWindow):
 
     def load_my_profile_ui(self):
         if not self.pub_key: return
-        npub = nostr_utils.hex_to_nsec(self.pub_key).replace("nsec", "npub")
+        npub = gnostr.nostr_utils.hex_to_nsec(self.pub_key).replace("nsec", "npub")
         self.lbl_npub.set_text(npub[:12] + "..." + npub[-12:])
         profile = self.db.get_profile(self.pub_key)
         if profile:

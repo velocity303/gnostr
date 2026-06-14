@@ -5,7 +5,7 @@ import os
 import gi
 import traceback
 from gi.repository import GObject, GLib
-import nostr_utils
+import gnostr.nostr_utils
 
 try:
     import websocket

@@ -32,6 +32,20 @@
     },
     "modules": [
         {
+    "name": "pytest",
+    "buildsystem": "simple",
+    "build-commands": [
+        "pip3 install --verbose --prefix=/app --no-deps --no-build-isolation pytest-9.1.0-py3-none-any.whl"
+    ],
+    "sources": [
+        {
+            "type": "file",
+            "url": "https://files.pythonhosted.org/packages/8b/5a/ba30a81239b909821b3153e303e7def45178bf353da4f72380e6c5e8793b/pytest-9.1.0-py3-none-any.whl",
+            "sha256": "8ebb0e7888bdf2bdfc602ec51f8f62d50200af37356c74e503c79a94f5c81f32"
+        }
+    ]
+},
+        {
             "name": "python3-ecdsa",
             "buildsystem": "simple",
             "build-commands": [
