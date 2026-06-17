@@ -1,41 +1,49 @@
-# Install Python sources into a 'gnostr' package subdirectory
-# This allows 'from gnostr import main' to work in the launcher
-gnostr_sources = [
-  'main.py',
-  'client.py',
-  'database.py',
-  'dialogs.py',
-  'key_manager.py',
-  'nostr_utils.py',
-  'renderer.py',
-  'window.py',
-  # Add any other python files you have here
-]
+# The launcher (src/gnostr) adds pkgdatadir/gnostr to sys.path at runtime
 
-install_data(gnostr_sources, 
-  install_dir: pkgdatadir / 'gnostr'
+pkg_name = 'gnostr'
+
+install_data(
+  [
+    # Core modules
+    '__init__.py',
+    'main.py',
+    'client.py',
+    'database.py',
+    'dialogs.py',
+    'key_manager.py',
+    'nostr_utils.py',
+    'renderer.py',
+    'connection_status.py',
+    'window.py',
+  ],
+  install_dir: pkgdatadir / pkg_name
 )
 
-# Compile and install the resource bundle (UI files)
-gnome.compile_resources('gnostr',
+# Install sub-packages (directories)
+subdir('util')
+subdir('gateway')
+subdir('service')
+
+# Compile and install the GResource bundle (GTK UI files)
+gnome.compile_resources(
+  pkg_name,
   'gnostr.gresource.xml',
   gresource_bundle: true,
   install: true,
   install_dir: pkgdatadir,
 )
 
-# Configure the launcher script (gnostr.in)
+# Configure and install the application launcher script
 conf = configuration_data()
 conf.set('PYTHON', python_installation.full_path())
 conf.set('VERSION', meson.project_version())
 conf.set('pkgdatadir', pkgdatadir)
-conf.set('localedir', localedir)
+conf.set('localedir', datadir / 'locale')
 
 configure_file(
   input: 'gnostr.in',
   output: 'gnostr',
   configuration: conf,
-  install: true,
-  install_dir: bindir,
+  install_dir: get_option('bindir'),
   install_mode: 'rwxr-xr-x'
 )

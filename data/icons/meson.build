@@ -1,13 +1,15 @@
 application_id = 'me.velocitynet.Gnostr'
 
-scalable_dir = 'hicolor' / 'scalable' / 'apps'
+# Scalable icon (256x256+)
+scalable_src = join_paths('hicolor', 'scalable', 'apps')
 install_data(
-  scalable_dir / ('@0@.svg').format(application_id),
-  install_dir: get_option('datadir') / 'icons' / scalable_dir
+  join_paths(scalable_src, application_id + '.svg'),
+  install_dir: get_option('datadir') / 'icons' / scalable_src,
 )
 
-symbolic_dir = 'hicolor' / 'symbolic' / 'apps'
+# Symbolic icon (for Adwaita theming integration)
+symbolic_src = join_paths('hicolor', 'symbolic', 'apps')
 install_data(
-  symbolic_dir / ('@0@-symbolic.svg').format(application_id),
-  install_dir: get_option('datadir') / 'icons' / symbolic_dir
+  join_paths(symbolic_src, application_id + '-symbolic.svg'),
+  install_dir: get_option('datadir') / 'icons' / symbolic_src,
 )

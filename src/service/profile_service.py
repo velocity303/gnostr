@@ -4,8 +4,8 @@ from typing import Optional, Dict
 from gnostr.src.gateway.gateway import IKeyValueStore, IActivityAggregationGateway
 
 # Explicitly import the two specialized services we have implemented and tested independently
-from .profile_metadata_service import ProfileMetadataService
-from .activity_service import ActivityService
+from gnostr.service.profile_metadata_service import ProfileMetadataService
+from gnostr.service.activity_service import ActivityService
 
 class ProfileService:
     """

@@ -2,11 +2,10 @@
 import sys
 import os
 
-# Ensure the installed package directory is visible to the interpreter
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../share/gnostr'))
+# Add the parent directory (share/<something>) so `gnostr` is on sys.path as a top-level package.
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-# Assuming 'main' resides in gnostr.main as per convention
-from gnostr.main import main
+from main import main
 
 if __name__ == '__main__':
     sys.exit(main(version="0.1.0"))

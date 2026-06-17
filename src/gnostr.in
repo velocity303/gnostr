@@ -1,4 +1,4 @@
-#!@PYTHON@
+#!/@PYTHON@
 
 # gnostr.in
 #
@@ -18,27 +18,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
-#!@PYTHON@
 
-# gnostr.in
-#
-# Copyright 2025 James Jones
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <https://www.gnu.org/licenses/>.
-#
-# SPDX-License-Identifier: GPL-3.0-or-later
-#!@PYTHON@
 import os
 import sys
 import signal
@@ -59,7 +39,7 @@ for path in site_packages:
         sys.path.insert(0, path)
 
 # Add the 'gnostr' application source
-sys.path.insert(1, os.path.join(pkgdatadir, 'gnostr'))
+sys.path.insert(1, pkgdatadir)
 # ----------------------------
 
 signal.signal(signal.SIGINT, signal.SIG_DFL)
@@ -73,5 +53,5 @@ if __name__ == '__main__':
     resource = Gio.Resource.load(os.path.join(pkgdatadir, 'gnostr.gresource'))
     resource._register()
 
-    import main
-    sys.exit(main.main(VERSION))
+    from gnostr.main import main
+    sys.exit(main(VERSION))

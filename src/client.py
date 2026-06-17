@@ -2,18 +2,29 @@ import json
 import threading
 import time
 import os
-import gi
-import traceback
 from gi.repository import GObject, GLib
-import gnostr.nostr_utils
+import traceback
+import gnostr
+from gnostr.util.connection_state import ConnectionState
+    # Connection status definitions (Name, ColorCode)
+STATUS = {
+        "CONNECTED": ("🟢 Connected", "#28a745"),  # Green
+        "WARNING": ("🟡 Warning/Error", "#ffc107"), # Yellow
+        "DISCONNECTED": ("🔴 Disconnected", "#dc3545")
+    }
 
 try:
     import websocket
 except ImportError:
     websocket = None
 
+# --- Connection Status Definitions (Color-coded) ---
+class ConnectionStatus:
+    """Defines standard connection status codes and associated display colors."""
+    GREEN = ("Connected", "Green") # Stable/Operational
+    YELLOW = ("Warning", "Yellow")  # Transient issue, e.g., Rate Limiting
+    RED = ("Disconnected", "Red")   # Critical failure or no relay connectivity
 DEFAULT_RELAYS = [
-    "wss://relay.damus.io",
     "wss://relay.nostr.band",
     "wss://nos.lol",
     "wss://relay.primal.net"
@@ -54,16 +65,16 @@ class NostrRelay(GObject.Object):
 
         def on_open(ws):
             self.is_connected=True
-            GLib.idle_add(self.on_status, self.url, "Connected")
+            GLib.idle_add(self.on_status, self.url, ConnectionState.CONNECTED)
             self.process_queue()
 
         def on_err(ws, e):
             self.is_connected=False
-            GLib.idle_add(self.on_status, self.url, "Error")
+            GLib.idle_add(self.on_status, self.url, ConnectionState.WARNING)
 
         def on_close(ws, c, m):
             self.is_connected=False
-            GLib.idle_add(self.on_status, self.url, "Disconnected")
+            GLib.idle_add(self.on_status, self.url, ConnectionState.DISCONNECTED)
 
         self.ws = websocket.WebSocketApp(self.url, on_open=on_open, on_message=on_msg, on_error=on_err, on_close=on_close)
         threading.Thread(target=self.ws.run_forever, daemon=True).start()
@@ -216,7 +227,7 @@ class NostrClient(GObject.Object):
         if not self.my_privkey: return
         event = {"pubkey": self.my_pubkey, "created_at": int(time.time()), "kind": 10002, 
                  "tags": [['r', u] for u in self.relay_urls], "content": ""}
-        signed = nostr_utils.sign_event(event, self.my_privkey)
+        signed = gnostr.nostr_utils.sign_event(event, self.my_privkey)
         if signed: 
             self.publish(signed)
 
@@ -287,7 +298,7 @@ class NostrClient(GObject.Object):
 
         elif kind == 3:
             if pubkey == self.my_pubkey:
-                c = nostr_utils.extract_followed_pubkeys(ev)
+                c = gnostr.nostr_utils.extract_followed_pubkeys(ev)
                 self.db.save_contacts(self.my_pubkey, c)
                 GLib.idle_add(self.emit, 'contacts-updated')
                 try:
@@ -314,7 +325,7 @@ class NostrClient(GObject.Object):
             self.save_config()
             GLib.idle_add(self.emit, 'relay-list-updated')
 
-    def _handle_status(self, url, status): self.emit('status-changed', status)
+    def _handle_status(self, url, status): self.emit('status-changed', status.status)
     def fetch_contacts(self):
         if self.my_pubkey: self.subscribe("sub_contacts", {"kinds": [3], "authors": [self.my_pubkey], "limit": 1})
     def fetch_profile(self, pubkey):

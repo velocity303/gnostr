@@ -2,8 +2,8 @@ import gi
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 from gi.repository import Gtk, Adw
-from .key_manager import KeyManager
-import gnostr.nostr_utils
+from gnostr.key_manager import KeyManager
+import gnostr.nostr_utils as nostr_utils
 
 class RelayPreferencesWindow(Adw.PreferencesWindow):
     def __init__(self, nostr_client, parent_window):

@@ -4,12 +4,12 @@ import json
 import time
 import gi
 import traceback
-from .key_manager import KeyManager
-import gnostr.nostr_utils
-from .database import Database
-from .client import NostrClient
-from .renderer import ContentRenderer, ImageLoader
-from .dialogs import LoginDialog, RelayPreferencesWindow
+import gnostr
+from gnostr.key_manager import KeyManager
+from gnostr.database import Database
+from gnostr.client import NostrClient
+from gnostr.renderer import ContentRenderer, ImageLoader
+from gnostr.dialogs import LoginDialog, RelayPreferencesWindow
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
@@ -135,7 +135,7 @@ class MainWindow(Adw.ApplicationWindow):
         lb.connect("clicked", self.on_logout_clicked)
         box.append(lb)
 
-        self.status_label = Gtk.Label(label="Offline", css_classes=["dim-label"])
+        self.status_label = Gtk.Label(label="🔴", css_classes=["dim-label"])
         box.append(self.status_label)
 
         self.sidebar_page.set_child(box)
@@ -604,7 +604,8 @@ class MainWindow(Adw.ApplicationWindow):
         RelayPreferencesWindow(self.client, self).present()
 
     def on_status_changed(self, client, status):
-        self.status_label.set_text(status)
+        emoji = {"CONNECTED": "🟢", "WARNING": "🟡", "DISCONNECTED": "🔴"}.get(status, "⚪")
+        self.status_label.set_text(emoji)
 
     def switch_feed(self, feed_type):
         self.active_feed_type = feed_type
@@ -645,3 +646,4 @@ def main(version):
 
 if __name__ == "__main__":
     main(None)
+

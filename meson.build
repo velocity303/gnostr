@@ -1,51 +1,41 @@
+# GNostr - Flatpak application build configuration
+#
+# This meson.build configures the project for GNOME-style Flatpak builds.
+# Python source files are installed to pkgdatadir/gnostr so the launcher
+# script can import them at runtime using sys.path manipulation.
 project(
   'gnostr',
   [],
-  version: '0.1.0'
+  version: '0.1.0',
+  meson_version: '>= 1.4.0',
+  default_options: [
+    'buildtype=debugoptimized',
+    'warning_level=2'
+  ]
 )
-
-# 1. Fetch the python site-packages path from the container environment
+gnome = import('gnome')
+i18n = import('i18n')
+datadir = get_option('datadir')
+pkgdatadir = get_option('prefix') / datadir
+# Python installation for use by src/gnostr.in launcher
 py_mod = import('python')
-py_installation = py_mod.find_installation('python3')
-python_site_packages = py_installation.get_install_dir()
+python_installation = py_mod.find_installation('python3')
 
-pytest_exe = find_program('pytest', required: true)
-build_root = meson.project_source_root()
+# Sub-projects (order matters: po→data→src)
+subdir('po')
+subdir('data')
+subdir('src')
 
-# --- TESTING CONFIGURATION ---
-test(
-  'unit-tests',
-  pytest_exe,
-  args : [
-    '--verbose',
-    build_root / 'tests'
-  ],
-  env : ['PYTHONPATH=' + build_root]
-)
-
-# --- INSTALLATION CONFIGURATION ---
-
-# 2. FIXED: Use install_data for an explicit file list, targeting site-packages/gnostr/
-install_data(
-  [
-    'src/__init__.py',       # Don't forget your init file if you have one!
-    'src/main.py',
-    'src/key_manager.py',    # Make sure your key_manager is included here too
-    'src/service/profile_service.py',
-    'src/service/profile_metadata_service.py',
-    'src/service/feed_service.py',
-    'src/nostr_utils.py',
-    'src/database.py',
-    'src/renderer.py',
-    'src/dialogs.py',
-    'src/client.py'
-  ],
-  install_dir: python_site_packages / 'gnostr'
-)
-
-# 3. Install the application executable launcher wrapper script
-install_data(
-  'src/gnostr',
-  install_dir : get_option('bindir'),
-  install_mode: 'rwxr-xr-x'
-)
+# Run unit tests via pytest
+pytest_prog = find_program('pytest', required: false)
+if pytest_prog.found()
+  test(
+    'unit-tests',
+    pytest_prog,
+    args: ['--verbose', meson.project_source_root() / 'tests'],
+    env: {
+      'PYTHONPATH': meson.project_source_root(),
+    },
+    timeout: 120,
+  )
+endif
