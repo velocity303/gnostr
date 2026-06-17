@@ -9,3 +9,5 @@ opencode.json
 .refactor_notes.md
 .opencode_spec.md
 .INTERNAL_WORKFLOW_REFERENCE.md
+.pytest_cache
+__pycache__
