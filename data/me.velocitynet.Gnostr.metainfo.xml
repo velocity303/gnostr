@@ -2,7 +2,7 @@
 <component type="desktop-application">
   <id>me.velocitynet.Gnostr</id>
   <metadata_license>CC0-1.0</metadata_license>
-  <project_license>GPL-3.0-or-later</project_license>
+  <project_license>MIT</project_license>
   <name>Gnostr</name>
   <summary>A native, adaptive Nostr client</summary>
   <description>
