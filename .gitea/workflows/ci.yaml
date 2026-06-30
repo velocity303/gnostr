@@ -10,4 +10,4 @@ jobs:
         with: { python-version: "3.11" }
       - run: |
           pip install pytest
-          PYTHONPATH=src pytest tests/
+          PYTHONPATH=. pytest tests/
