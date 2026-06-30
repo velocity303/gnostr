@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>me.velocitynet.Gnostr</id>
+  <id>tech.livingonlinux.gnostr</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
   <name>Gnostr</name>
@@ -18,7 +18,7 @@
     </ul>
   </description>
 
-  <launchable type="desktop-id">me.velocitynet.Gnostr.desktop</launchable>
+  <launchable type="desktop-id">tech.livingonlinux.gnostr.desktop</launchable>
 
   <developer id="me.velocitynet">
     <name>James Jones</name>

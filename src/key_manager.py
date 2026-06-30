@@ -4,7 +4,7 @@ gi.require_version('Secret', '1')
 from gi.repository import Secret, GLib
 
 # Schema defines what "kind" of secret this is.
-SECRET_SCHEMA = Secret.Schema.new("me.velocitynet.Gnostr.Schema",
+SECRET_SCHEMA = Secret.Schema.new("tech.livingonlinux.gnostr.Schema",
     Secret.SchemaFlags.NONE,
     {
         "application": Secret.SchemaAttributeType.STRING,

@@ -1,4 +1,4 @@
-application_id = 'me.velocitynet.Gnostr'
+application_id = 'tech.livingonlinux.gnostr'
 
 # Scalable icon (256x256+)
 scalable_src = join_paths('hicolor', 'scalable', 'apps')

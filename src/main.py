@@ -634,7 +634,7 @@ class MainWindow(Adw.ApplicationWindow):
 
 class GnostrApp(Adw.Application):
     def __init__(self, **kwargs):
-        super().__init__(application_id="me.velocitynet.Gnostr", flags=Gio.ApplicationFlags.FLAGS_NONE, **kwargs)
+        super().__init__(application_id="tech.livingonlinux.gnostr", flags=Gio.ApplicationFlags.FLAGS_NONE, **kwargs)
     def do_activate(self):
         win = self.props.active_window
         if not win: win = MainWindow(application=self)

@@ -2,10 +2,10 @@
 Name=Gnostr
 Comment=Native Nostr Client
 Exec=gnostr
-Icon=me.velocitynet.Gnostr
+Icon=tech.livingonlinux.gnostr
 Terminal=false
 Type=Application
 Categories=Network;Chat;GTK;
 StartupNotify=true
-StartupWMClass=me.velocitynet.Gnostr
+StartupWMClass=tech.livingonlinux.gnostr
 X-Purism-FormFactor=Workstation;Mobile;

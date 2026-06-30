@@ -12,8 +12,8 @@ Gnostr is a native Linux Nostr client designed specifically for the GNOME Deskto
 ## Getting Started
 Use Flatpak Builder to build this application.
 ```
-flatpak-builder --force-clean --repo=repo build_dir me.velocitynet.Gnostr.json
-flatpak build-bundle repo gnostr.flatpak me.velocitynet.Gnostr
+flatpak-builder --force-clean --repo=repo build_dir tech.livingonlinux.gnostr.json
+flatpak build-bundle repo gnostr.flatpak tech.livingonlinux.gnostr
 ```
 
 Prebuilt flatpaks are available within the repo for Arm and x86.
