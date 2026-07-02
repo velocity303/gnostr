@@ -33,3 +33,9 @@ class GnostrWindow(Adw.ApplicationWindow):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        self.fab_post = self.get_template_child('fab_post')
+        self.fab_post.connect('clicked', self.on_fab_post_clicked)
+
+    def on_fab_post_clicked(self, button):
+        # ponytail: will trigger ComposeWindow in next step
+        print("FAB Post clicked")

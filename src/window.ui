@@ -7,27 +7,44 @@
     <property name="default-width">800</property>
     <property name="default-height">600</property>
     <property name="content">
-      <object class="AdwToolbarView">
-        <child type="top">
-          <object class="AdwHeaderBar">
-            <child type="end">
-              <object class="GtkMenuButton">
-                <property name="primary">True</property>
-                <property name="icon-name">open-menu-symbolic</property>
-                <property name="tooltip-text" translatable="yes">Main Menu</property>
-                <property name="menu-model">primary_menu</property>
+      <object class="AdwOverlay">
+        <property name="child">
+          <object class="AdwToolbarView">
+            <child type="top">
+              <object class="AdwHeaderBar">
+                <child type="end">
+                  <object class="GtkMenuButton">
+                    <property name="primary">True</property>
+                    <property name="icon-name">open-menu-symbolic</property>
+                    <property name="tooltip-text" translatable="yes">Main Menu</property>
+                    <property name="menu-model">primary_menu</property>
+                  </object>
+                </child>
               </object>
             </child>
-          </object>
-        </child>
-        <property name="content">
-          <object class="GtkLabel" id="label">
-            <property name="label" translatable="yes">Hello, World!</property>
-            <style>
-              <class name="title-1"/>
-            </style>
+            <property name="content">
+              <object class="GtkLabel" id="label">
+                <property name="label" translatable="yes">Hello, World!</property>
+                <style>
+                  <class name="title-1"/>
+                </style>
+              </object>
+            </property>
           </object>
         </property>
+        <child>
+          <object class="GtkButton" id="fab_post">
+            <property name="icon-name">edit-create-symbolic</property>
+            <property name="valign">end</property>
+            <property name="halign">end</property>
+            <property name="margin-bottom">20</property>
+            <property name="margin-end">20</property>
+            <style>
+              <class name="suggested-action"/>
+              <class name="pill"/>
+            </style>
+          </object>
+        </child>
       </object>
     </property>
   </template>
