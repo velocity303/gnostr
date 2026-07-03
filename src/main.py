@@ -57,7 +57,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.fab_post.set_margin_end(20)
         self.fab_post.connect("clicked", self.on_fab_post_clicked)
         self.fab_post.set_visible(False)
-        self.global_overlay.add_child(self.fab_post)
+        self.global_overlay.add_overlay(self.fab_post)
 
         # 3. App View: Split View
         self.split_view = Adw.NavigationSplitView()
