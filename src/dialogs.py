@@ -54,3 +54,38 @@ class LoginDialog(Adw.Window):
             p = self.get_transient_for()
             if p and hasattr(p, 'perform_login'): p.perform_login(h)
             self.close()
+
+class ComposeWindow(Adw.Window):
+    def __init__(self, parent, on_post_callback):
+        super().__init__()
+        self.set_transient_for(parent); self.set_modal(True)
+        self.set_default_size(500, 300); self.set_title("New Post")
+        
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
+        self.set_content(box)
+
+        # Header bar for the window
+        hb = Adw.HeaderBar()
+        box.append(hb)
+
+        # Text input
+        self.text_view = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD, top_margin=12)
+        scrolled = Gtk.ScrolledWindow(vexpand=True)
+        scrolled.set_child(self.text_view)
+        box.append(scrolled)
+
+        # Footer button
+        btn_post = Gtk.Button(label="Post", css_classes=["pill", "suggested-action"])
+        btn_post.set_halign(Gtk.Align.END)
+        btn_post.connect("clicked", self.on_post_clicked)
+        box.append(btn_post)
+
+        self.on_post_callback = on_post_callback
+
+    def on_post_clicked(self, b):
+        buffer = self.text_view.get_buffer()
+        start, end = buffer.get_bounds()
+        text = buffer.get_text(start, end, False)
+        if text.strip():
+            self.on_post_callback(text)
+            self.close()

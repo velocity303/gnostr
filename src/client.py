@@ -223,8 +223,26 @@ class NostrClient(GObject.Object):
         for r in self.active_relays.values():
             r.publish(event)
 
+    def publish_post(self, content):
+        if not self.my_privkey:
+            print("❌ No private key loaded")
+            return False
+        
+        event = {
+            "pubkey": self.my_pubkey,
+            "created_at": int(time.time()),
+            "kind": 1,
+            "tags": [],
+            "content": content
+        }
+        signed = gnostr.nostr_utils.sign_event(event, self.my_privkey)
+        if signed:
+            self.publish(signed)
+            return True
+        return False
+
     def publish_relay_list(self):
-        if not self.my_privkey: return
+
         event = {"pubkey": self.my_pubkey, "created_at": int(time.time()), "kind": 10002, 
                  "tags": [['r', u] for u in self.relay_urls], "content": ""}
         signed = gnostr.nostr_utils.sign_event(event, self.my_privkey)
@@ -256,7 +274,7 @@ class NostrClient(GObject.Object):
             "tags": tags,
             "content": ""
         }
-        signed = nostr_utils.sign_event(event, self.my_privkey)
+        signed = gnostr.nostr_utils.sign_event(event, self.my_privkey)
         if signed:
             self.publish(signed)
             self.db.save_contacts(self.my_pubkey, following)
