@@ -5,5 +5,5 @@ install_data(
     'sidebar.py',
     'feed_view.py',
   ],
-  install_dir: get_option('pkgdatadir') / 'gnostr' / 'ui'
+  install_dir: pkgdatadir / pkg_name / 'ui'
 )
