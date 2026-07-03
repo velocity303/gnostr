@@ -23,6 +23,7 @@ install_data(
 subdir('util')
 subdir('gateway')
 subdir('service')
+subdir('ui')
 
 # Compile and install the GResource bundle (GTK UI files)
 gnome.compile_resources(
