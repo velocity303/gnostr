@@ -42,7 +42,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.set_content(self.toast_overlay)
 
         # FAB Wrapper
-        self.global_overlay = Adw.Overlay()
+        self.global_overlay = Gtk.Overlay()
         self.toast_overlay.set_child(self.global_overlay)
 
         # 2. Main Stack
