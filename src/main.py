@@ -179,7 +179,7 @@ class MainWindow(Adw.ApplicationWindow):
         pass
 
     def on_status_changed(self, client, status):
-        emoji = {"CONNECTED": "🟢", "WARNING": "🟡", "DISCONNECTED": "🔴"}.get(status.status, "⚪")
+        emoji = {"CONNECTED": "🟢", "WARNING": "🟡", "DISCONNECTED": "🔴"}.get(status, "⚪")
         self.sidebar.update_status(emoji)
 
     def on_contacts_updated(self, client): pass
