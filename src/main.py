@@ -127,6 +127,10 @@ class MainWindow(Adw.ApplicationWindow):
         elif r_id == "search": self.show_search_dialog()
         self.split_view.set_show_content(True)
 
+    def on_login_clicked(self, btn):
+        from gnostr.dialogs import LoginDialog
+        LoginDialog(self.client, self).present()
+
     def on_logout_clicked(self):
         KeyManager.delete_key()
         self.main_stack.set_visible_child_name("login")
