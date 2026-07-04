@@ -12,6 +12,7 @@ from gnostr.renderer import ContentRenderer, ImageLoader
 from gnostr.dialogs import LoginDialog, RelayPreferencesWindow
 from gnostr.ui.sidebar import Sidebar
 from gnostr.ui.feed_view import FeedView
+from gnostr.ui.post_widget import PostWidget
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
@@ -65,7 +66,7 @@ class MainWindow(Adw.ApplicationWindow):
         bp.add_setter(self.split_view, "collapsed", True)
         self.add_breakpoint(bp)
 
-        # UI Components (Phase 1 Refactor)
+        # UI Components
         self.sidebar = Sidebar(self)
         self.sidebar_page = Adw.NavigationPage(title="Menu", tag="sidebar")
         self.sidebar_page.set_child(self.sidebar)
@@ -154,7 +155,6 @@ class MainWindow(Adw.ApplicationWindow):
         page = self.content_nav.get_visible_page()
         if page == self.feed_view:
             self.switch_feed(self.active_feed_type)
-        # Thread/Profile refresh logic remains in MainWindow for now (Phase 2)
         self.add_toast(Adw.Toast(title="Refreshing..."))
 
     def on_auto_refresh(self):
@@ -162,12 +162,11 @@ class MainWindow(Adw.ApplicationWindow):
         return True
 
     def show_profile(self, pubkey):
-        # Note: Profile rendering still in MainWindow (Phase 2)
-        # For now we keep it here to avoid breaking the app while refactoring components
+        # Phase 2: Move to ProfileView
         pass
 
     def show_thread(self, event_id, pubkey, content, tags=[]):
-        # Thread rendering still in MainWindow (Phase 2)
+        # Phase 2: Move to ThreadView
         pass
 
     def show_search_dialog(self):
@@ -191,13 +190,29 @@ class MainWindow(Adw.ApplicationWindow):
         self.pub_key = gnostr.nostr_utils.get_public_key(priv_hex)
         self.main_stack.set_visible_child_name("app")
         self.sidebar.update_status("🟢") 
-        # Simplified login flow for refactor step
         GLib.idle_add(self.client.connect_all)
 
     def switch_feed(self, feed_type):
         self.active_feed_type = feed_type
-        # Implementation of actual post insertion into self.feed_view.posts_box logic...
-        pass
+        # Clear existing posts
+        while self.feed_view.posts_box.get_first_child():
+            self.feed_view.posts_box.remove(self.feed_view.posts_box.get_first_child())
+        
+        cached = []
+        if feed_type == "following" and self.pub_key:
+            cached = self.db.get_feed_following(self.pub_key)
+            contacts = self.db.get_following_list(self.pub_key)
+            if contacts:
+                self.client.subscribe("sub_following", {"kinds": [1], "authors": contacts[:300], "limit": 50})
+        elif feed_type == "global":
+            self.client.subscribe("sub_global", {"kinds": [1], "limit": 20}, snapshot=True)
+        elif feed_type == "me" and self.pub_key:
+            cached = self.db.get_feed_for_user(self.pub_key)
+            self.client.subscribe("sub_me", {"kinds": [1], "authors": [self.pub_key], "limit": 20})
+        
+        for ev in cached:
+            w = PostWidget(self, ev['pubkey'], ev['content'], ev['id'], ev.get('tags', []))
+            self.feed_view.posts_box.prepend(w)
 
 class GnostrApp(Adw.Application):
     def __init__(self, **kwargs):
