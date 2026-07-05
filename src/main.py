@@ -74,10 +74,8 @@ class MainWindow(Adw.ApplicationWindow):
 
         self.feed_view = FeedView(self)
         self.content_nav = Adw.NavigationView()
-        wrapper = Adw.NavigationPage(title="Content", tag="wrapper")
-        wrapper.set_child(self.content_nav)
-        self.split_view.set_content(wrapper)
-        self.content_nav.add(self.feed_view)
+        self.split_view.set_content(self.content_nav)
+        self.feed_page = self.content_nav.add(self.feed_view)
 
         # 4. Login View
         self.login_page = Adw.StatusPage(title="Welcome", icon_name="avatar-default-symbolic")
@@ -163,13 +161,13 @@ class MainWindow(Adw.ApplicationWindow):
         return True
 
     def show_profile(self, pubkey):
-        from gnostr.ui.profile_view import ProfileView
+        from .ui.profile_view import ProfileView
         view = ProfileView(self, pubkey)
         page = Adw.NavigationPage(title=f"Profile {pubkey[:8]}", child=view)
         self.content_nav.push_page(page)
 
     def show_thread(self, event_id, pubkey, content, tags=[]):
-        from gnostr.ui.thread_view import ThreadView
+        from .ui.thread_view import ThreadView
         view = ThreadView(self, event_id, pubkey, content, tags)
         page = Adw.NavigationPage(title="Thread", child=view)
         self.content_nav.push_page(page)
