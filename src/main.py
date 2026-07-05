@@ -74,7 +74,8 @@ class MainWindow(Adw.ApplicationWindow):
 
         self.feed_view = FeedView(self)
         self.content_nav = Adw.NavigationView()
-        self.split_view.set_content(self.content_nav)
+        wrapper = Adw.NavigationPage(title="Content", child=self.content_nav)
+        self.split_view.set_content(wrapper)
         self.feed_page = self.content_nav.add(self.feed_view)
 
         # 4. Login View
