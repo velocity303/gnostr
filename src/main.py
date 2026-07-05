@@ -127,6 +127,7 @@ class MainWindow(Adw.ApplicationWindow):
             if self.pub_key: self.show_profile(self.pub_key)
         elif r_id == "search": self.show_search_dialog()
         self.split_view.set_show_content(True)
+        self.content_nav.pop_to_page(self.feed_view)
 
     def on_login_clicked(self, btn):
         from gnostr.dialogs import LoginDialog
@@ -173,8 +174,15 @@ class MainWindow(Adw.ApplicationWindow):
         pass
 
     def on_event_received(self, client, eid, pubkey, content, tags_json):
-        # Routing logic’ll move to Controller in Phase 3
-        pass
+        import json
+        tags = json.loads(tags_json)
+        
+        # If we are on the feed and this post belongs here, add it
+        if self.content_nav.get_visible_page() == self.feed_view:
+            # Simple heuristic: only add to feed if it's a Kind 1 event
+            # (Usually the signal already filtered this, but just in case)
+            w = PostWidget(self, pubkey, content, eid, tags)
+            self.feed_view.posts_box.prepend(w)
 
     def on_status_changed(self, client, status):
         emoji = {"CONNECTED": "🟢", "WARNING": "🟡", "DISCONNECTED": "🔴"}.get(status, "⚪")
