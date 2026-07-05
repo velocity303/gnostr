@@ -170,7 +170,6 @@ class MainWindow(Adw.ApplicationWindow):
         pass
 
     def show_search_dialog(self):
-        # Search dialog remains here for now
         pass
 
     def on_event_received(self, client, eid, pubkey, content, tags_json):
@@ -190,6 +189,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.pub_key = gnostr.nostr_utils.get_public_key(priv_hex)
         self.main_stack.set_visible_child_name("app")
         self.sidebar.update_status("🟢") 
+        self.fab_post.set_visible(True)
         GLib.idle_add(self.client.connect_all)
 
     def switch_feed(self, feed_type):
