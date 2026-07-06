@@ -11,14 +11,14 @@ class ProfileView(Adw.Bin):
         self.main_window = main_window
         self.pubkey = pubkey
 
-        self.layout = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, 
+        self.layout = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
                              margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
         self.set_child(self.layout)
 
         # Simple Profile Header
         prof = self.main_window.db.get_profile(pubkey)
         name = prof.get('display_name') or prof.get('name') or pubkey[:8] if prof else pubkey[:8]
-        
+
         header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         lbl_name = Gtk.Label(label=name, xalign=0, css_classes=["heading"])
         lbl_pub = Gtk.Label(label=pubkey, xalign=0, css_classes=["caption", "dim-label"])
@@ -27,9 +27,14 @@ class ProfileView(Adw.Bin):
         self.layout.append(header)
         self.layout.append(Gtk.Separator())
 
-        # Posts List
+        # Posts List with scrolling
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        c = Adw.Clamp(maximum_size=600)
         self.posts_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        self.layout.append(self.posts_box)
+        c.set_child(self.posts_box)
+        scroll.set_child(c)
+        self.layout.append(scroll)
 
         # Load posts from DB
         posts = self.main_window.db.get_feed_for_user(pubkey)

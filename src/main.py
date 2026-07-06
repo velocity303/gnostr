@@ -134,7 +134,6 @@ class MainWindow(Adw.ApplicationWindow):
             if self.pub_key: self.show_profile(self.pub_key)
         elif r_id == "search": self.show_search_dialog()
         self.split_view.set_show_content(True)
-        self.content_nav.pop_to_page(self.feed_view)
 
     def on_login_clicked(self, btn):
         from gnostr.dialogs import LoginDialog
