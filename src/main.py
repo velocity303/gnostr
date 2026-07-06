@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import sys
+import os
 import json
 import time
 import gi
@@ -13,6 +14,13 @@ from gnostr.dialogs import LoginDialog, RelayPreferencesWindow
 from gnostr.ui.sidebar import Sidebar
 from gnostr.ui.feed_view import FeedView
 from gnostr.ui.post_widget import PostWidget
+
+# Ensure package imports work when run as __main__
+if __name__ == '__main__':
+    # Add parent directory to sys.path so `import gnostr` works
+    parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if parent not in sys.path:
+        sys.path.insert(0, parent)
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
@@ -74,9 +82,9 @@ class MainWindow(Adw.ApplicationWindow):
 
         self.feed_view = FeedView(self)
         self.content_nav = Adw.NavigationView()
-        wrapper = Adw.NavigationPage(title="Content", child=self.content_nav)
-        self.split_view.set_content(wrapper)
-        self.feed_page = self.content_nav.add(self.feed_view)
+        self.split_view.set_content(self.content_nav)
+        self.feed_page = Adw.NavigationPage(title="Content", child=self.feed_view)
+        self.content_nav.push(self.feed_page)
 
         # 4. Login View
         self.login_page = Adw.StatusPage(title="Welcome", icon_name="avatar-default-symbolic")
@@ -168,7 +176,7 @@ class MainWindow(Adw.ApplicationWindow):
             from .ui.profile_view import ProfileView
         view = ProfileView(self, pubkey)
         page = Adw.NavigationPage(title=f"Profile {pubkey[:8]}", child=view)
-        self.content_nav.push_page(page)
+        self.content_nav.push(page)
 
     def show_thread(self, event_id, pubkey, content, tags=[]):
         try:
@@ -177,7 +185,7 @@ class MainWindow(Adw.ApplicationWindow):
             from .ui.thread_view import ThreadView
         view = ThreadView(self, event_id, pubkey, content, tags)
         page = Adw.NavigationPage(title="Thread", child=view)
-        self.content_nav.push_page(page)
+        self.content_nav.push(page)
 
     def show_search_dialog(self):
         self.add_toast(Adw.Toast(title="Search coming soon"))

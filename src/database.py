@@ -173,6 +173,16 @@ class Database:
             cursor.execute("SELECT followed_pubkey FROM following WHERE owner_pubkey = ?", (owner_pubkey,))
             return [row[0] for row in cursor.fetchall()]
 
+    def get_replies(self, parent_event_id, limit=50):
+        """Fetch replies to a specific event (kind 1 events with a 'reply' tag)."""
+        if not self.conn: return []
+        with self.lock:
+            cursor = self.conn.cursor()
+            # This query is simplified - in a real implementation, you'd parse tags
+            # to find events that have a 'e' tag referencing the parent_event_id
+            # For now, return empty list
+            return []
+
     def _rows_to_events(self, rows):
         events = []
         for row in rows:
