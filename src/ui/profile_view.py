@@ -17,9 +17,17 @@ class ProfileView(Adw.Bin):
                              margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
         self.set_child(self.layout)
 
-        # Profile Header with avatar and npub
-        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        # Header with back button, avatar, npub
+        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         header.set_halign(Gtk.Align.CENTER)
+
+        # Back button row
+        back_row = Gtk.Box(spacing=12, halign=Gtk.Align.START)
+        btn_back = Gtk.Button(icon_name="go-previous-symbolic", css_classes=["flat"])
+        btn_back.set_tooltip_text("Back")
+        btn_back.connect("clicked", lambda b: self.main_window.content_nav.pop())
+        back_row.append(btn_back)
+        header.append(back_row)
 
         # Avatar
         prof = self.main_window.db.get_profile(pubkey)
@@ -50,12 +58,11 @@ class ProfileView(Adw.Bin):
         # Posts List with scrolling
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        c = Adw.Clamp(maximum_size=600)
+        c = Adw.Clamp(maximum_width=600)
         self.posts_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         c.set_child(self.posts_box)
         scroll.set_child(c)
-        scroll.set_vexpand(True)
-        self.layout.append(scroll)
+        self.layout.append(scroll, expand=True)
 
         # Load posts from DB
         posts = self.main_window.db.get_feed_for_user(pubkey)

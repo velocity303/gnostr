@@ -14,16 +14,34 @@ class ThreadView(Adw.Bin):
                              margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
         self.set_child(self.layout)
 
+        # Header with back button and title
+        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        header.set_halign(Gtk.Align.CENTER)
+
+        # Back button row
+        back_row = Gtk.Box(spacing=12, halign=Gtk.Align.START)
+        btn_back = Gtk.Button(icon_name="go-previous-symbolic", css_classes=["flat"])
+        btn_back.set_tooltip_text("Back")
+        btn_back.connect("clicked", lambda b: self.main_window.content_nav.pop())
+        back_row.append(btn_back)
+        header.append(back_row)
+
+        # Title with event ID
+        lbl_title = Gtk.Label(label=f"Thread {event_id[:8]}", xalign=0.5, css_classes=["heading"])
+        header.append(lbl_title)
+
+        self.layout.append(header)
+        self.layout.append(Gtk.Separator())
+
         # Hero Post
         hero = PostWidget(self.main_window, pubkey, content, event_id, tags, is_hero=True)
         self.layout.append(hero)
-        self.layout.append(Gtk.Separator())
 
         # Replies (Simplified: fetch from DB based on event_id in tags)
         # Replies with scrolling
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        c = Adw.Clamp(maximum_size=600)
+        c = Adw.Clamp(maximum_width=600)
         self.replies_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         c.set_child(self.replies_box)
         scroll.set_child(c)
