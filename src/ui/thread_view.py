@@ -15,6 +15,7 @@ class ThreadView(Adw.Bin):
         self.layout = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
                              margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
         self.set_child(self.layout)
+        self.layout.set_vexpand(True)
 
         # Header with back button and title
         header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
