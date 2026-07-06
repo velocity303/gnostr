@@ -58,7 +58,7 @@ class ProfileView(Adw.Bin):
         # Posts List with scrolling
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        c = Adw.Clamp(maximum_width=600)
+        c = Adw.Clamp(maximum_size=600)
         self.posts_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         c.set_child(self.posts_box)
         scroll.set_child(c)

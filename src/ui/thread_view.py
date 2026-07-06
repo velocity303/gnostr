@@ -41,7 +41,7 @@ class ThreadView(Adw.Bin):
         # Replies with scrolling
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        c = Adw.Clamp(maximum_width=600)
+        c = Adw.Clamp(maximum_size=600)
         self.replies_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         c.set_child(self.replies_box)
         scroll.set_child(c)
