@@ -9,6 +9,8 @@ class ThreadView(Adw.Bin):
     def __init__(self, main_window, event_id, pubkey, content, tags=[]):
         super().__init__(css_classes=["card"])
         self.main_window = main_window
+        self.event_id = event_id
+        self.client = main_window.client
 
         self.layout = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
                              margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
@@ -52,3 +54,17 @@ class ThreadView(Adw.Bin):
         for ev in replies:
             w = PostWidget(self.main_window, ev['pubkey'], ev['content'], ev['id'], ev.get('tags', []))
             self.replies_box.append(w)
+
+        # Listen for new events to update replies
+        self.client.connect("event-received", self.on_event_received)
+
+    def on_event_received(self, client, eid, pubkey, content, tags_json):
+        # Check if this event is a reply to our thread
+        import json
+        tags = json.loads(tags_json)
+        for t in tags:
+            if len(t) >= 2 and t[0] == 'e' and t[1] == self.event_id:
+                # This is a reply, add it
+                w = PostWidget(self.main_window, pubkey, content, eid, tags)
+                self.replies_box.append(w)
+                break
