@@ -15,13 +15,16 @@ class PostWidget(Adw.Bin):
         if is_hero:
             self.add_css_class("hero")
 
-        self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, 
+        # Store reference for metrics updates
+        self.main_window.event_widgets[event_id] = self
+
+        self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
                                margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
         self.set_child(self.main_box)
 
         # Header: Avatar + Name
         hb = Gtk.Box(spacing=12)
-        
+
         prof = self.main_window.db.get_profile(pubkey)
         name = pubkey[:8]
         if prof:
@@ -54,18 +57,22 @@ class PostWidget(Adw.Bin):
 
         # Footer: Metrics
         footer = Gtk.Box(spacing=20, margin_top=8)
-        
-        def mk_met(icon):
+
+        def mk_met(icon, label):
             b = Gtk.Box(spacing=6)
             b.append(Gtk.Image.new_from_icon_name(icon))
-            l = Gtk.Label(label="0", css_classes=["caption", "dim-label"])
+            l = Gtk.Label(label=label, css_classes=["caption", "dim-label"])
             b.append(l)
             return b, l
 
-        self.lbl_replies, r_box = self._setup_metric("chat-bubble-symbolic", footer)
-        self.lbl_reposts, rt_box = self._setup_metric("media-playlist-repeat-symbolic", footer)
-        self.lbl_likes, l_box = self._setup_metric("starred-symbolic", footer)
-        
+        self.lbl_replies, r_box = mk_met("chat-bubble-symbolic", "0")
+        self.lbl_reposts, rt_box = mk_met("media-playlist-repeat-symbolic", "0")
+        self.lbl_likes, l_box = mk_met("starred-symbolic", "0")
+
+        footer.append(r_box)
+        footer.append(rt_box)
+        footer.append(l_box)
+
         self.main_box.append(footer)
 
         # Interaction

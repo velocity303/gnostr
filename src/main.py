@@ -206,7 +206,13 @@ class MainWindow(Adw.ApplicationWindow):
 
     def on_contacts_updated(self, client): pass
     def on_profile_updated(self, client, pubkey): pass
-    def on_metrics_updated(self, client, eid, likes, reposts, replies): pass
+    def on_metrics_updated(self, client, eid, likes, reposts, replies):
+        # Update labels on PostWidgets by event_id
+        if eid in self.event_widgets:
+            widget = self.event_widgets[eid]
+            widget.lbl_likes.set_label(str(likes))
+            widget.lbl_reposts.set_label(str(reposts))
+            widget.lbl_replies.set_label(str(replies))
 
     def perform_login(self, priv_hex):
         self.priv_key = priv_hex
