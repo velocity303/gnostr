@@ -5,6 +5,7 @@ gi.require_version('Adw', '1')
 from gi.repository import Gtk, Adw, Gdk
 from gnostr.ui.post_widget import PostWidget
 from gnostr.renderer import ImageLoader
+from gnostr.nostr_utils import hex_to_npub
 
 class ProfileView(Adw.Bin):
     def __init__(self, main_window, pubkey):
@@ -33,13 +34,14 @@ class ProfileView(Adw.Bin):
         header.append(lbl_name)
 
         # Npub with copy button
+        npub = hex_to_npub(pubkey) or pubkey
         npub_box = Gtk.Box(spacing=8, halign=Gtk.Align.CENTER)
-        lbl_npub = Gtk.Label(label=pubkey, xalign=0, css_classes=["caption", "dim-label"])
+        lbl_npub = Gtk.Label(label=npub, xalign=0, css_classes=["caption", "dim-label"])
         npub_box.append(lbl_npub)
 
         btn_copy = Gtk.Button(icon_name="edit-copy-symbolic", css_classes=["flat"])
         btn_copy.set_tooltip_text("Copy npub")
-        btn_copy.connect("clicked", lambda b: self.copy_to_clipboard(pubkey))
+        btn_copy.connect("clicked", lambda b: self.copy_to_clipboard(npub))
         npub_box.append(btn_copy)
 
         header.append(npub_box)

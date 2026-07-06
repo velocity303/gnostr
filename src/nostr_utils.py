@@ -4,7 +4,20 @@ import json
 import hashlib
 import ecdsa
 
-# --- Bech32 Implementation ---
+# --- Npub Conversion ---
+def hex_to_npub(hex_key):
+    """Convert hex public key to npub (bech32)."""
+    if not hex_key or len(hex_key) != 64:
+        return None
+    try:
+        data = bytes.fromhex(hex_key)
+        five_bit_data = convertbits(data, 8, 5, True)
+        if five_bit_data is None:
+            return None
+        return bech32_encode("npub", five_bit_data)
+    except Exception:
+        return None
+
 CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
 
 def _bech32_polymod(values):
