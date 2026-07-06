@@ -52,6 +52,7 @@ class ProfileView(Adw.Bin):
         self.posts_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         c.set_child(self.posts_box)
         scroll.set_child(c)
+        scroll.set_vexpand(True)
         self.layout.append(scroll)
 
         # Load posts from DB
@@ -61,9 +62,7 @@ class ProfileView(Adw.Bin):
             self.posts_box.append(w)
 
     def copy_to_clipboard(self, text):
-        display = Gdk.Display.get_default()
-        clipboard = display.get_clipboard()
-        clipboard.set_text(text, -1)
-        # Show toast
+        clipboard = Gtk.Clipboard.get()
+        clipboard.set_text(text)
         toast = Adw.Toast(title="Copied npub")
         self.main_window.toast_overlay.add_toast(toast)

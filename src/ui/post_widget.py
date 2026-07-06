@@ -63,7 +63,7 @@ class PostWidget(Adw.Bin):
             b.append(Gtk.Image.new_from_icon_name(icon))
             l = Gtk.Label(label=label, css_classes=["caption", "dim-label"])
             b.append(l)
-            return b, l
+            return l, b  # return label first
 
         self.lbl_replies, r_box = mk_met("chat-bubble-symbolic", "0")
         self.lbl_reposts, rt_box = mk_met("media-playlist-repeat-symbolic", "0")
