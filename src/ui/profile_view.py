@@ -62,7 +62,8 @@ class ProfileView(Adw.Bin):
         self.posts_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         c.set_child(self.posts_box)
         scroll.set_child(c)
-        self.layout.append(scroll, expand=True)
+        scroll.set_vexpand(True)
+        self.layout.append(scroll)
 
         # Load posts from DB
         posts = self.main_window.db.get_feed_for_user(pubkey)
