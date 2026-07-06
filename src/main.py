@@ -162,13 +162,19 @@ class MainWindow(Adw.ApplicationWindow):
         return True
 
     def show_profile(self, pubkey):
-        from .ui.profile_view import ProfileView
+        try:
+            from gnostr.ui.profile_view import ProfileView
+        except ImportError:
+            from .ui.profile_view import ProfileView
         view = ProfileView(self, pubkey)
         page = Adw.NavigationPage(title=f"Profile {pubkey[:8]}", child=view)
         self.content_nav.push_page(page)
 
     def show_thread(self, event_id, pubkey, content, tags=[]):
-        from .ui.thread_view import ThreadView
+        try:
+            from gnostr.ui.thread_view import ThreadView
+        except ImportError:
+            from .ui.thread_view import ThreadView
         view = ThreadView(self, event_id, pubkey, content, tags)
         page = Adw.NavigationPage(title="Thread", child=view)
         self.content_nav.push_page(page)
