@@ -82,9 +82,9 @@ class MainWindow(Adw.ApplicationWindow):
 
         self.feed_view = FeedView(self)
         self.content_nav = Adw.NavigationView()
-        self.split_view.set_content(self.content_nav)
-        self.feed_page = Adw.NavigationPage(title="Content", child=self.feed_view)
-        self.content_nav.push(self.feed_page)
+        self.feed_page = Adw.NavigationPage(title="Content", child=self.content_nav)
+        self.split_view.set_content(self.feed_page)
+        self.content_nav.push(self.feed_view)
 
         # 4. Login View
         self.login_page = Adw.StatusPage(title="Welcome", icon_name="avatar-default-symbolic")
