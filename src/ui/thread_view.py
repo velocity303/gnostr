@@ -16,7 +16,7 @@ class ThreadView(Adw.Bin):
 
         # Header with back button and title
         header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        header.set_halign(Gtk.Align.CENTER)
+        header.set_halign(Gtk.Align.START)
 
         # Back button row
         back_row = Gtk.Box(spacing=12, halign=Gtk.Align.START)
@@ -27,7 +27,7 @@ class ThreadView(Adw.Bin):
         header.append(back_row)
 
         # Title with event ID
-        lbl_title = Gtk.Label(label=f"Thread {event_id[:8]}", xalign=0.5, css_classes=["heading"])
+        lbl_title = Gtk.Label(label=f"Thread {event_id[:8]}", xalign=0, css_classes=["heading"])
         header.append(lbl_title)
 
         self.layout.append(header)

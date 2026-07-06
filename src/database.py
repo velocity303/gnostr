@@ -174,14 +174,22 @@ class Database:
             return [row[0] for row in cursor.fetchall()]
 
     def get_replies(self, parent_event_id, limit=50):
-        """Fetch replies to a specific event (kind 1 events with a 'reply' tag)."""
+        """Fetch replies to a specific event (kind 1 events with an 'e' tag referencing parent)."""
         if not self.conn: return []
         with self.lock:
             cursor = self.conn.cursor()
-            # This query is simplified - in a real implementation, you'd parse tags
-            # to find events that have a 'e' tag referencing the parent_event_id
-            # For now, return empty list
-            return []
+            cursor.execute('SELECT * FROM events WHERE kind = 1 ORDER BY created_at DESC LIMIT ?', (limit,))
+            rows = cursor.fetchall()
+            events = self._rows_to_events(rows)
+            # Filter in Python for events that have an 'e' tag referencing parent_event_id
+            replies = []
+            for ev in events:
+                tags = ev.get('tags', [])
+                for t in tags:
+                    if len(t) >= 2 and t[0] == 'e' and t[1] == parent_event_id:
+                        replies.append(ev)
+                        break
+            return replies
 
     def _rows_to_events(self, rows):
         events = []
