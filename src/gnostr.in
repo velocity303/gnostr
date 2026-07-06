@@ -45,7 +45,7 @@ for path in site_packages:
         sys.path.insert(0, path)
 
 # Add the 'gnostr' application source
-sys.path.insert(1, os.path.join(pkgdatadir, pkg_name))
+sys.path.insert(1, pkgdatadir)
 # ----------------------------
 
 signal.signal(signal.SIGINT, signal.SIG_DFL)
