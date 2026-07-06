@@ -41,13 +41,12 @@ class ThreadView(Adw.Bin):
         self.layout.append(hero)
 
         # Replies (Simplified: fetch from DB based on event_id in tags)
-        # Replies with scrolling
+        # Replies with scrolling - remove clamp to fill width
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        c = Adw.Clamp(maximum_size=600)
+        # Use a box directly to fill available width
         self.replies_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        c.set_child(self.replies_box)
-        scroll.set_child(c)
+        scroll.set_child(self.replies_box)
         self.layout.append(scroll)
 
         # We'll rely on the DB having the replies indexed
