@@ -185,6 +185,8 @@ class MainWindow(Adw.ApplicationWindow):
         view = ThreadView(self, event_id, pubkey, content, tags)
         page = Adw.NavigationPage(title="Thread", child=view)
         self.content_nav.push(page)
+        # Fetch thread data including reactions
+        self.client.fetch_thread(event_id)
 
     def show_search_dialog(self):
         self.add_toast(Adw.Toast(title="Search coming soon"))

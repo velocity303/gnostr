@@ -75,7 +75,7 @@ class ProfileView(Adw.Bin):
         display = Gdk.Display.get_default()
         if display is None:
             return
-        clipboard = Gtk.Clipboard.get(display)
+        clipboard = Gtk.Clipboard.get_for_display(display)
         if clipboard is None:
             return
         clipboard.set_text(text)
