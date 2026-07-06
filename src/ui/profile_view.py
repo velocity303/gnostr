@@ -71,7 +71,7 @@ class ProfileView(Adw.Bin):
             self.posts_box.append(w)
 
     def copy_to_clipboard(self, text):
-        clipboard = Gtk.Clipboard.get()
+        clipboard = Gtk.Clipboard.get_default()
         clipboard.set_text(text)
         toast = Adw.Toast(title="Copied npub")
         self.main_window.toast_overlay.add_toast(toast)
