@@ -5,6 +5,8 @@ install_data(
     'sidebar.py',
     'feed_view.py',
     'post_widget.py',
+    'profile_view.py',
+    'thread_view.py',
   ],
   install_dir: pkgdatadir / pkg_name / 'ui'
 )
