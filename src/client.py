@@ -300,9 +300,13 @@ class NostrClient(GObject.Object):
             if kind == 7: self.metrics[target]['likes']+=1; updated=True
             elif kind == 6: self.metrics[target]['reposts']+=1; updated=True
             elif kind == 1: self.metrics[target]['replies']+=1; updated=True
-            if updated: 
+            if updated:
                 m = self.metrics[target]
                 GLib.idle_add(self.emit, 'metrics-updated', target, m['likes'], m['reposts'], m['replies'])
+
+        # Update metrics for this event's own ID for likes/reposts
+        if kind == 1:
+            if eid not in self.metrics: self.metrics[eid] = {'likes':0,'reposts':0,'replies':0}
 
         if eid in self.seen_events:
             return
