@@ -47,6 +47,7 @@ class ThreadView(Adw.Bin):
         # Use a box directly to fill available width
         self.replies_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         scroll.set_child(self.replies_box)
+        scroll.set_halign(Gtk.Align.FILL)
         self.layout.append(scroll)
 
         # We'll rely on the DB having the replies indexed
