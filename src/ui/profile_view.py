@@ -78,6 +78,7 @@ class ProfileView(Adw.Bin):
         clipboard = display.get_clipboard()
         if clipboard is None:
             return
-        clipboard.set_text(text)
+        provider = Gdk.ContentProvider.new_for_value(text)
+        clipboard.set_content(provider)
         toast = Adw.Toast(title="Copied npub")
         self.main_window.toast_overlay.add_toast(toast)
