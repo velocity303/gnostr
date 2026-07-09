@@ -223,8 +223,26 @@ class NostrClient(GObject.Object):
         for r in self.active_relays.values():
             r.publish(event)
 
+    def publish_post(self, content):
+        if not self.my_privkey:
+            print("❌ No private key loaded")
+            return False
+        
+        event = {
+            "pubkey": self.my_pubkey,
+            "created_at": int(time.time()),
+            "kind": 1,
+            "tags": [],
+            "content": content
+        }
+        signed = gnostr.nostr_utils.sign_event(event, self.my_privkey)
+        if signed:
+            self.publish(signed)
+            return True
+        return False
+
     def publish_relay_list(self):
-        if not self.my_privkey: return
+
         event = {"pubkey": self.my_pubkey, "created_at": int(time.time()), "kind": 10002, 
                  "tags": [['r', u] for u in self.relay_urls], "content": ""}
         signed = gnostr.nostr_utils.sign_event(event, self.my_privkey)
@@ -256,7 +274,7 @@ class NostrClient(GObject.Object):
             "tags": tags,
             "content": ""
         }
-        signed = nostr_utils.sign_event(event, self.my_privkey)
+        signed = gnostr.nostr_utils.sign_event(event, self.my_privkey)
         if signed:
             self.publish(signed)
             self.db.save_contacts(self.my_pubkey, following)
@@ -282,9 +300,13 @@ class NostrClient(GObject.Object):
             if kind == 7: self.metrics[target]['likes']+=1; updated=True
             elif kind == 6: self.metrics[target]['reposts']+=1; updated=True
             elif kind == 1: self.metrics[target]['replies']+=1; updated=True
-            if updated: 
+            if updated:
                 m = self.metrics[target]
                 GLib.idle_add(self.emit, 'metrics-updated', target, m['likes'], m['reposts'], m['replies'])
+
+        # Update metrics for this event's own ID for likes/reposts
+        if kind == 1:
+            if eid not in self.metrics: self.metrics[eid] = {'likes':0,'reposts':0,'replies':0}
 
         if eid in self.seen_events:
             return

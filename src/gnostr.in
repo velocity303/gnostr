@@ -34,6 +34,7 @@ import glob
 VERSION = '@VERSION@'
 pkgdatadir = '@pkgdatadir@'
 localedir = '@localedir@'
+pkg_name = 'gnostr'
 
 # --- SMART PATH DETECTION ---
 # Automatically find site-packages in /app/lib OR /app/lib64.
