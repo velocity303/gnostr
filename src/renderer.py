@@ -9,8 +9,13 @@ import traceback
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
-gi.require_version('Gst', '1.0')
+try:
+    gi.require_version('Gst', '1.0')
+    print("Gst 1.0 required successfully")
+except Exception as e:
+    print(f"Failed to require Gst 1.0: {e}")
 from gi.repository import Gtk, Adw, GLib, Gdk, GdkPixbuf, Pango, Gst
+print(f"Gst module imported: {Gst.__name__}")
 import gnostr.nostr_utils as nostr_utils
 
 class ContentRenderer:
@@ -447,12 +452,15 @@ class VideoPlayer:
     def _load(url, callback):
         player = None
         try:
+            print(f"VideoPlayer._load({url})")
             Gst.init(None)
+            print(f"Gst.init() succeeded")
             pipeline = Gst.parse_launch(
                 f"uridecodebin uri={url} ! "
                 f"videoconvert ! videoscale ! "
                 f"queue ! appsink name=sink"
             )
+            print(f"Gst.parse_launch() succeeded")
             sink = pipeline.get_by_name("sink")
             player = Gtk.Video()
             player.set_pipeline(pipeline)
