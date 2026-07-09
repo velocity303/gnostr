@@ -29,7 +29,9 @@ class ContentRenderer:
     def is_video_url(url):
         try:
             path = urlparse(url).path.lower()
-            return any(path.endswith(ext) for ext in ContentRenderer.VIDEO_EXTS)
+            result = any(path.endswith(ext) for ext in ContentRenderer.VIDEO_EXTS)
+            print(f"is_video_url({url}) -> {result}, VIDEO_EXTS={ContentRenderer.VIDEO_EXTS}")
+            return result
         except: return False
 
     @staticmethod
@@ -461,8 +463,11 @@ class VideoPlayer:
                     player.set_position(0)
                 sink.connect("EOS", lambda _: on_eos())
             pipeline.set_state(Gst.State.PLAYING)
+            print(f"GStreamer loaded video: {url}")
         except Exception as e:
-            print(f"Video load error: {e}")
+            print(f"Video load error for {url}: {e}")
+            import traceback
+            traceback.print_exc()
             GLib.idle_add(callback, None)
             return
 
