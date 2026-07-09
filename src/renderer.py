@@ -9,14 +9,14 @@ import traceback
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
-gi.require_version('Pango', '1.0')
-from gi.repository import Gtk, Adw, GLib, Gdk, GdkPixbuf, Pango
+gi.require_version('Gst', '1.0')
+from gi.repository import Gtk, Adw, GLib, Gdk, GdkPixbuf, Pango, Gst
 import gnostr.nostr_utils as nostr_utils
 
 class ContentRenderer:
     LINK_REGEX = re.compile(r'((?:https?://|nostr:)[^\s]+)')
-    IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
-    VIDEO_EXTS = {'.mp4', '.mov', '.webm'}
+    IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.webp'}
+    VIDEO_EXTS = {'.mp4', '.mov', '.webm', '.gif'}
 
     @staticmethod
     def is_image_url(url):
@@ -31,6 +31,24 @@ class ContentRenderer:
             path = urlparse(url).path.lower()
             return any(path.endswith(ext) for ext in ContentRenderer.VIDEO_EXTS)
         except: return False
+
+    @staticmethod
+    def _add_video(box, url, window_ref):
+        # Use GStreamer's Gtk.Video for animated GIFs and videos
+        video_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        video_box.set_halign(Gtk.Align.FILL)
+        video_box.set_hexpand(True)
+        video_box.set_size_request(-1, 200)  # Placeholder height
+
+        spinner = Gtk.Spinner()
+        spinner.start()
+        spinner.set_halign(Gtk.Align.CENTER)
+        spinner.set_valign(Gtk.Align.CENTER)
+        spinner.set_vexpand(True)
+        video_box.append(spinner)
+        box.append(video_box)
+
+        VideoPlayer.load_and_play(url, video_box, spinner, window_ref)
 
     @staticmethod
     def render(content, window_ref, post_widget_ref=None):
@@ -59,9 +77,9 @@ class ContentRenderer:
                         # Pass window_ref to calculate proper sizing
                         ContentRenderer._add_image(box, clean_part, window_ref)
                     elif ContentRenderer.is_video_url(clean_part):
-                        ContentRenderer._add_link_button(box, clean_part, "▶ Watch Video")
-                    else: 
-                        ContentRenderer._add_link(box, clean_part) 
+                        ContentRenderer._add_video(box, clean_part, window_ref)
+                    else:
+                        ContentRenderer._add_link(box, clean_part)
                         
                     if trailing:
                         current_text_buffer.append(trailing)
@@ -180,7 +198,17 @@ class ContentRenderer:
                         lbl_name.set_label(name)
                         av.set_text(name)
                     if profile.get('picture'):
-                        ImageLoader.load_avatar(profile['picture'], lambda t: av.set_custom_image(t))
+                        picture_url = profile['picture']
+                        if ContentRenderer.is_video_url(picture_url):
+                            # Replace avatar with video player for animated media
+                            prof_box.remove(av)
+                            av_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+                            av_container.set_size_request(32, 32)
+                            av_container.set_halign(Gtk.Align.CENTER)
+                            VideoPlayer.load_and_play(picture_url, av_container, None)
+                            prof_box.append(av_container)
+                        else:
+                            ImageLoader.load_avatar(profile['picture'], lambda t: av.set_custom_image(t))
                 else:
                     window.client.fetch_profile(hex_pk)
 
@@ -209,10 +237,22 @@ class ContentRenderer:
         h_box = Gtk.Box(spacing=6)
         av = Adw.Avatar(size=24, show_initials=True, text=name)
         if prof and prof.get('picture'):
-            ImageLoader.load_avatar(prof['picture'], lambda t: av.set_custom_image(t))
+            picture_url = prof['picture']
+            if ContentRenderer.is_video_url(picture_url):
+                # Keep placeholder avatar
+                h_box.append(av)
+                av_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+                av_container.set_size_request(24, 24)
+                av_container.set_halign(Gtk.Align.CENTER)
+                VideoPlayer.load_and_play(picture_url, av_container, None)
+                h_box.append(av_container)
+            else:
+                h_box.append(av)
+                ImageLoader.load_avatar(prof['picture'], lambda t: av.set_custom_image(t))
+        else:
+            h_box.append(av)
 
         lbl_name = Gtk.Label(label=name, css_classes=["heading", "caption-heading"])
-        h_box.append(av)
         h_box.append(lbl_name)
         container.append(h_box)
 
@@ -346,4 +386,95 @@ class ImageLoader:
 
         for (cb, size) in callbacks:
             cb(texture)
+        return False
+
+
+class VideoPlayer:
+    """Minimal GStreamer-based video/GIF player using Gtk.Video."""
+    _cache = {}
+    _ongoing = {}
+    _lock = threading.Lock()
+    _executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+
+    @staticmethod
+    def load_and_play(url, container, spinner, window_ref=None):
+        def on_ready(player):
+            if spinner and spinner.get_parent() == container:
+                container.remove(spinner)
+            if player:
+                # Calculate layout
+                video_box = container
+                width = player.get_video_width() or 640
+                height = player.get_video_height() or 360
+                ratio = width / height if height > 0 else 1.0
+
+                available_width = 600
+                if window_ref:
+                    win_w = window_ref.get_width()
+                    if win_w < 650:
+                        available_width = win_w - 40
+                    else:
+                        available_width = 600
+
+                req_height = int(available_width / ratio)
+                video_box.set_size_request(-1, req_height)
+
+                p = Gtk.Video(player=player)
+                p.set_content_fit(Gtk.ContentFit.CONTAIN)
+                p.set_halign(Gtk.Align.FILL)
+                video_box.append(p)
+            else:
+                container.append(Gtk.Image.new_from_icon_name("video-symbolic"))
+
+        VideoPlayer._fetch_player(url, on_ready)
+
+    @staticmethod
+    def _fetch_player(url, callback):
+        with VideoPlayer._lock:
+            if url in VideoPlayer._cache:
+                callback(VideoPlayer._cache[url])
+                return
+            if url in VideoPlayer._ongoing:
+                VideoPlayer._ongoing[url].append(callback)
+                return
+            VideoPlayer._ongoing[url] = [callback]
+
+        VideoPlayer._executor.submit(VideoPlayer._load, url, callback)
+
+    @staticmethod
+    def _load(url, callback):
+        player = None
+        try:
+            Gst.init(None)
+            pipeline = Gst.parse_launch(
+                f"uridecodebin uri={url} ! "
+                f"videoconvert ! videoscale ! "
+                f"queue ! appsink name=sink"
+            )
+            sink = pipeline.get_by_name("sink")
+            player = Gtk.Video()
+            player.set_pipeline(pipeline)
+            player.set_auto_play(True)
+            # Simple loop for GIFs
+            if url.endswith('.gif'):
+                def on_eos():
+                    player.set_position(0)
+                sink.connect("EOS", lambda _: on_eos())
+            pipeline.set_state(Gst.State.PLAYING)
+        except Exception as e:
+            print(f"Video load error: {e}")
+            GLib.idle_add(callback, None)
+            return
+
+        GLib.idle_add(VideoPlayer._cache_and_notify, url, player, callback)
+
+    @staticmethod
+    def _cache_and_notify(url, player, callback):
+        with VideoPlayer._lock:
+            VideoPlayer._cache[url] = player
+        with VideoPlayer._lock:
+            callbacks = VideoPlayer._ongoing.pop(url, [])
+        for cb in callbacks:
+            cb(player)
+        callback(player)
         return False

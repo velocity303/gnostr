@@ -253,6 +253,12 @@ class GnostrApp(Adw.Application):
         win = self.props.active_window
         if not win: win = MainWindow(application=self)
         win.present()
+        # Initialize GStreamer for video/GIF support
+        try:
+            from gi.repository import Gst
+            Gst.init(None)
+        except Exception as e:
+            print(f"GStreamer init failed: {e}")
 
 def main(version):
     app = GnostrApp()
