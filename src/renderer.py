@@ -397,7 +397,7 @@ class ImageLoader:
 
 
 class VideoPlayer:
-    """Minimal GStreamer-based video/GIF player using Gtk.Video."""
+    """Minimal GStreamer-based video/GIF player using GstPlayer."""
     _cache = {}
     _ongoing = {}
     _lock = threading.Lock()
@@ -409,7 +409,6 @@ class VideoPlayer:
             if spinner and spinner.get_parent() == container:
                 container.remove(spinner)
             if player:
-                # Calculate layout
                 video_box = container
                 width = player.get_video_width() or 640
                 height = player.get_video_height() or 360
@@ -426,7 +425,7 @@ class VideoPlayer:
                 req_height = int(available_width / ratio)
                 video_box.set_size_request(-1, req_height)
 
-                p = Gtk.Video(player=player)
+                p = Gtk.Picture(player=player)
                 p.set_content_fit(Gtk.ContentFit.CONTAIN)
                 p.set_halign(Gtk.Align.FILL)
                 video_box.append(p)
@@ -462,16 +461,9 @@ class VideoPlayer:
             )
             print(f"Gst.parse_launch() succeeded")
             sink = pipeline.get_by_name("sink")
-            player = Gtk.Video()
-            player.set_pipeline(pipeline)
-            player.set_auto_play(True)
-            # Simple loop for GIFs
-            if url.endswith('.gif'):
-                def on_eos():
-                    player.set_position(0)
-                sink.connect("EOS", lambda _: on_eos())
-            pipeline.set_state(Gst.State.PLAYING)
-            print(f"GStreamer loaded video: {url}")
+            player = Gst.Player(pipeline=pipeline)
+            player.play()
+            print(f"Gst.Player created and playing")
         except Exception as e:
             print(f"Video load error for {url}: {e}")
             import traceback
