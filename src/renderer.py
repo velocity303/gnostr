@@ -462,22 +462,17 @@ class VideoPlayer:
             Gst.init(None)
             print(f"Gst.init() succeeded")
 
-            # Try GstPlayer first (GTK4 + GStreamer standard approach)
+            # Try Gtk.MediaFile first (GTK 4 standard approach)
             try:
-                # Need to require version first
-                gi.require_version('GstPlayer', '1.0')
-                from gi.repository import GstPlayer
-                # Use GstPlayer.Player (not GstPlayer.GstPlayer)
-                player = GstPlayer.Player.new()
-                player.set_uri(url)
+                # Create a media stream from the URL
+                media = Gtk.MediaFile.new(url)
                 video = Gtk.Video()
-                # Use set_property for the player in GTK4
-                video.set_property("player", player)
-                player.play()
-                print(f"Using GstPlayer.Player for {url}")
-            except (ImportError, AttributeError, ValueError) as e:
-                print(f"GstPlayer not available: {e}")
-                # For all formats, use GStreamer pipeline with custom rendering
+                video.set_media_stream(media)
+                media.play()
+                print(f"Using Gtk.MediaFile for {url}")
+            except Exception as e:
+                print(f"Gtk.MediaFile failed: {e}")
+                # Fallback to custom GStreamer pipeline with custom rendering
                 try:
                     # Build a GStreamer pipeline with custom rendering
                     pipeline = Gst.parse_launch(
