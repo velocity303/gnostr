@@ -460,49 +460,26 @@ class VideoPlayer:
     @staticmethod
     def _load(url, callback):
         video = None
-        # Try Gtk.MediaFile first (GTK 4 standard approach)
+        # Use GStreamer pipeline for all remote media
         try:
-            # Create a media stream from the URL using Gio.File
-            file = Gio.File.new_for_uri(url)
-            media = Gtk.MediaFile.new_for_file(file)
-            video = Gtk.Video()
-            video.set_media_stream(media)
-            media.play()
-            print(f"Using Gio.File + MediaFile for {url}")
+            pipeline = Gst.parse_launch(
+                f"uridecodebin uri={url} ! "
+                f"videoconvert ! videoscale ! "
+                f"queue ! gtk4paintablesink name=vsink"
+            )
+            vsink = pipeline.get_by_name("vsink")
+            paintable = vsink.get_property("paintable")
+            video = Gtk.Picture()
+            video.set_paintable(paintable)
+            video.set_content_width(320)
+            video.set_content_height(180)
+            video.set_vexpand(False)
+            video.set_hexpand(False)
+            video.set_can_shrink(True)
+            pipeline.set_state(Gst.State.PLAYING)
         except Exception as e:
-            print(f"Gtk.MediaFile failed: {e}")
-            # Fallback to custom GStreamer pipeline with gtk4paintablesink
-            try:
-                # Build a GStreamer pipeline with gtk4paintablesink
-                pipeline = Gst.parse_launch(
-                    f"uridecodebin uri={url} ! "
-                    f"videoconvert ! videoscale ! "
-                    f"queue ! gtk4paintablesink name=vsink"
-                )
-                print(f"Gst.parse_launch() succeeded for {url}")
-
-                # Extract the paintable from the sink
-                vsink = pipeline.get_by_name("vsink")
-                paintable = vsink.get_property("paintable")
-
-                # Create a Gtk.Picture to hold the video
-                video = Gtk.Picture()
-                video.set_paintable(paintable)
-                video.set_content_width(640)
-                video.set_content_height(360)
-                video.set_can_shrink(True)
-                video.set_halign(Gtk.Align.FILL)
-                video.set_valign(Gtk.Align.CENTER)
-                print(f"Gtk.Picture created with paintable for {url}")
-
-                # Start the pipeline
-                pipeline.set_state(Gst.State.PLAYING)
-
-            except Exception as gst_e:
-                print(f"GStreamer pipeline failed: {gst_e}")
-                import traceback
-                traceback.print_exc()
-                video = None
+            print(f"GStreamer pipeline failed: {e}")
+            video = None
 
         GLib.idle_add(callback, video)
 
