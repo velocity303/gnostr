@@ -16,6 +16,7 @@ except Exception as e:
     print(f"Failed to require Gst 1.0: {e}")
 from gi.repository import Gtk, Adw, GLib, Gdk, GdkPixbuf, Pango, Gst
 print(f"Gst module imported: {Gst.__name__}")
+print(f"Gtk.Video available: {hasattr(Gtk, 'Video')}")
 import gnostr.nostr_utils as nostr_utils
 
 class ContentRenderer:
@@ -397,7 +398,7 @@ class ImageLoader:
 
 
 class VideoPlayer:
-    """Minimal GStreamer-based video/GIF player using GstPlayer."""
+    """Minimal GStreamer-based video/GIF player using Gtk.Video."""
     _cache = {}
     _ongoing = {}
     _lock = threading.Lock()
@@ -405,13 +406,13 @@ class VideoPlayer:
 
     @staticmethod
     def load_and_play(url, container, spinner, window_ref=None):
-        def on_ready(player):
+        def on_ready(video):
             if spinner and spinner.get_parent() == container:
                 container.remove(spinner)
-            if player:
+            if video:
                 video_box = container
-                width = player.get_video_width() or 640
-                height = player.get_video_height() or 360
+                width = video.get_video_width() or 640
+                height = video.get_video_height() or 360
                 ratio = width / height if height > 0 else 1.0
 
                 available_width = 600
@@ -425,10 +426,9 @@ class VideoPlayer:
                 req_height = int(available_width / ratio)
                 video_box.set_size_request(-1, req_height)
 
-                p = Gtk.Picture(player=player)
-                p.set_content_fit(Gtk.ContentFit.CONTAIN)
-                p.set_halign(Gtk.Align.FILL)
-                video_box.append(p)
+                video.set_halign(Gtk.Align.FILL)
+                video.set_valign(Gtk.Align.FILL)
+                video_box.append(video)
             else:
                 container.append(Gtk.Image.new_from_icon_name("video-symbolic"))
 
@@ -449,7 +449,7 @@ class VideoPlayer:
 
     @staticmethod
     def _load(url, callback):
-        player = None
+        video = None
         try:
             print(f"VideoPlayer._load({url})")
             Gst.init(None)
@@ -460,10 +460,15 @@ class VideoPlayer:
                 f"queue ! appsink name=sink"
             )
             print(f"Gst.parse_launch() succeeded")
-            sink = pipeline.get_by_name("sink")
-            player = Gst.Player(pipeline=pipeline)
-            player.play()
-            print(f"Gst.Player created and playing")
+            
+            # Create a Gtk.Video widget connected to the pipeline
+            video = Gtk.Video(pipeline=pipeline)
+            video.set_halign(Gtk.Align.FILL)
+            video.set_valign(Gtk.Align.FILL)
+            video.set_play_when_ready(True)
+            
+            print(f"Gtk.Video created: {video}")
+            video.show()
         except Exception as e:
             print(f"Video load error for {url}: {e}")
             import traceback
@@ -471,15 +476,15 @@ class VideoPlayer:
             GLib.idle_add(callback, None)
             return
 
-        GLib.idle_add(VideoPlayer._cache_and_notify, url, player, callback)
+        GLib.idle_add(VideoPlayer._cache_and_notify, url, video, callback)
 
     @staticmethod
-    def _cache_and_notify(url, player, callback):
+    def _cache_and_notify(url, video, callback):
         with VideoPlayer._lock:
-            VideoPlayer._cache[url] = player
+            VideoPlayer._cache[url] = video
         with VideoPlayer._lock:
             callbacks = VideoPlayer._ongoing.pop(url, [])
         for cb in callbacks:
-            cb(player)
-        callback(player)
+            cb(video)
+        callback(video)
         return False
