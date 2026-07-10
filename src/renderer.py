@@ -418,11 +418,6 @@ class VideoPlayer:
                     if parent is not None:
                         parent.remove(video)
                 
-                # Apply size constraints to prevent layout inflation
-                video.set_can_shrink(True)
-                video.set_hexpand(False)
-                video.set_vexpand(False)
-                
                 # Get natural size from video widget
                 if hasattr(video, 'get_video_width') and hasattr(video, 'get_video_height'):
                     width = video.get_video_width() or 640
