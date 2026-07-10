@@ -411,6 +411,11 @@ class VideoPlayer:
                 container.remove(spinner)
             if video:
                 video_box = container
+                # Remove from any existing parent before reusing
+                if video.get_parent() is not None:
+                    parent = video.get_parent()
+                    if parent is not None:
+                        parent.remove(video)
                 # Get natural size from video widget
                 if hasattr(video, 'get_video_width') and hasattr(video, 'get_video_height'):
                     width = video.get_video_width() or 640
