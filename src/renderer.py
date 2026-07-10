@@ -460,14 +460,19 @@ class VideoPlayer:
     @staticmethod
     def _load(url, callback):
         video = None
-        # Use GStreamer pipeline for all remote media
         try:
-            pipeline = Gst.parse_launch(
-                f"uridecodebin uri={url} ! "
-                f"videoconvert ! videoscale ! "
-                f"queue ! gtk4paintablesink name=vsink"
-            )
-            vsink = pipeline.get_by_name("vsink")
+            # Use playbin which automatically handles audio/video synchronization
+            pipeline = Gst.ElementFactory.make("playbin", "player")
+            pipeline.set_property("uri", url)
+            
+            # Force the video to render into our GTK4 paintable sink
+            vsink = Gst.ElementFactory.make("gtk4paintablesink", "vsink")
+            pipeline.set_property("video-sink", vsink)
+            
+            # Start neutral (muted)
+            pipeline.set_property("mute", True)
+            
+            # Attach to the Gtk.Picture widget
             paintable = vsink.get_property("paintable")
             video = Gtk.Picture()
             video.set_paintable(paintable)
@@ -476,7 +481,19 @@ class VideoPlayer:
             video.set_vexpand(False)
             video.set_hexpand(False)
             video.set_can_shrink(True)
+            
+            # Add a tap/click gesture to toggle the audio
+            click_gesture = Gtk.GestureClick.new()
+            def on_video_click(gesture, n_press, x, y, p=pipeline):
+                current_mute = p.get_property("mute")
+                p.set_property("mute", not current_mute)
+                
+            click_gesture.connect("pressed", on_video_click)
+            video.add_controller(click_gesture)
+
+            # Begin playback
             pipeline.set_state(Gst.State.PLAYING)
+            
         except Exception as e:
             print(f"GStreamer pipeline failed: {e}")
             video = None
