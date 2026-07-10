@@ -498,16 +498,6 @@ class VideoPlayer:
                 else:
                     # For other video formats, try using GStreamer with Gtk.Video
                     try:
-                        # Try using GstVideoOverlay interface
-                        try:
-                            gi.require_version('GstVideo', '1.0')
-                            from gi.repository import GstVideo
-                        except Exception as gv_e:
-                            print(f"GstVideo not available: {gv_e}")
-                            video = Gtk.Label(label="Video not supported")
-                            video = Gtk.Picture.new_for_paintable(None)
-                            raise RuntimeError("GstVideo not available")
-                        
                         # Build a GStreamer pipeline
                         pipeline = Gst.parse_launch(
                             f"uridecodebin uri={url} ! "
@@ -519,17 +509,23 @@ class VideoPlayer:
                         # Create a Gtk.Video widget
                         video = Gtk.Video()
                         
-                        # Attach the video sink via GstVideoOverlay interface
-                        if hasattr(video, 'set_video_overlay'):
-                            video.set_video_overlay(pipeline.get_video_sink())
-                            video.set_default_size(640, 360)
+                        # Try to attach the video sink via GstVideoOverlay interface
+                        try:
+                            from gi.repository import GstVideo
+                            if hasattr(video, 'set_video_overlay'):
+                                video.set_video_overlay(pipeline.get_video_sink())
+                                video.set_default_size(640, 360)
+                                video.set_halign(Gtk.Align.FILL)
+                                video.set_valign(Gtk.Align.FILL)
+                                print(f"Gtk.Video set video overlay for {url}")
+                            else:
+                                video.set_halign(Gtk.Align.FILL)
+                                video.set_valign(Gtk.Align.FILL)
+                                print(f"Gtk.Video created without overlay for {url}")
+                        except Exception as gv_e:
+                            print(f"GstVideoOverlay not available: {gv_e}")
                             video.set_halign(Gtk.Align.FILL)
                             video.set_valign(Gtk.Align.FILL)
-                            print(f"Gtk.Video set video overlay for {url}")
-                        else:
-                            video.set_halign(Gtk.Align.FILL)
-                            video.set_valign(Gtk.Align.FILL)
-                            print(f"Gtk.Video created without overlay for {url}")
                         
                         # Start the pipeline
                         pipeline.set_state(Gst.State.PLAYING)
