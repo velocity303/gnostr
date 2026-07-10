@@ -417,6 +417,12 @@ class VideoPlayer:
                     parent = video.get_parent()
                     if parent is not None:
                         parent.remove(video)
+                
+                # Apply size constraints to prevent layout inflation
+                video.set_can_shrink(True)
+                video.set_hexpand(False)
+                video.set_vexpand(False)
+                
                 # Get natural size from video widget
                 if hasattr(video, 'get_video_width') and hasattr(video, 'get_video_height'):
                     width = video.get_video_width() or 640
@@ -432,6 +438,7 @@ class VideoPlayer:
                             available_width = 600
 
                     req_height = int(available_width / ratio)
+                    # Use set_size_request to constrain the container
                     video_box.set_size_request(-1, req_height)
 
                 video.set_halign(Gtk.Align.FILL)
@@ -488,6 +495,9 @@ class VideoPlayer:
                 video.set_paintable(paintable)
                 video.set_content_width(640)
                 video.set_content_height(360)
+                video.set_can_shrink(True)
+                video.set_halign(Gtk.Align.FILL)
+                video.set_valign(Gtk.Align.CENTER)
                 print(f"Gtk.Picture created with paintable for {url}")
 
                 # Start the pipeline
