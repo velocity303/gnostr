@@ -476,67 +476,47 @@ class VideoPlayer:
                 print(f"Using GstPlayer.Player for {url}")
             except (ImportError, AttributeError, ValueError) as e:
                 print(f"GstPlayer not available: {e}")
-                # Fallback for GIFs using Gtk.Picture
-                if url.endswith('.gif'):
+                # For all formats, use GStreamer pipeline
+                try:
+                    # Build a GStreamer pipeline
+                    pipeline = Gst.parse_launch(
+                        f"uridecodebin uri={url} ! "
+                        f"videoconvert ! videoscale ! "
+                        f"queue ! appsink name=sink"
+                    )
+                    print(f"Gst.parse_launch() succeeded for {url}")
+                    
+                    # Create a Gtk.Video widget
+                    video = Gtk.Video()
+                    
+                    # Try to attach the video sink via GstVideoOverlay interface
                     try:
-                        # Load GIF with Pixbuf (supports animation)
-                        loader = GdkPixbuf.PixbufLoader()
-                        loader.set_size(320, 180)
-                        req = urllib.request.Request(url, headers={'User-Agent': 'Gnostr/1.0'})
-                        with urllib.request.urlopen(req, timeout=15) as r:
-                            data = r.read()
-                        loader.write(data)
-                        loader.close()
-                        pix = loader.get_pixbuf()
-                        if pix:
-                            texture = Gdk.Texture.new_for_pixbuf(pix)
-                            video = Gtk.Picture.new_for_paintable(texture)
-                            print(f"Loaded GIF with PixbufLoader")
-                    except Exception as gif_e:
-                        print(f"GIF fallback failed: {gif_e}")
-                        video = Gtk.Label(label="GIF failed to load")
-                else:
-                    # For other video formats, try using GStreamer with Gtk.Video
-                    try:
-                        # Build a GStreamer pipeline
-                        pipeline = Gst.parse_launch(
-                            f"uridecodebin uri={url} ! "
-                            f"videoconvert ! videoscale ! "
-                            f"queue ! appsink name=sink"
-                        )
-                        print(f"Gst.parse_launch() succeeded for {url}")
-                        
-                        # Create a Gtk.Video widget
-                        video = Gtk.Video()
-                        
-                        # Try to attach the video sink via GstVideoOverlay interface
-                        try:
-                            from gi.repository import GstVideo
-                            if hasattr(video, 'set_video_overlay'):
-                                video.set_video_overlay(pipeline.get_video_sink())
-                                video.set_default_size(640, 360)
-                                video.set_halign(Gtk.Align.FILL)
-                                video.set_valign(Gtk.Align.FILL)
-                                print(f"Gtk.Video set video overlay for {url}")
-                            else:
-                                video.set_halign(Gtk.Align.FILL)
-                                video.set_valign(Gtk.Align.FILL)
-                                print(f"Gtk.Video created without overlay for {url}")
-                        except Exception as gv_e:
-                            print(f"GstVideoOverlay not available: {gv_e}")
+                        from gi.repository import GstVideo
+                        if hasattr(video, 'set_video_overlay'):
+                            video.set_video_overlay(pipeline.get_video_sink())
+                            video.set_default_size(640, 360)
                             video.set_halign(Gtk.Align.FILL)
                             video.set_valign(Gtk.Align.FILL)
-                        
-                        # Start the pipeline
-                        pipeline.set_state(Gst.State.PLAYING)
-                        
-                    except Exception as gst_e:
-                        print(f"GStreamer pipeline failed: {gst_e}")
-                        import traceback
-                        traceback.print_exc()
-                        video = Gtk.Label(label="Video not supported")
-                        # Try alternative: just show a placeholder
-                        video = Gtk.Picture.new_for_paintable(None)
+                            print(f"Gtk.Video set video overlay for {url}")
+                        else:
+                            video.set_halign(Gtk.Align.FILL)
+                            video.set_valign(Gtk.Align.FILL)
+                            print(f"Gtk.Video created without overlay for {url}")
+                    except Exception as gv_e:
+                        print(f"GstVideoOverlay not available: {gv_e}")
+                        video.set_halign(Gtk.Align.FILL)
+                        video.set_valign(Gtk.Align.FILL)
+                    
+                    # Start the pipeline
+                    pipeline.set_state(Gst.State.PLAYING)
+                    
+                except Exception as gst_e:
+                    print(f"GStreamer pipeline failed: {gst_e}")
+                    import traceback
+                    traceback.print_exc()
+                    video = Gtk.Label(label="Video not supported")
+                    # Try alternative: just show a placeholder
+                    video = Gtk.Picture.new_for_paintable(None)
 
             if not video:
                 raise RuntimeError("Failed to create video widget")
