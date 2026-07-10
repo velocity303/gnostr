@@ -477,7 +477,7 @@ class VideoPlayer:
                 print(f"Using GstPlayer.Player for {url}")
             except (ImportError, AttributeError, ValueError) as e:
                 print(f"GstPlayer not available: {e}")
-                # For all formats, use GStreamer pipeline with appsink
+                # For all formats, use GStreamer pipeline with GtkDrawingArea and GstVideoOverlay
                 try:
                     # Build a GStreamer pipeline
                     pipeline = Gst.parse_launch(
@@ -486,31 +486,36 @@ class VideoPlayer:
                         f"queue ! appsink name=sink"
                     )
                     print(f"Gst.parse_launch() succeeded for {url}")
-                    
-                    # Create a Gtk.Video widget
-                    video = Gtk.Video()
-                    
-                    # Try to attach the video sink via GstVideoOverlay interface
-                    try:
-                        from gi.repository import GstVideo
-                        if hasattr(video, 'set_video_overlay'):
-                            video.set_video_overlay(pipeline.get_video_sink())
-                            video.set_default_size(640, 360)
-                            video.set_halign(Gtk.Align.FILL)
-                            video.set_valign(Gtk.Align.FILL)
-                            print(f"Gtk.Video set video overlay for {url}")
-                        else:
-                            video.set_halign(Gtk.Align.FILL)
-                            video.set_valign(Gtk.Align.FILL)
-                            print(f"Gtk.Video created without overlay for {url}")
-                    except Exception as gv_e:
-                        print(f"GstVideoOverlay not available: {gv_e}")
-                        video.set_halign(Gtk.Align.FILL)
-                        video.set_valign(Gtk.Align.FILL)
-                    
+
+                    # Create a GtkDrawingArea for video rendering
+                    video = Gtk.DrawingArea()
+                    video.set_default_size(640, 360)
+                    video.set_halign(Gtk.Align.FILL)
+                    video.set_valign(Gtk.Align.FILL)
+                    print(f"Gtk.DrawingArea created for {url}")
+
+                    # Set up video overlay when the widget is realized
+                    def on_realize(w):
+                        try:
+                            from gi.repository import GstVideo
+                            # Get the native GDK window
+                            native = w.get_window().get_native()
+                            if native:
+                                # Set the video sink to draw into the window
+                                overlay = GstVideo.VideoOverlay.new(native)
+                                if overlay:
+                                    w.set_video_overlay(overlay)
+                                    print(f"Gtk.DrawingArea video overlay set for {url}")
+                                else:
+                                    print(f"Failed to create video overlay for {url}")
+                        except Exception as gv_e:
+                            print(f"Error setting video overlay: {gv_e}")
+
+                    video.connect("realize", on_realize)
+
                     # Start the pipeline
                     pipeline.set_state(Gst.State.PLAYING)
-                    
+
                 except Exception as gst_e:
                     print(f"GStreamer pipeline failed: {gst_e}")
                     import traceback
