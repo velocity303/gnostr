@@ -461,8 +461,9 @@ class VideoPlayer:
             )
             print(f"Gst.parse_launch() succeeded")
             
-            # Create a Gtk.Video widget connected to the pipeline
-            video = Gtk.Video(pipeline=pipeline)
+            # Create a Gtk.Video widget and set the pipeline
+            video = Gtk.Video()
+            video.set_pipeline(pipeline)
             video.set_halign(Gtk.Align.FILL)
             video.set_valign(Gtk.Align.FILL)
             video.set_play_when_ready(True)
