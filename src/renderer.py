@@ -460,7 +460,7 @@ class VideoPlayer:
         # Try Gtk.MediaFile first (GTK 4 standard approach)
         try:
             # Create a media stream from the URL
-            media = Gtk.MediaFile.new_for_uri(url)
+            media = Gtk.MediaFile.new_for_string(url)
             video = Gtk.Video()
             video.set_media_stream(media)
             media.play()
@@ -479,7 +479,8 @@ class VideoPlayer:
 
                 # Create a GtkDrawingArea for video rendering
                 video = Gtk.DrawingArea()
-                video.set_default_size(640, 360)
+                video.set_content_width(640)
+                video.set_content_height(360)
                 video.set_halign(Gtk.Align.FILL)
                 video.set_valign(Gtk.Align.FILL)
                 print(f"Gtk.DrawingArea created for {url}")
