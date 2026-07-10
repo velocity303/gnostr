@@ -457,67 +457,62 @@ class VideoPlayer:
     @staticmethod
     def _load(url, callback):
         video = None
+        # Try Gtk.MediaFile first (GTK 4 standard approach)
         try:
-            print(f"VideoPlayer._load({url})")
-            Gst.init(None)
-            print(f"Gst.init() succeeded")
-
-            # Try Gtk.MediaFile first (GTK 4 standard approach)
+            # Create a media stream from the URL
+            media = Gtk.MediaFile.new(url)
+            video = Gtk.Video()
+            video.set_media_stream(media)
+            media.play()
+            print(f"Using Gtk.MediaFile for {url}")
+        except Exception as e:
+            print(f"Gtk.MediaFile failed: {e}")
+            # Fallback to custom GStreamer pipeline with custom rendering
             try:
-                # Create a media stream from the URL
-                media = Gtk.MediaFile.new(url)
-                video = Gtk.Video()
-                video.set_media_stream(media)
-                media.play()
-                print(f"Using Gtk.MediaFile for {url}")
-            except Exception as e:
-                print(f"Gtk.MediaFile failed: {e}")
-                # Fallback to custom GStreamer pipeline with custom rendering
-                try:
-                    # Build a GStreamer pipeline with custom rendering
-                    pipeline = Gst.parse_launch(
-                        f"uridecodebin uri={url} ! "
-                        f"videoconvert ! videoscale ! "
-                        f"queue ! videosink"
-                    )
-                    print(f"Gst.parse_launch() succeeded for {url}")
+                # Build a GStreamer pipeline with custom rendering
+                pipeline = Gst.parse_launch(
+                    f"uridecodebin uri={url} ! "
+                    f"videoconvert ! videoscale ! "
+                    f"queue ! videosink"
+                )
+                print(f"Gst.parse_launch() succeeded for {url}")
 
-                    # Create a GtkDrawingArea for video rendering
-                    video = Gtk.DrawingArea()
-                    video.set_default_size(640, 360)
-                    video.set_halign(Gtk.Align.FILL)
-                    video.set_valign(Gtk.Align.FILL)
-                    print(f"Gtk.DrawingArea created for {url}")
+                # Create a GtkDrawingArea for video rendering
+                video = Gtk.DrawingArea()
+                video.set_default_size(640, 360)
+                video.set_halign(Gtk.Align.FILL)
+                video.set_valign(Gtk.Align.FILL)
+                print(f"Gtk.DrawingArea created for {url}")
 
-                    # Set up the video sink to render to the drawing area
-                    def on_realize(w):
-                        try:
-                            from gi.repository import GstVideo
-                            # Get the native GDK window
-                            native = w.get_window().get_native()
-                            if native:
-                                # Create a custom video sink that renders to the drawing area
-                                overlay = GstVideo.VideoOverlay.new(native)
-                                if overlay:
-                                    w.set_video_overlay(overlay)
-                                    print(f"Gtk.DrawingArea video overlay set for {url}")
-                                else:
-                                    print(f"Failed to create video overlay for {url}")
-                        except Exception as gv_e:
-                            print(f"Error setting video overlay: {gv_e}")
+                # Set up the video sink to render to the drawing area
+                def on_realize(w):
+                    try:
+                        from gi.repository import GstVideo
+                        # Get the native GDK window
+                        native = w.get_window().get_native()
+                        if native:
+                            # Create a custom video sink that renders to the drawing area
+                            overlay = GstVideo.VideoOverlay.new(native)
+                            if overlay:
+                                w.set_video_overlay(overlay)
+                                print(f"Gtk.DrawingArea video overlay set for {url}")
+                            else:
+                                print(f"Failed to create video overlay for {url}")
+                    except Exception as gv_e:
+                        print(f"Error setting video overlay: {gv_e}")
 
-                    video.connect("realize", on_realize)
+                video.connect("realize", on_realize)
 
-                    # Start the pipeline
-                    pipeline.set_state(Gst.State.PLAYING)
+                # Start the pipeline
+                pipeline.set_state(Gst.State.PLAYING)
 
-                except Exception as gst_e:
-                    print(f"GStreamer pipeline failed: {gst_e}")
-                    import traceback
-                    traceback.print_exc()
-                    video = Gtk.Label(label="Video not supported")
-                    # Try alternative: just show a placeholder
-                    video = Gtk.Picture.new_for_paintable(None)
+            except Exception as gst_e:
+                print(f"GStreamer pipeline failed: {gst_e}")
+                import traceback
+                traceback.print_exc()
+                video = Gtk.Label(label="Video not supported")
+                # Try alternative: just show a placeholder
+                video = Gtk.Picture.new_for_paintable(None)
 
             if not video:
                 raise RuntimeError("Failed to create video widget")
