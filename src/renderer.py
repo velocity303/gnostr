@@ -398,7 +398,7 @@ class ImageLoader:
 
 
 class VideoPlayer:
-    """Minimal GStreamer-based video/GIF player using Gtk.Video."""
+    """Minimal GStreamer-based video/GIF player using GstPlayer or Gtk.Picture."""
     _cache = {}
     _ongoing = {}
     _lock = threading.Lock()
@@ -411,20 +411,22 @@ class VideoPlayer:
                 container.remove(spinner)
             if video:
                 video_box = container
-                width = video.get_video_width() or 640
-                height = video.get_video_height() or 360
-                ratio = width / height if height > 0 else 1.0
+                # Get natural size from video widget
+                if hasattr(video, 'get_video_width') and hasattr(video, 'get_video_height'):
+                    width = video.get_video_width() or 640
+                    height = video.get_video_height() or 360
+                    ratio = width / height if height > 0 else 1.0
 
-                available_width = 600
-                if window_ref:
-                    win_w = window_ref.get_width()
-                    if win_w < 650:
-                        available_width = win_w - 40
-                    else:
-                        available_width = 600
+                    available_width = 600
+                    if window_ref:
+                        win_w = window_ref.get_width()
+                        if win_w < 650:
+                            available_width = win_w - 40
+                        else:
+                            available_width = 600
 
-                req_height = int(available_width / ratio)
-                video_box.set_size_request(-1, req_height)
+                    req_height = int(available_width / ratio)
+                    video_box.set_size_request(-1, req_height)
 
                 video.set_halign(Gtk.Align.FILL)
                 video.set_valign(Gtk.Align.FILL)
@@ -454,22 +456,43 @@ class VideoPlayer:
             print(f"VideoPlayer._load({url})")
             Gst.init(None)
             print(f"Gst.init() succeeded")
-            pipeline = Gst.parse_launch(
-                f"uridecodebin uri={url} ! "
-                f"videoconvert ! videoscale ! "
-                f"queue ! appsink name=sink"
-            )
-            print(f"Gst.parse_launch() succeeded")
-            
-            # Create a Gtk.Video widget and set the pipeline
-            video = Gtk.Video()
-            video.set_pipeline(pipeline)
-            video.set_halign(Gtk.Align.FILL)
-            video.set_valign(Gtk.Align.FILL)
-            video.set_play_when_ready(True)
-            
-            print(f"Gtk.Video created: {video}")
-            video.show()
+
+            # Try GstPlayer first (GTK4 + GStreamer standard approach)
+            try:
+                from gi.repository import GstPlayer
+                player = GstPlayer.GstPlayer.new_for_uri(url)
+                video = player.get_video()
+                player.play()
+                print(f"Using GstPlayer for {url}")
+            except (ImportError, AttributeError) as e:
+                print(f"GstPlayer not available: {e}")
+                # Fallback for GIFs using Gtk.Picture
+                if url.endswith('.gif'):
+                    try:
+                        # Load GIF with Pixbuf (supports animation)
+                        loader = GdkPixbuf.PixbufLoader()
+                        loader.set_size(320, 180)
+                        req = urllib.request.Request(url, headers={'User-Agent': 'Gnostr/1.0'})
+                        with urllib.request.urlopen(req, timeout=15) as r:
+                            data = r.read()
+                        loader.write(data)
+                        loader.close()
+                        pix = loader.get_pixbuf()
+                        if pix:
+                            texture = Gdk.Texture.new_for_pixbuf(pix)
+                            video = Gtk.Picture.new_for_paintable(texture)
+                            print(f"Loaded GIF with PixbufLoader")
+                    except Exception as gif_e:
+                        print(f"GIF fallback failed: {gif_e}")
+                        video = Gtk.Label(label="GIF failed to load")
+                else:
+                    # For other video formats without GstPlayer
+                    video = Gtk.Label(label="Video format not supported")
+                    print(f"Unsupported video format: {url}")
+
+            if not video:
+                raise RuntimeError("Failed to create video widget")
+
         except Exception as e:
             print(f"Video load error for {url}: {e}")
             import traceback
