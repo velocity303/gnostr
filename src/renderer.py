@@ -9,12 +9,13 @@ import traceback
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
+gi.require_version('GstVideo', '1.0')
 try:
     gi.require_version('Gst', '1.0')
     print("Gst 1.0 required successfully")
 except Exception as e:
     print(f"Failed to require Gst 1.0: {e}")
-from gi.repository import Gtk, Adw, GLib, Gdk, GdkPixbuf, Pango, Gst
+from gi.repository import Gtk, Adw, GLib, Gdk, GdkPixbuf, Pango, Gst, Gio
 print(f"Gst module imported: {Gst.__name__}")
 print(f"Gtk.Video available: {hasattr(Gtk, 'Video')}")
 import gnostr.nostr_utils as nostr_utils
@@ -459,50 +460,35 @@ class VideoPlayer:
         video = None
         # Try Gtk.MediaFile first (GTK 4 standard approach)
         try:
-            # Create a media stream from the URL
-            media = Gtk.MediaFile.new_for_string(url)
+            # Create a media stream from the URL using Gio.File
+            file = Gio.File.new_for_uri(url)
+            media = Gtk.MediaFile.new_for_file(file)
             video = Gtk.Video()
             video.set_media_stream(media)
             media.play()
-            print(f"Using Gtk.MediaFile for {url}")
+            print(f"Using Gio.File + MediaFile for {url}")
         except Exception as e:
             print(f"Gtk.MediaFile failed: {e}")
-            # Fallback to custom GStreamer pipeline with custom rendering
+            # Fallback to custom GStreamer pipeline with gtk4paintablesink
             try:
-                # Build a GStreamer pipeline with custom rendering
+                # Build a GStreamer pipeline with gtk4paintablesink
                 pipeline = Gst.parse_launch(
                     f"uridecodebin uri={url} ! "
                     f"videoconvert ! videoscale ! "
-                    f"queue ! autovideosink"
+                    f"queue ! gtk4paintablesink name=vsink"
                 )
                 print(f"Gst.parse_launch() succeeded for {url}")
 
-                # Create a GtkDrawingArea for video rendering
-                video = Gtk.DrawingArea()
+                # Extract the paintable from the sink
+                vsink = pipeline.get_by_name("vsink")
+                paintable = vsink.get_property("paintable")
+
+                # Create a Gtk.Picture to hold the video
+                video = Gtk.Picture()
+                video.set_paintable(paintable)
                 video.set_content_width(640)
                 video.set_content_height(360)
-                video.set_halign(Gtk.Align.FILL)
-                video.set_valign(Gtk.Align.FILL)
-                print(f"Gtk.DrawingArea created for {url}")
-
-                # Set up the video sink to render to the drawing area
-                def on_realize(w):
-                    try:
-                        from gi.repository import GstVideo
-                        # Get the native GDK window
-                        native = w.get_window().get_native()
-                        if native:
-                            # Create a custom video sink that renders to the drawing area
-                            overlay = GstVideo.VideoOverlay.new(native)
-                            if overlay:
-                                w.set_video_overlay(overlay)
-                                print(f"Gtk.DrawingArea video overlay set for {url}")
-                            else:
-                                print(f"Failed to create video overlay for {url}")
-                    except Exception as gv_e:
-                        print(f"Error setting video overlay: {gv_e}")
-
-                video.connect("realize", on_realize)
+                print(f"Gtk.Picture created with paintable for {url}")
 
                 # Start the pipeline
                 pipeline.set_state(Gst.State.PLAYING)
@@ -511,21 +497,10 @@ class VideoPlayer:
                 print(f"GStreamer pipeline failed: {gst_e}")
                 import traceback
                 traceback.print_exc()
-                video = Gtk.Label(label="Video not supported")
-                # Try alternative: just show a placeholder
-                video = Gtk.Picture.new_for_paintable(None)
+                video = None
 
-            if not video:
-                raise RuntimeError("Failed to create video widget")
+        GLib.idle_add(callback, video)
 
-        except Exception as e:
-            print(f"Video load error for {url}: {e}")
-            import traceback
-            traceback.print_exc()
-            GLib.idle_add(callback, None)
-            return
-
-        GLib.idle_add(VideoPlayer._cache_and_notify, url, video, callback)
 
     @staticmethod
     def _cache_and_notify(url, video, callback):
