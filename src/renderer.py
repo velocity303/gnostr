@@ -471,12 +471,13 @@ class VideoPlayer:
                 player = GstPlayer.Player.new()
                 player.set_uri(url)
                 video = Gtk.Video()
-                video.set_player(player)
+                # Use set_property for the player in GTK4
+                video.set_property("player", player)
                 player.play()
                 print(f"Using GstPlayer.Player for {url}")
             except (ImportError, AttributeError, ValueError) as e:
                 print(f"GstPlayer not available: {e}")
-                # For all formats, use GStreamer pipeline
+                # For all formats, use GStreamer pipeline with appsink
                 try:
                     # Build a GStreamer pipeline
                     pipeline = Gst.parse_launch(
