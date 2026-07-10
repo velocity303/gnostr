@@ -460,7 +460,7 @@ class VideoPlayer:
         # Try Gtk.MediaFile first (GTK 4 standard approach)
         try:
             # Create a media stream from the URL
-            media = Gtk.MediaFile.new(url)
+            media = Gtk.MediaFile.new_for_uri(url)
             video = Gtk.Video()
             video.set_media_stream(media)
             media.play()
@@ -473,7 +473,7 @@ class VideoPlayer:
                 pipeline = Gst.parse_launch(
                     f"uridecodebin uri={url} ! "
                     f"videoconvert ! videoscale ! "
-                    f"queue ! videosink"
+                    f"queue ! autovideosink"
                 )
                 print(f"Gst.parse_launch() succeeded for {url}")
 
