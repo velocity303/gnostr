@@ -477,13 +477,13 @@ class VideoPlayer:
                 print(f"Using GstPlayer.Player for {url}")
             except (ImportError, AttributeError, ValueError) as e:
                 print(f"GstPlayer not available: {e}")
-                # For all formats, use GStreamer pipeline with GtkDrawingArea and GstVideoOverlay
+                # For all formats, use GStreamer pipeline with custom rendering
                 try:
-                    # Build a GStreamer pipeline
+                    # Build a GStreamer pipeline with custom rendering
                     pipeline = Gst.parse_launch(
                         f"uridecodebin uri={url} ! "
                         f"videoconvert ! videoscale ! "
-                        f"queue ! appsink name=sink"
+                        f"queue ! videosink"
                     )
                     print(f"Gst.parse_launch() succeeded for {url}")
 
@@ -494,14 +494,14 @@ class VideoPlayer:
                     video.set_valign(Gtk.Align.FILL)
                     print(f"Gtk.DrawingArea created for {url}")
 
-                    # Set up video overlay when the widget is realized
+                    # Set up the video sink to render to the drawing area
                     def on_realize(w):
                         try:
                             from gi.repository import GstVideo
                             # Get the native GDK window
                             native = w.get_window().get_native()
                             if native:
-                                # Set the video sink to draw into the window
+                                # Create a custom video sink that renders to the drawing area
                                 overlay = GstVideo.VideoOverlay.new(native)
                                 if overlay:
                                     w.set_video_overlay(overlay)
