@@ -467,10 +467,13 @@ class VideoPlayer:
                 # Need to require version first
                 gi.require_version('GstPlayer', '1.0')
                 from gi.repository import GstPlayer
-                player = GstPlayer.GstPlayer.new_for_uri(url)
-                video = player.get_video()
+                # Use GstPlayer.Player (not GstPlayer.GstPlayer)
+                player = GstPlayer.Player.new()
+                player.set_uri(url)
+                video = Gtk.Video()
+                video.set_player(player)
                 player.play()
-                print(f"Using GstPlayer for {url}")
+                print(f"Using GstPlayer.Player for {url}")
             except (ImportError, AttributeError, ValueError) as e:
                 print(f"GstPlayer not available: {e}")
                 # Fallback for GIFs using Gtk.Picture
@@ -495,7 +498,17 @@ class VideoPlayer:
                 else:
                     # For other video formats, try using GStreamer with Gtk.Video
                     try:
-                        # Use GStreamer pipeline with appsink
+                        # Try using GstVideoOverlay interface
+                        try:
+                            gi.require_version('GstVideo', '1.0')
+                            from gi.repository import GstVideo
+                        except Exception as gv_e:
+                            print(f"GstVideo not available: {gv_e}")
+                            video = Gtk.Label(label="Video not supported")
+                            video = Gtk.Picture.new_for_paintable(None)
+                            raise RuntimeError("GstVideo not available")
+                        
+                        # Build a GStreamer pipeline
                         pipeline = Gst.parse_launch(
                             f"uridecodebin uri={url} ! "
                             f"videoconvert ! videoscale ! "
@@ -506,12 +519,17 @@ class VideoPlayer:
                         # Create a Gtk.Video widget
                         video = Gtk.Video()
                         
-                        # Set the pipeline via the pipeline property
-                        video.set_property("pipeline", pipeline)
-                        video.set_default_size(640, 360)
-                        video.set_halign(Gtk.Align.FILL)
-                        video.set_valign(Gtk.Align.FILL)
-                        print(f"Gtk.Video created with pipeline property for {url}")
+                        # Attach the video sink via GstVideoOverlay interface
+                        if hasattr(video, 'set_video_overlay'):
+                            video.set_video_overlay(pipeline.get_video_sink())
+                            video.set_default_size(640, 360)
+                            video.set_halign(Gtk.Align.FILL)
+                            video.set_valign(Gtk.Align.FILL)
+                            print(f"Gtk.Video set video overlay for {url}")
+                        else:
+                            video.set_halign(Gtk.Align.FILL)
+                            video.set_valign(Gtk.Align.FILL)
+                            print(f"Gtk.Video created without overlay for {url}")
                         
                         # Start the pipeline
                         pipeline.set_state(Gst.State.PLAYING)
