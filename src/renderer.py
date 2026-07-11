@@ -399,7 +399,7 @@ class ImageLoader:
 
 
 class VideoPlayer:
-    """Minimal GStreamer-based video/GIF player using GstPlayer or Gtk.Picture."""
+    """GStreamer-based video/GIF player using playbin and Gtk.Picture."""
     _cache = {}
     _ongoing = {}
     _lock = threading.Lock()
@@ -410,35 +410,35 @@ class VideoPlayer:
         def on_ready(video):
             if spinner and spinner.get_parent() == container:
                 container.remove(spinner)
-            if video:
-                video_box = container
-                # Remove from any existing parent before reusing
-                if video.get_parent() is not None:
-                    parent = video.get_parent()
-                    if parent is not None:
-                        parent.remove(video)
                 
-                # Get natural size from video widget
-                if hasattr(video, 'get_video_width') and hasattr(video, 'get_video_height'):
-                    width = video.get_video_width() or 640
-                    height = video.get_video_height() or 360
-                    ratio = width / height if height > 0 else 1.0
-
-                    available_width = 600
+            if video:
+                # Check what the parent container wants
+                req_w, req_h = container.get_size_request()
+                
+                # Avatar Mode: The container has strict sizes (e.g., 120x120 or 24x24)
+                if req_w > 0 and req_h > 0:
+                    video.set_size_request(req_w, req_h)
+                    video.set_content_fit(Gtk.ContentFit.COVER) # Crop perfectly to the square
+                
+                # Feed Mode: The container is flexible (width is usually -1)
+                else:
+                    video.set_content_fit(Gtk.ContentFit.CONTAIN) # Letterbox, never stretch
+                    
+                    # Dynamically size based on screen width
                     if window_ref:
                         win_w = window_ref.get_width()
-                        if win_w < 650:
-                            available_width = win_w - 40
-                        else:
-                            available_width = 600
+                        target_w = win_w - 40 if win_w < 650 else 600
+                        video.set_size_request(target_w, int(target_w * 0.5625)) # Standard 16:9 fallback
+                    else:
+                        video.set_size_request(320, 180)
 
-                    req_height = int(available_width / ratio)
-                    # Use set_size_request to constrain the container
-                    video_box.set_size_request(-1, req_height)
-
-                video.set_halign(Gtk.Align.FILL)
-                video.set_valign(Gtk.Align.FILL)
-                video_box.append(video)
+                video.set_halign(Gtk.Align.CENTER)
+                video.set_valign(Gtk.Align.CENTER)
+                
+                if video.get_parent() is not None:
+                    video.get_parent().remove(video)
+                    
+                container.append(video)
             else:
                 container.append(Gtk.Image.new_from_icon_name("video-symbolic"))
 
@@ -461,28 +461,22 @@ class VideoPlayer:
     def _load(url, callback):
         video = None
         try:
-            # Use playbin which automatically handles audio/video synchronization
             pipeline = Gst.ElementFactory.make("playbin", "player")
             pipeline.set_property("uri", url)
             
-            # Force the video to render into our GTK4 paintable sink
             vsink = Gst.ElementFactory.make("gtk4paintablesink", "vsink")
             pipeline.set_property("video-sink", vsink)
-            
-            # Start neutral (muted)
             pipeline.set_property("mute", True)
             
-            # Attach to the Gtk.Picture widget
             paintable = vsink.get_property("paintable")
             video = Gtk.Picture()
             video.set_paintable(paintable)
-            video.set_content_width(320)
-            video.set_content_height(180)
+            
+            # Removed the hardcoded size request here so `on_ready` can handle it dynamically
             video.set_vexpand(False)
             video.set_hexpand(False)
             video.set_can_shrink(True)
             
-            # Add a tap/click gesture to toggle the audio
             click_gesture = Gtk.GestureClick.new()
             def on_video_click(gesture, n_press, x, y, p=pipeline):
                 current_mute = p.get_property("mute")
@@ -491,15 +485,13 @@ class VideoPlayer:
             click_gesture.connect("pressed", on_video_click)
             video.add_controller(click_gesture)
 
-            # Begin playback
             pipeline.set_state(Gst.State.PLAYING)
             
         except Exception as e:
             print(f"GStreamer pipeline failed: {e}")
             video = None
 
-        GLib.idle_add(callback, video)
-
+        GLib.idle_add(VideoPlayer._cache_and_notify, url, video, callback)
 
     @staticmethod
     def _cache_and_notify(url, video, callback):
@@ -509,5 +501,4 @@ class VideoPlayer:
             callbacks = VideoPlayer._ongoing.pop(url, [])
         for cb in callbacks:
             cb(video)
-        callback(video)
         return False
