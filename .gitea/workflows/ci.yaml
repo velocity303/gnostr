@@ -69,7 +69,7 @@ jobs:
         echo "Creating repair issue for CI failure..."
         
         # Create issue using Python script
-        python3 scripts/create_issue.py > issue_payload.json
+        python3 scripts/create_issue_payload.py > issue_payload.json
         
         # Submit the issue to Gitea API
         curl -X POST "http://${{ secrets.HOST }}:3000/api/v1/repos/VelocityNet/gnostr/issues" \
