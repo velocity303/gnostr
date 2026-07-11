@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Create issue payload without labels."""
 import json
 import os
 from pathlib import Path

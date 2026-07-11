@@ -68,6 +68,11 @@ jobs:
         touch test_report.log
         echo "Creating repair issue for CI failure..."
         
+        # Export environment variables for Python script
+        export REPO_PATH="${{ github.repository }}"
+        export BRANCH="${{ github.ref_name }}"
+        export COMMIT_SHA="${{ github.sha }}"
+        
         # Create issue using Python script
         python3 scripts/create_issue_payload.py > issue_payload.json
         
