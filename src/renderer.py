@@ -444,28 +444,40 @@ class VideoPlayer:
 
         video = None
         try:
-            # Instantiate the playbin pipeline directly on the UI thread context
             pipeline = Gst.ElementFactory.make("playbin", "player")
             pipeline.set_property("uri", url)
             
-            # Bind the paintable sink to the pipeline
             vsink = Gst.ElementFactory.make("gtk4paintablesink", "vsink")
             pipeline.set_property("video-sink", vsink)
             pipeline.set_property("mute", True)
             
-            # Secure the texture reference on a Gtk.Picture instance
             paintable = vsink.get_property("paintable")
             video = Gtk.Picture()
             video.set_paintable(paintable)
             
-            # Persist pipeline reference to prevent garbage collection termination
+            # Prevent Garbage Collection
             video._pipeline = pipeline
             
             video.set_vexpand(False)
             video.set_hexpand(False)
             video.set_can_shrink(True)
+
+            # --- NEW: GStreamer Bus Watcher for Looping & Errors ---
+            bus = pipeline.get_bus()
+            bus.add_signal_watch()
             
-            # Bind the mute/unmute gesture
+            def on_bus_message(bus, msg, p=pipeline, media_url=url):
+                if msg.type == Gst.MessageType.EOS:
+                    # Catch End-Of-Stream and seek to 0 to loop infinitely
+                    p.seek_simple(Gst.Format.TIME, Gst.SeekFlags.FLUSH, 0)
+                elif msg.type == Gst.MessageType.ERROR:
+                    err, debug = msg.parse_error()
+                    print(f"\n❌ [Media Codec Error] {media_url}\n   -> {err.message}")
+                    
+            bus.connect("message", on_bus_message)
+            video._bus = bus # Bind bus to widget to keep listener alive
+            # -------------------------------------------------------
+            
             click_gesture = Gtk.GestureClick.new()
             def on_video_click(gesture, n_press, x, y, p=pipeline):
                 current_mute = p.get_property("mute")
@@ -474,7 +486,6 @@ class VideoPlayer:
             click_gesture.connect("pressed", on_video_click)
             video.add_controller(click_gesture)
 
-            # Let GStreamer internally manage streaming asynchronously
             pipeline.set_state(Gst.State.PLAYING)
             
         except Exception as e:
