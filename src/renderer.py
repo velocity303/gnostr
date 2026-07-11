@@ -401,9 +401,7 @@ class ImageLoader:
 class VideoPlayer:
     """GStreamer-based video/GIF player using playbin and Gtk.Picture."""
     _cache = {}
-    _ongoing = {}
     _lock = threading.Lock()
-    _executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 
     @staticmethod
     def load_and_play(url, container, spinner, window_ref=None):
@@ -412,18 +410,16 @@ class VideoPlayer:
                 container.remove(spinner)
                 
             if video:
-                # Check what the parent container wants
                 req_w, req_h = container.get_size_request()
                 
-                # Avatar Mode: The container has strict sizes (e.g., 120x120 or 24x24)
+                # Avatar Mode: Strict container size mapping
                 if req_w > 0 and req_h > 0:
                     video.set_size_request(req_w, req_h)
                     video.set_content_fit(Gtk.ContentFit.COVER)
                 
-                # Feed Mode: Flexible width, rigid height to prevent Adwaita overflow
+                # Feed Mode: Safe scaling without layout pushing
                 else:
                     video.set_content_fit(Gtk.ContentFit.CONTAIN)
-                    # -1 tells GTK to flex the width dynamically to fit the screen
                     video.set_size_request(-1, 200)
 
                 video.set_halign(Gtk.Align.CENTER)
@@ -440,41 +436,36 @@ class VideoPlayer:
 
     @staticmethod
     def _fetch_player(url, callback):
+        """Instantiates pipelines synchronously on the UI thread to ensure proper canvas binding."""
         with VideoPlayer._lock:
             if url in VideoPlayer._cache:
                 callback(VideoPlayer._cache[url])
                 return
-            if url in VideoPlayer._ongoing:
-                VideoPlayer._ongoing[url].append(callback)
-                return
-            VideoPlayer._ongoing[url] = [callback]
 
-        VideoPlayer._executor.submit(VideoPlayer._load, url, callback)
-
-    @staticmethod
-    def _load(url, callback):
         video = None
         try:
+            # Instantiate the playbin pipeline directly on the UI thread context
             pipeline = Gst.ElementFactory.make("playbin", "player")
             pipeline.set_property("uri", url)
             
+            # Bind the paintable sink to the pipeline
             vsink = Gst.ElementFactory.make("gtk4paintablesink", "vsink")
             pipeline.set_property("video-sink", vsink)
             pipeline.set_property("mute", True)
             
+            # Secure the texture reference on a Gtk.Picture instance
             paintable = vsink.get_property("paintable")
             video = Gtk.Picture()
             video.set_paintable(paintable)
             
-            # CRITICAL FIX: Bind the pipeline to the video widget!
-            # If we don't do this, Python's Garbage Collector instantly kills 
-            # the pipeline the moment this function ends, resulting in blank videos.
+            # Persist pipeline reference to prevent garbage collection termination
             video._pipeline = pipeline
             
             video.set_vexpand(False)
             video.set_hexpand(False)
             video.set_can_shrink(True)
             
+            # Bind the mute/unmute gesture
             click_gesture = Gtk.GestureClick.new()
             def on_video_click(gesture, n_press, x, y, p=pipeline):
                 current_mute = p.get_property("mute")
@@ -483,20 +474,16 @@ class VideoPlayer:
             click_gesture.connect("pressed", on_video_click)
             video.add_controller(click_gesture)
 
+            # Let GStreamer internally manage streaming asynchronously
             pipeline.set_state(Gst.State.PLAYING)
             
         except Exception as e:
             print(f"GStreamer pipeline failed: {e}")
             video = None
 
-        GLib.idle_add(VideoPlayer._cache_and_notify, url, video, callback)
+        # Cache the resulting widget handle
+        if video:
+            with VideoPlayer._lock:
+                VideoPlayer._cache[url] = video
 
-    @staticmethod
-    def _cache_and_notify(url, video, callback):
-        with VideoPlayer._lock:
-            VideoPlayer._cache[url] = video
-        with VideoPlayer._lock:
-            callbacks = VideoPlayer._ongoing.pop(url, [])
-        for cb in callbacks:
-            cb(video)
-        return False
+        callback(video)
