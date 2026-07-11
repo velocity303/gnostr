@@ -1,8 +1,10 @@
 # src/ui/sidebar.py
 import gi
-gi.require_version('Gtk', '4.0')
-gi.require_version('Adw', '1')
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw
+
 
 class Sidebar(Gtk.Box):
     def __init__(self, main_window):
@@ -22,13 +24,13 @@ class Sidebar(Gtk.Box):
         self.menu_list.set_selection_mode(Gtk.SelectionMode.NONE)
         self.menu_list.set_activate_on_single_click(True)
         self.menu_list.connect("row-activated", self.on_menu_selected)
-        
+
         self.rows = {}
         items = [
-            ("following","Following","system-users"),
-            ("global","Global","network-server"),
-            ("profile","Profile","avatar-default"),
-            ("search", "Search User", "system-search")
+            ("following", "Following", "system-users"),
+            ("global", "Global", "network-server"),
+            ("profile", "Profile", "avatar-default"),
+            ("search", "Search User", "system-search"),
         ]
 
         for r_id, title, icon in items:
@@ -36,7 +38,7 @@ class Sidebar(Gtk.Box):
             r.set_activatable(True)
             self.menu_list.append(r)
             self.rows[r_id] = r
-        
+
         self.append(self.menu_list)
         self.append(Gtk.Box(vexpand=True))
 

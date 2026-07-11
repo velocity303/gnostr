@@ -23,12 +23,14 @@ def test_cache_hit_on_global_fetch(feed_service, mock_event_repo, cache_manager)
     cached_data = {
         "source": "cache",
         "events": [{"id": "mock_event1", "content": "Cached content"}],
-        "cursor": "initial"
+        "cursor": "initial",
     }
     cache_manager.set("global_feed:initial:20", cached_data, ttl_seconds=3600)
 
     with patch("src.service.feed_service.CACHE", cache_manager):
-        result = feed_service.get_paginated_global_feed(current_cursor="initial", page_size=20)
+        result = feed_service.get_paginated_global_feed(
+            current_cursor="initial", page_size=20
+        )
 
     assert result["source"] == "cache"
     assert len(result["events"]) > 0
@@ -42,12 +44,14 @@ def test_cache_miss_and_successful_fetch(feed_service, mock_event_repo, cache_ma
     mock_event_repo.find_paginated_events.return_value = MOCK_SUCCESS_EVENTS
 
     with patch("src.service.feed_service.CACHE", cache_manager):
-        result = feed_service.get_paginated_global_feed(current_cursor="initial", page_size=20)
+        result = feed_service.get_paginated_global_feed(
+            current_cursor="initial", page_size=20
+        )
 
     assert result["source"] == "live"
-    mock_event_repo.find_paginated_events.assert_called_with({
-        "kind": 1, "authors": [], "cursor": "initial"
-    }, limit=20)
+    mock_event_repo.find_paginated_events.assert_called_with(
+        {"kind": 1, "authors": [], "cursor": "initial"}, limit=20
+    )
 
     cached_value = cache_manager._cache.get("global_feed:initial:20")
     assert cached_value is not None
@@ -57,15 +61,19 @@ def test_expired_cache_forces_refetch(feed_service, mock_event_repo, cache_manag
     cache_key = "global_feed:initial:20"
     initial_data = {"source": "live", "events": [], "cursor": None}
     from src.util.cache_manager import CacheEntry
+
     cache_manager._cache[cache_key] = CacheEntry(initial_data, ttl_seconds=0.01)
 
     import time
+
     time.sleep(0.05)
 
     mock_event_repo.find_paginated_events.return_value = []
 
     with patch("src.service.feed_service.CACHE", cache_manager):
-        result = feed_service.get_paginated_global_feed(current_cursor="initial", page_size=20)
+        result = feed_service.get_paginated_global_feed(
+            current_cursor="initial", page_size=20
+        )
 
     mock_event_repo.find_paginated_events.assert_called()
 

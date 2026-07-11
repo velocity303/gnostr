@@ -1,0 +1,7 @@
+[flake8]
+max-line-length = 120
+extend-ignore = E203, E225, W503
+exclude = .git,__pycache__,build,dist
+per-file-ignores =
+    src/*.py:F401, E402
+    tests/*.py:F401, E402

@@ -1,9 +1,11 @@
 # src/ui/post_widget.py
 import gi
-gi.require_version('Gtk', '4.0')
-gi.require_version('Adw', '1')
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw, GLib, Pango
 from gnostr.renderer import ContentRenderer, ImageLoader
+
 
 class PostWidget(Adw.Bin):
     def __init__(self, main_window, pubkey, content, event_id, tags=[], is_hero=False):
@@ -11,15 +13,21 @@ class PostWidget(Adw.Bin):
         self.main_window = main_window
         self.pubkey = pubkey
         self.event_id = event_id
-        
+
         if is_hero:
             self.add_css_class("hero")
 
         # Store reference for metrics updates
         self.main_window.event_widgets[event_id] = self
 
-        self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
-                               margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
+        self.main_box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=12,
+            margin_top=12,
+            margin_bottom=12,
+            margin_start=12,
+            margin_end=12,
+        )
         self.set_child(self.main_box)
 
         # Header: Avatar + Name
@@ -28,11 +36,15 @@ class PostWidget(Adw.Bin):
         prof = self.main_window.db.get_profile(pubkey)
         name = pubkey[:8]
         if prof:
-            name = prof.get('display_name') or prof.get('name') or name
+            name = prof.get("display_name") or prof.get("name") or name
 
-        self.avatar = Adw.Avatar(size=48 if is_hero else 40, show_initials=True, text=name)
-        if prof and prof.get('picture'):
-            ImageLoader.load_avatar(prof['picture'], lambda t: self.avatar.set_custom_image(t))
+        self.avatar = Adw.Avatar(
+            size=48 if is_hero else 40, show_initials=True, text=name
+        )
+        if prof and prof.get("picture"):
+            ImageLoader.load_avatar(
+                prof["picture"], lambda t: self.avatar.set_custom_image(t)
+            )
 
         btn_av = Gtk.Button(css_classes=["flat"])
         btn_av.set_child(self.avatar)
@@ -43,7 +55,9 @@ class PostWidget(Adw.Bin):
         self.lbl_name = Gtk.Label(label=name, xalign=0, css_classes=["heading"])
         nb.append(self.lbl_name)
 
-        lbl_npub = Gtk.Label(label=pubkey[:12]+"...", xalign=0, css_classes=["caption", "dim-label"])
+        lbl_npub = Gtk.Label(
+            label=pubkey[:12] + "...", xalign=0, css_classes=["caption", "dim-label"]
+        )
         nb.append(lbl_npub)
         hb.append(nb)
         self.main_box.append(hb)
@@ -78,7 +92,12 @@ class PostWidget(Adw.Bin):
         # Interaction
         if not is_hero:
             ctrl = Gtk.GestureClick()
-            ctrl.connect("released", lambda c, n, x, y: self.main_window.show_thread(event_id, pubkey, content, tags))
+            ctrl.connect(
+                "released",
+                lambda c, n, x, y: self.main_window.show_thread(
+                    event_id, pubkey, content, tags
+                ),
+            )
             self.add_controller(ctrl)
 
     def _setup_metric(self, icon, container):

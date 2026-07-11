@@ -1,14 +1,12 @@
 import pytest
 from unittest.mock import MagicMock, patch
-from src.gateway.gateway import (
-    DatabaseGateway, IEventRepository, IKeyValueStore
-)
+from src.gateway.gateway import DatabaseGateway, IEventRepository, IKeyValueStore
 
 
 @pytest.fixture(scope="function")
 def mock_event_repo():
     """Provides a fresh instance of the Event Repository."""
-    with patch.object(DatabaseGateway, '__init__', return_value=None):
+    with patch.object(DatabaseGateway, "__init__", return_value=None):
         db = DatabaseGateway({"type": "TestSQLite"})
         yield db
     db.close()
@@ -16,7 +14,7 @@ def mock_event_repo():
 
 def test_database_gateway_instance_initialization(mock_event_repo: MagicMock):
     """Verify that the gateway initializes its internal state correctly."""
-    assert hasattr(mock_event_repo, 'close')
+    assert hasattr(mock_event_repo, "close")
 
 
 def test_key_store_read_write(mock_event_repo: MagicMock):
@@ -27,7 +25,7 @@ def test_key_store_read_write(mock_event_repo: MagicMock):
 
     db.set_key(test_key, test_value)
 
-    with patch.object(DatabaseGateway, 'get_key', MagicMock(return_value=test_value)):
+    with patch.object(DatabaseGateway, "get_key", MagicMock(return_value=test_value)):
         retrieved = db.get_key("any:key")
         assert retrieved == test_value
 

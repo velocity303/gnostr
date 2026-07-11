@@ -1,12 +1,57 @@
 name: CI
-on: [push, pull_request]
+
+on:
+  push:
+    branches: [main, main_refactor, refactor-ui-components]
+  pull_request:
+    branches: [main]
 
 jobs:
-  test:
+  lint-and-test:
     runs-on: ubuntu-latest
+    
     steps:
-      - uses: actions/checkout@v4
-      - run: |
-          apt-get update && apt-get install -y python3-pip
-          pip3 install pytest
-          PYTHONPATH=. pytest tests/
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          python3-pip \
+          xvfb \
+          libgtk-4-dev \
+          libadwaita-1-dev \
+          libgstreamer1.0-dev \
+          libgstreamer-plugins-base1.0-dev \
+          gstreamer1.0-plugins-base \
+          gstreamer1.0-plugins-good \
+          gstreamer1.0-plugins-bad \
+          gstreamer1.0-plugins-ugly \
+          gstreamer1.0-libav \
+          libgirepository-1.0-dev \
+          gcc
+    
+    - name: Install Python dependencies
+      run: |
+        pip install --upgrade pip
+        pip install pytest black flake8
+    
+    - name: Lint codebase
+      run: |
+        black --check src/ tests/
+        flake8 src/ tests/ --max-line-length=120
+    
+    - name: Run tests with xvfb
+      run: |
+        xvfb-run --auto-servernum pytest tests/ -v --tb=short
+    
+    - name: Build Flatpak
+      run: |
+        # Verify Flatpak build works (optional)
+        flatpak-builder --force-clean --repo=repo build_dir tech.livingonlinux.gnostr.json

@@ -8,39 +8,45 @@ from urllib.parse import urlparse
 import traceback
 import subprocess
 
-gi.require_version('Gtk', '4.0')
-gi.require_version('Adw', '1')
-gi.require_version('GstVideo', '1.0')
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+gi.require_version("GstVideo", "1.0")
 try:
-    gi.require_version('Gst', '1.0')
+    gi.require_version("Gst", "1.0")
     print("Gst 1.0 required successfully")
 except Exception as e:
     print(f"Failed to require Gst 1.0: {e}")
 from gi.repository import Gtk, Adw, GLib, Gdk, GdkPixbuf, Pango, Gst, Gio
+
 print(f"Gst module imported: {Gst.__name__}")
 print(f"Gtk.Video available: {hasattr(Gtk, 'Video')}")
 import gnostr.nostr_utils as nostr_utils
 
+
 class ContentRenderer:
-    LINK_REGEX = re.compile(r'((?:https?://|nostr:)[^\s]+)')
-    IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.webp'}
-    VIDEO_EXTS = {'.mp4', '.mov', '.webm', '.gif'}
+    LINK_REGEX = re.compile(r"((?:https?://|nostr:)[^\s]+)")
+    IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
+    VIDEO_EXTS = {".mp4", ".mov", ".webm", ".gif"}
 
     @staticmethod
     def is_image_url(url):
         try:
             path = urlparse(url).path.lower()
             return any(path.endswith(ext) for ext in ContentRenderer.IMAGE_EXTS)
-        except: return False
+        except Exception:
+            return False
 
     @staticmethod
     def is_video_url(url):
         try:
             path = urlparse(url).path.lower()
             result = any(path.endswith(ext) for ext in ContentRenderer.VIDEO_EXTS)
-            print(f"is_video_url({url}) -> {result}, VIDEO_EXTS={ContentRenderer.VIDEO_EXTS}")
+            print(
+                f"is_video_url({url}) -> {result}, VIDEO_EXTS={ContentRenderer.VIDEO_EXTS}"
+            )
             return result
-        except: return False
+        except Exception:
+            return False
 
     @staticmethod
     def _add_video(box, url, window_ref):
@@ -63,26 +69,30 @@ class ContentRenderer:
     @staticmethod
     def render(content, window_ref, post_widget_ref=None):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        if not content: return box
-        
+        if not content:
+            return box
+
         try:
             clean_content = html.unescape(content)
             parts = ContentRenderer.LINK_REGEX.split(clean_content)
             current_text_buffer = []
 
             for part in parts:
-                if not part: continue
+                if not part:
+                    continue
 
                 if ContentRenderer.LINK_REGEX.match(part):
                     if current_text_buffer:
                         ContentRenderer._add_text(box, "".join(current_text_buffer))
                         current_text_buffer = []
-                    
+
                     clean_part = part.rstrip(".,;!?)]}")
-                    trailing = part[len(clean_part):]
-                    
-                    if clean_part.startswith("nostr:"): 
-                        ContentRenderer._add_nostr_card(box, clean_part, window_ref, post_widget_ref)
+                    trailing = part[len(clean_part) :]
+
+                    if clean_part.startswith("nostr:"):
+                        ContentRenderer._add_nostr_card(
+                            box, clean_part, window_ref, post_widget_ref
+                        )
                     elif ContentRenderer.is_image_url(clean_part):
                         # Pass window_ref to calculate proper sizing
                         ContentRenderer._add_image(box, clean_part, window_ref)
@@ -94,19 +104,19 @@ class ContentRenderer:
                         ContentRenderer._add_video(box, raw_stream_url, window_ref)
                     else:
                         ContentRenderer._add_link(box, clean_part)
-                        
+
                     if trailing:
                         current_text_buffer.append(trailing)
-                else: 
+                else:
                     current_text_buffer.append(part)
-            
-            if current_text_buffer: 
+
+            if current_text_buffer:
                 ContentRenderer._add_text(box, "".join(current_text_buffer))
 
         except Exception as e:
             print(f"Render Error: {e}")
             ContentRenderer._add_text(box, content)
-            
+
         return box
 
     @staticmethod
@@ -120,11 +130,13 @@ class ContentRenderer:
 
     @staticmethod
     def _add_link(box, url, label=None):
-        disp = label if label else (url[:47] + "..." if len(url)>50 else url)
+        disp = label if label else (url[:47] + "..." if len(url) > 50 else url)
         markup = f'<a href="{GLib.markup_escape_text(url)}">{GLib.markup_escape_text(disp)}</a>'
-        lbl = Gtk.Label(label=markup, xalign=0, wrap=True, selectable=True, use_markup=True)
+        lbl = Gtk.Label(
+            label=markup, xalign=0, wrap=True, selectable=True, use_markup=True
+        )
         lbl.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-        lbl.set_ellipsize(Pango.EllipsizeMode.END) 
+        lbl.set_ellipsize(Pango.EllipsizeMode.END)
         box.append(lbl)
 
     @staticmethod
@@ -138,7 +150,7 @@ class ContentRenderer:
         img_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         img_box.set_halign(Gtk.Align.FILL)
         img_box.set_hexpand(True)
-        img_box.set_size_request(-1, 200) # Placeholder height
+        img_box.set_size_request(-1, 200)  # Placeholder height
 
         spinner = Gtk.Spinner()
         spinner.start()
@@ -154,87 +166,123 @@ class ContentRenderer:
     def _add_nostr_card(box, uri, window, post_widget_ref=None):
         try:
             parts = uri.split(":")
-            if len(parts) < 2: return
-            
+            if len(parts) < 2:
+                return
+
             bech32_str = parts[1]
             is_event = "nevent" in uri or "note" in uri
             is_profile = "nprofile" in uri or "npub" in uri
-            
+
             if is_event:
                 hex_id = ContentRenderer._extract_hex_id(bech32_str)
-                if not hex_id: return
+                if not hex_id:
+                    return
 
                 event = window.db.get_event_by_id(hex_id)
-                
+
                 quote_frame = Gtk.Frame(css_classes=["quote-card"])
-                quote_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, margin_top=8, margin_bottom=8, margin_start=8, margin_end=8)
+                quote_box = Gtk.Box(
+                    orientation=Gtk.Orientation.VERTICAL,
+                    spacing=6,
+                    margin_top=8,
+                    margin_bottom=8,
+                    margin_start=8,
+                    margin_end=8,
+                )
                 quote_frame.set_child(quote_box)
 
                 if event:
                     ContentRenderer._build_quote_content(quote_box, event, window)
                 else:
-                    lbl = Gtk.Label(label=f"Loading Quoted Event...", css_classes=["dim-label"])
+                    lbl = Gtk.Label(
+                        label=f"Loading Quoted Event...", css_classes=["dim-label"]
+                    )
                     quote_box.append(lbl)
-                    window.client.request_once(f"quote_{hex_id[:8]}", {"ids": [hex_id], "limit": 1})
+                    window.client.request_once(
+                        f"quote_{hex_id[:8]}", {"ids": [hex_id], "limit": 1}
+                    )
 
                     if post_widget_ref:
-                        if not hasattr(post_widget_ref, 'quote_widgets'):
+                        if not hasattr(post_widget_ref, "quote_widgets"):
                             post_widget_ref.quote_widgets = []
                         post_widget_ref.quote_widgets.append((hex_id, quote_box))
 
                 wrapper_btn = Gtk.Button(css_classes=["flat", "quote-wrapper"])
                 wrapper_btn.set_child(quote_frame)
-                wrapper_btn.connect("clicked", lambda b: window.show_thread(hex_id, "Unknown", "Loading..."))
+                wrapper_btn.connect(
+                    "clicked",
+                    lambda b: window.show_thread(hex_id, "Unknown", "Loading..."),
+                )
                 box.append(wrapper_btn)
 
             elif is_profile:
                 hex_pk = ContentRenderer._extract_hex_id(bech32_str)
-                if not hex_pk: return
+                if not hex_pk:
+                    return
 
                 prof_frame = Gtk.Frame(css_classes=["profile-card"])
-                prof_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10, margin_top=8, margin_bottom=8, margin_start=8, margin_end=8)
+                prof_box = Gtk.Box(
+                    orientation=Gtk.Orientation.HORIZONTAL,
+                    spacing=10,
+                    margin_top=8,
+                    margin_bottom=8,
+                    margin_start=8,
+                    margin_end=8,
+                )
                 prof_frame.set_child(prof_box)
 
                 av = Adw.Avatar(size=32, show_initials=True, text="?")
                 prof_box.append(av)
 
                 vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-                lbl_name = Gtk.Label(label="User Profile", css_classes=["heading"], xalign=0)
-                lbl_sub = Gtk.Label(label=hex_pk[:8]+"...", css_classes=["caption", "dim-label"], xalign=0)
+                lbl_name = Gtk.Label(
+                    label="User Profile", css_classes=["heading"], xalign=0
+                )
+                lbl_sub = Gtk.Label(
+                    label=hex_pk[:8] + "...",
+                    css_classes=["caption", "dim-label"],
+                    xalign=0,
+                )
                 vbox.append(lbl_name)
                 vbox.append(lbl_sub)
                 prof_box.append(vbox)
 
                 profile = window.db.get_profile(hex_pk)
                 if profile:
-                    name = profile.get('display_name') or profile.get('name')
+                    name = profile.get("display_name") or profile.get("name")
                     if name:
                         lbl_name.set_label(name)
                         av.set_text(name)
-                    if profile.get('picture'):
-                        picture_url = profile['picture']
+                    if profile.get("picture"):
+                        picture_url = profile["picture"]
                         if ContentRenderer.is_video_url(picture_url):
                             # Replace avatar with video player for animated media
                             prof_box.remove(av)
-                            av_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+                            av_container = Gtk.Box(
+                                orientation=Gtk.Orientation.VERTICAL, spacing=0
+                            )
                             av_container.set_size_request(32, 32)
                             av_container.set_halign(Gtk.Align.CENTER)
                             VideoPlayer.load_and_play(picture_url, av_container, None)
                             prof_box.append(av_container)
                         else:
-                            ImageLoader.load_avatar(profile['picture'], lambda t: av.set_custom_image(t))
+                            ImageLoader.load_avatar(
+                                profile["picture"], lambda t: av.set_custom_image(t)
+                            )
                 else:
                     window.client.fetch_profile(hex_pk)
 
                 if post_widget_ref:
-                    if not hasattr(post_widget_ref, 'mention_widgets'):
+                    if not hasattr(post_widget_ref, "mention_widgets"):
                         post_widget_ref.mention_widgets = []
                     post_widget_ref.mention_widgets.append((hex_pk, lbl_name, av))
 
                 wrapper_btn = Gtk.Button(css_classes=["flat", "quote-wrapper"])
                 wrapper_btn.set_child(prof_frame)
+
                 def on_click_prof(b):
                     window.show_profile(hex_pk)
+
                 wrapper_btn.connect("clicked", on_click_prof)
                 box.append(wrapper_btn)
 
@@ -243,15 +291,16 @@ class ContentRenderer:
 
     @staticmethod
     def _build_quote_content(container, event, window):
-        pubkey = event['pubkey']
+        pubkey = event["pubkey"]
         prof = window.db.get_profile(pubkey)
         name = pubkey[:8]
-        if prof: name = prof.get('display_name') or prof.get('name') or name
+        if prof:
+            name = prof.get("display_name") or prof.get("name") or name
 
         h_box = Gtk.Box(spacing=6)
         av = Adw.Avatar(size=24, show_initials=True, text=name)
-        if prof and prof.get('picture'):
-            picture_url = prof['picture']
+        if prof and prof.get("picture"):
+            picture_url = prof["picture"]
             if ContentRenderer.is_video_url(picture_url):
                 # Keep placeholder avatar
                 h_box.append(av)
@@ -262,7 +311,9 @@ class ContentRenderer:
                 h_box.append(av_container)
             else:
                 h_box.append(av)
-                ImageLoader.load_avatar(prof['picture'], lambda t: av.set_custom_image(t))
+                ImageLoader.load_avatar(
+                    prof["picture"], lambda t: av.set_custom_image(t)
+                )
         else:
             h_box.append(av)
 
@@ -270,8 +321,9 @@ class ContentRenderer:
         h_box.append(lbl_name)
         container.append(h_box)
 
-        content = event.get('content', '')
-        if len(content) > 140: content = content[:140] + "..."
+        content = event.get("content", "")
+        if len(content) > 140:
+            content = content[:140] + "..."
         lbl_content = Gtk.Label(label=content, wrap=True, xalign=0, max_width_chars=40)
         lbl_content.set_ellipsize(Pango.EllipsizeMode.END)
         container.append(lbl_content)
@@ -280,41 +332,62 @@ class ContentRenderer:
     def _extract_hex_id(bech32_str):
         try:
             hrp, data = nostr_utils.bech32_decode(bech32_str)
-            if not data: return None
-            acc = 0; bits = 0; ret = []; maxv = 255; max_acc = (1 << 12) - 1
+            if not data:
+                return None
+            acc = 0
+            bits = 0
+            ret = []
+            maxv = 255
+            max_acc = (1 << 12) - 1
             for value in data:
-                if value < 0 or (value >> 5): return None
+                if value < 0 or (value >> 5):
+                    return None
                 acc = ((acc << 5) | value) & max_acc
                 bits += 5
-                while bits >= 8: bits -= 8; ret.append((acc >> bits) & maxv)
+                while bits >= 8:
+                    bits -= 8
+                    ret.append((acc >> bits) & maxv)
             raw_bytes = bytes(ret)
-            if hrp in ["note", "npub"]: return raw_bytes.hex()
+            if hrp in ["note", "npub"]:
+                return raw_bytes.hex()
             if hrp in ["nevent", "nprofile"]:
                 i = 0
                 while i < len(raw_bytes):
-                    if i + 2 > len(raw_bytes): break
-                    t = raw_bytes[i]; l = raw_bytes[i+1]
-                    if i + 2 + l > len(raw_bytes): break
-                    if t == 0 and l == 32: return raw_bytes[i+2 : i+2+l].hex()
+                    if i + 2 > len(raw_bytes):
+                        break
+                    t = raw_bytes[i]
+                    l = raw_bytes[i + 1]
+                    if i + 2 + l > len(raw_bytes):
+                        break
+                    if t == 0 and l == 32:
+                        return raw_bytes[i + 2 : i + 2 + l].hex()
                     i += 2 + l
-        except: pass
+        except Exception:
+            pass
         return None
 
+
 def _launch_ext(win, s):
-    try: Gtk.UriLauncher(uri=f"https://njump.me/{s}").launch(win, None, None)
-    except: pass
+    try:
+        Gtk.UriLauncher(uri=f"https://njump.me/{s}").launch(win, None, None)
+    except Exception:
+        pass
+
 
 def get_youtube_stream(url):
     """Extract direct stream URL from YouTube link using yt-dlp."""
     try:
         result = subprocess.run(
             ["yt-dlp", "-g", "-f", "best[ext=mp4]", url],
-            capture_output=True, text=True, check=True
+            capture_output=True,
+            text=True,
+            check=True,
         )
         return result.stdout.strip()
     except subprocess.CalledProcessError as e:
         print(f"Failed to resolve YouTube URL: {e}")
         return url
+
 
 class ImageLoader:
     _executor = concurrent.futures.ThreadPoolExecutor(max_workers=16)
@@ -325,7 +398,7 @@ class ImageLoader:
 
     @staticmethod
     def load_avatar(url, callback):
-        ImageLoader._request_image(url, callback, size=(64,64))
+        ImageLoader._request_image(url, callback, size=(64, 64))
 
     @staticmethod
     def load_image_into_widget(url, container, spinner, window_ref=None):
@@ -340,12 +413,12 @@ class ImageLoader:
                 ratio = width / height if height > 0 else 1.0
 
                 # Determine available width based on window context
-                available_width = 600 # Default feed clamp width
+                available_width = 600  # Default feed clamp width
                 if window_ref:
                     win_w = window_ref.get_width()
                     # On mobile (narrow window), use full width. On desktop, stick to clamp max.
                     if win_w < 650:
-                        available_width = win_w - 40 # accounting for margins
+                        available_width = win_w - 40  # accounting for margins
                     else:
                         available_width = 600
 
@@ -369,7 +442,8 @@ class ImageLoader:
     @staticmethod
     def _request_image(url, callback, size=None):
         if not url:
-            callback(None); return
+            callback(None)
+            return
 
         with ImageLoader._cache_lock:
             if url in ImageLoader._cache:
@@ -390,15 +464,17 @@ class ImageLoader:
         texture = None
         try:
             if url.startswith("http"):
-                req = urllib.request.Request(url, headers={'User-Agent': 'Gnostr/1.0'})
+                req = urllib.request.Request(url, headers={"User-Agent": "Gnostr/1.0"})
                 with urllib.request.urlopen(req, timeout=15) as r:
                     data = r.read()
                 loader = GdkPixbuf.PixbufLoader()
                 loader.write(data)
                 loader.close()
                 pix = loader.get_pixbuf()
-                if pix: texture = Gdk.Texture.new_for_pixbuf(pix)
-        except: pass
+                if pix:
+                    texture = Gdk.Texture.new_for_pixbuf(pix)
+        except Exception:
+            pass
         GLib.idle_add(ImageLoader._notify_main_thread, url, texture)
 
     @staticmethod
@@ -410,13 +486,14 @@ class ImageLoader:
         with ImageLoader._ongoing_lock:
             callbacks = ImageLoader._ongoing.pop(url, [])
 
-        for (cb, size) in callbacks:
+        for cb, size in callbacks:
             cb(texture)
         return False
 
 
 class VideoPlayer:
     """GStreamer-based video/GIF player using playbin and Gtk.Picture."""
+
     _cache = {}
     _lock = threading.Lock()
 
@@ -425,15 +502,15 @@ class VideoPlayer:
         def on_ready(video):
             if spinner and spinner.get_parent() == container:
                 container.remove(spinner)
-                
+
             if video:
                 req_w, req_h = container.get_size_request()
-                
+
                 # Avatar Mode: Strict container size mapping
                 if req_w > 0 and req_h > 0:
                     video.set_size_request(req_w, req_h)
                     video.set_content_fit(Gtk.ContentFit.COVER)
-                
+
                 # Feed Mode: Safe scaling without layout pushing
                 else:
                     video.set_content_fit(Gtk.ContentFit.CONTAIN)
@@ -441,10 +518,10 @@ class VideoPlayer:
 
                 video.set_halign(Gtk.Align.CENTER)
                 video.set_valign(Gtk.Align.CENTER)
-                
+
                 if video.get_parent() is not None:
                     video.get_parent().remove(video)
-                    
+
                 container.append(video)
             else:
                 container.append(Gtk.Image.new_from_icon_name("video-symbolic"))
@@ -466,15 +543,15 @@ class VideoPlayer:
                 f"videoconvert ! videoscale ! "
                 f"queue ! gtk4paintablesink name=vsink"
             )
-            
+
             vsink = pipeline.get_by_name("vsink")
             paintable = vsink.get_property("paintable")
             video = Gtk.Picture()
             video.set_paintable(paintable)
-            
+
             # Prevent Garbage Collection
             video._pipeline = pipeline
-            
+
             video.set_vexpand(False)
             video.set_hexpand(False)
             video.set_can_shrink(True)
@@ -482,20 +559,20 @@ class VideoPlayer:
             # GStreamer Bus Watcher for Looping & Errors
             bus = pipeline.get_bus()
             bus.add_signal_watch()
-            
+
             def on_bus_message(bus, msg, p=pipeline, media_url=url):
                 if msg.type == Gst.MessageType.EOS:
                     p.seek_simple(Gst.Format.TIME, Gst.SeekFlags.FLUSH, 0)
                 elif msg.type == Gst.MessageType.ERROR:
                     err, debug = msg.parse_error()
                     print(f"\n❌ [Media Codec Error] {media_url}\n   -> {err.message}")
-                    
+
             bus.connect("message", on_bus_message)
-            video._bus = bus 
+            video._bus = bus
 
             # Start playback
             pipeline.set_state(Gst.State.PLAYING)
-            
+
         except Exception as e:
             print(f"GStreamer pipeline failed: {e}")
             video = None

@@ -1,8 +1,10 @@
 # src/ui/feed_view.py
 import gi
-gi.require_version('Gtk', '4.0')
-gi.require_version('Adw', '1')
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw
+
 
 class FeedView(Adw.NavigationPage):
     def __init__(self, main_window):
@@ -24,7 +26,14 @@ class FeedView(Adw.NavigationPage):
         s = Gtk.ScrolledWindow(vexpand=True)
         s.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         c = Adw.Clamp(maximum_size=600)
-        self.posts_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
+        self.posts_box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=12,
+            margin_top=12,
+            margin_bottom=12,
+            margin_start=12,
+            margin_end=12,
+        )
         c.set_child(self.posts_box)
         s.set_child(c)
         self.box.append(s)

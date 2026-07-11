@@ -14,12 +14,19 @@ def test_get_profile_success_happy_path(profile_service: MagicMock):
     MOCK_NAME = "TestUser"
 
     mock_kv_instance = MagicMock()
-    mock_kv_instance.get_key.return_value = '{"display_name": "' + MOCK_NAME + '", "picture": "url/to/pic.jpg"}'
+    mock_kv_instance.get_key.return_value = (
+        '{"display_name": "' + MOCK_NAME + '", "picture": "url/to/pic.jpg"}'
+    )
     profile_service._metadata_service._kv = mock_kv_instance
 
     mock_db_instance = MagicMock()
     mock_db_instance.find_events.return_value = [
-        {"id": "e1", "pubkey": MOCK_PUBKEY, "content": "Test post 1.", "created_at": 12345}
+        {
+            "id": "e1",
+            "pubkey": MOCK_PUBKEY,
+            "content": "Test post 1.",
+            "created_at": 12345,
+        }
     ]
     profile_service._db = mock_db_instance
 
@@ -27,11 +34,13 @@ def test_get_profile_success_happy_path(profile_service: MagicMock):
 
     assert profile is not None
     assert profile["display_name"] == MOCK_NAME
-    assert 'recent_posts' in profile
-    assert len(profile['recent_posts']) == 1
+    assert "recent_posts" in profile
+    assert len(profile["recent_posts"]) == 1
 
     mock_kv_instance.get_key.assert_called_once_with(f"profile:{MOCK_PUBKEY}")
-    mock_db_instance.find_events.assert_called_once_with({"authors": [MOCK_PUBKEY], "kind": 1}, limit=5)
+    mock_db_instance.find_events.assert_called_once_with(
+        {"authors": [MOCK_PUBKEY], "kind": 1}, limit=5
+    )
 
 
 def test_get_profile_missing_key_fails(profile_service: MagicMock):
@@ -57,9 +66,11 @@ def test_profile_update_succeeds_and_writes_gateway(profile_service: MagicMock):
     mock_kv_instance = MagicMock()
     profile_service._kv = mock_kv_instance
 
-    profile_service._save_profile_data(MOCK_PUBKEY, {"display_name": NEW_NAME, "bio": NEW_BIO})
+    profile_service._save_profile_data(
+        MOCK_PUBKEY, {"display_name": NEW_NAME, "bio": NEW_BIO}
+    )
 
     mock_kv_instance.set_key.assert_called_once()
     args, _ = mock_kv_instance.set_key.call_args
     assert args[0] == f"profile:{MOCK_PUBKEY}"
-    assert args[1].startswith('{')
+    assert args[1].startswith("{")

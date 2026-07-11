@@ -25,16 +25,17 @@
 from gi.repository import Adw
 from gi.repository import Gtk
 
-@Gtk.Template(resource_path='/me/velocitynet/gnostr/window.ui')
+
+@Gtk.Template(resource_path="/me/velocitynet/gnostr/window.ui")
 class GnostrWindow(Adw.ApplicationWindow):
-    __gtype_name__ = 'GnostrWindow'
+    __gtype_name__ = "GnostrWindow"
 
     label = Gtk.Template.Child()
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.fab_post = self.get_template_child('fab_post')
-        self.fab_post.connect('clicked', self.on_fab_post_clicked)
+        self.fab_post = self.get_template_child("fab_post")
+        self.fab_post.connect("clicked", self.on_fab_post_clicked)
 
     def on_fab_post_clicked(self, button):
         # ponytail: will trigger ComposeWindow in next step

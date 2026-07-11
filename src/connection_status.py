@@ -1,15 +1,18 @@
 from enum import Enum
 import typing
 
+
 class ConnectionStatus(Enum):
     """Type-safe representation of connection states."""
-    CONNECTED = "Connected" 
+
+    CONNECTED = "Connected"
     DISCONNECTED = "Disconnected"
-    CONNECTING = "Connecting" # Transient state placeholder, e.g., during handshake
+    CONNECTING = "Connecting"  # Transient state placeholder, e.g., during handshake
+
 
 def status_from_string(raw_state: str) -> ConnectionStatus:
     """
-    Maps a raw string (e.g., from an API response or internal flag) 
+    Maps a raw string (e.g., from an API response or internal flag)
     to a structured ConnectionStatus Enum member.
     Raises ValueError if the state is unrecognized.
     """
@@ -24,4 +27,6 @@ def status_from_string(raw_state: str) -> ConnectionStatus:
             return ConnectionStatus.CONNECTING
 
     # Fallback for other unexpected inputs (like None, or empty string)
-    raise TypeError(f"Invalid raw state input of type {type(raw_state).__name__} and value '{raw_state}'")
+    raise TypeError(
+        f"Invalid raw state input of type {type(raw_state).__name__} and value '{raw_state}'"
+    )

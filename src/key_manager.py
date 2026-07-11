@@ -1,15 +1,18 @@
 import gi
+
 # FIX: Namespace is 'Secret', not 'Libsecret'
-gi.require_version('Secret', '1')
+gi.require_version("Secret", "1")
 from gi.repository import Secret, GLib
 
 # Schema defines what "kind" of secret this is.
-SECRET_SCHEMA = Secret.Schema.new("tech.livingonlinux.gnostr.Schema",
+SECRET_SCHEMA = Secret.Schema.new(
+    "tech.livingonlinux.gnostr.Schema",
     Secret.SchemaFlags.NONE,
     {
         "application": Secret.SchemaAttributeType.STRING,
-    }
+    },
 )
+
 
 class KeyManager:
     @staticmethod
@@ -24,7 +27,7 @@ class KeyManager:
                 Secret.COLLECTION_DEFAULT,
                 "Gnostr Private Key",
                 nsec,
-                None
+                None,
             )
             print("✅ Key saved securely.")
             return True
@@ -38,11 +41,7 @@ class KeyManager:
         attributes = {"application": "gnostr"}
 
         try:
-            nsec = Secret.password_lookup_sync(
-                SECRET_SCHEMA,
-                attributes,
-                None
-            )
+            nsec = Secret.password_lookup_sync(SECRET_SCHEMA, attributes, None)
             return nsec
         except GLib.Error as e:
             print(f"❌ Failed to load key: {e}")
@@ -53,11 +52,7 @@ class KeyManager:
         """Removes the key (Log out)."""
         attributes = {"application": "gnostr"}
         try:
-            Secret.password_clear_sync(
-                SECRET_SCHEMA,
-                attributes,
-                None
-            )
+            Secret.password_clear_sync(SECRET_SCHEMA, attributes, None)
             print("✅ Key removed.")
             return True
         except GLib.Error as e:

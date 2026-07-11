@@ -24,7 +24,7 @@ class ProfileService:
                 recent_posts = found
 
         full_view = metadata.copy()
-        full_view['recent_posts'] = recent_posts
+        full_view["recent_posts"] = recent_posts
         return full_view
 
     def _save_profile_data(self, pubkey: str, data: Dict):

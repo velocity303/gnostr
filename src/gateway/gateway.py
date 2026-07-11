@@ -3,10 +3,11 @@ import abc
 import time
 from typing import Optional, List, Dict, Any
 
+
 class AbstractRepository(abc.ABC):
     """
     Abstract Base Class for all data repositories in gnostr.
-    Defines the required contract (interface) that concrete implementations 
+    Defines the required contract (interface) that concrete implementations
     (e.g., DatabaseGateway, MockDatabaseGateway) must adhere to.
     """
 
@@ -15,7 +16,9 @@ class AbstractRepository(abc.ABC):
         """Cleanly closes any underlying connection resources."""
         raise NotImplementedError("Subclasses must implement the close method.")
 
+
 # --- Data Gateway Interfaces (The Contract) ---
+
 
 class IKeyValueStore(AbstractRepository):
     @abc.abstractmethod
@@ -28,12 +31,14 @@ class IKeyValueStore(AbstractRepository):
         """Store or replace a value associated with a key."""
         pass
 
+
 class IPostgreSQLRepository(AbstractRepository):
     # Represents connection/session management for complex relational data
     @abc.abstractmethod
     def execute_query(self, query: str, params: Optional[Dict] = None) -> List[Dict]:
         """Execute a parameterized SQL query and return results as list of dicts."""
         pass
+
 
 class IEventRepository(AbstractRepository):
     # Deals specifically with Nostr Event and Group data
@@ -50,16 +55,20 @@ class IEventRepository(AbstractRepository):
 
 # --- Concrete Implementation Placeholder ---
 
+
 class DatabaseGateway(IKeyValueStore, IEventRepository):
     """
-    The concrete implementation that interfaces with the actual database 
+    The concrete implementation that interfaces with the actual database
     (e.g., a SQLAlchemy wrapper or specialized Redis connection).
     This class will be initialized/subclassed to connect to SQLite, Postgres, etc.
     """
+
     def __init__(self, config: Dict):
         # In a real app, this would initialize connection pooling (DB connection setup)
         self._config = config
-        print(f"INFO: Initializing DatabaseGateway using configuration for {config.get('type', 'unknown')}.")
+        print(
+            f"INFO: Initializing DatabaseGateway using configuration for {config.get('type', 'unknown')}."
+        )
 
     def close(self):
         """Placeholder to ensure resources are cleaned up."""
@@ -70,7 +79,7 @@ class DatabaseGateway(IKeyValueStore, IEventRepository):
     def get_key(self, key: str) -> Optional[str]:
         print(f"DEBUG: Retrieving simple key '{key}' from DB.")
         # Replace with actual DB query accessing a single key-value pair
-        return None 
+        return None
 
     def set_key(self, key: str, value: Any) -> None:
         print(f"DEBUG: Setting complex key '{key}' in DB.")
@@ -86,12 +95,27 @@ class DatabaseGateway(IKeyValueStore, IEventRepository):
 
     def find_events(self, criteria: Dict, limit: Optional[int] = None) -> List[Dict]:
         """Performs structured retrieval of events (e.g., feed queries)."""
-        print(f"DEBUG: Searching for events with criteria: {criteria}, limited to {limit}.")
+        print(
+            f"DEBUG: Searching for events with criteria: {criteria}, limited to {limit}."
+        )
         # Mock response simulating a list of dictionaries returned from the DB
         return [
-            {"id": "mock_event1", "pubkey": "fakepub1", "content": "Mock post 1.", "created_at": time.time(), "tags": []},
-            {"id": "mock_event2", "pubkey": "fakepub2", "content": "Mock post 2.", "created_at": 0, "tags": []}
+            {
+                "id": "mock_event1",
+                "pubkey": "fakepub1",
+                "content": "Mock post 1.",
+                "created_at": time.time(),
+                "tags": [],
+            },
+            {
+                "id": "mock_event2",
+                "pubkey": "fakepub2",
+                "content": "Mock post 2.",
+                "created_at": 0,
+                "tags": [],
+            },
         ]
+
 
 # Example Usage Test (Run this file test to verify interfaces)
 if __name__ == "__main__":

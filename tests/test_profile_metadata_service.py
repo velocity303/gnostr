@@ -1,7 +1,10 @@
 import pytest
 from unittest.mock import MagicMock
 from src.gateway.gateway import IKeyValueStore
-from src.service.profile_metadata_service import ProfileMetadataService, ProfileMetadataError
+from src.service.profile_metadata_service import (
+    ProfileMetadataService,
+    ProfileMetadataError,
+)
 
 
 @pytest.fixture

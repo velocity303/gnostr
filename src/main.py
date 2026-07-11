@@ -16,15 +16,16 @@ from gnostr.ui.feed_view import FeedView
 from gnostr.ui.post_widget import PostWidget
 
 # Ensure package imports work when run as __main__
-if __name__ == '__main__':
+if __name__ == "__main__":
     # Add parent directory to sys.path so `import gnostr` works
     parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if parent not in sys.path:
         sys.path.insert(0, parent)
 
-gi.require_version('Gtk', '4.0')
-gi.require_version('Adw', '1')
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw, GLib, Gio, Pango, Gdk
+
 
 class MainWindow(Adw.ApplicationWindow):
     def __init__(self, *args, **kwargs):
@@ -59,7 +60,9 @@ class MainWindow(Adw.ApplicationWindow):
         self.global_overlay.set_child(self.main_stack)
 
         # FAB Button
-        self.fab_post = Gtk.Button(icon_name="edit-create-symbolic", css_classes=["suggested-action", "pill"])
+        self.fab_post = Gtk.Button(
+            icon_name="edit-create-symbolic", css_classes=["suggested-action", "pill"]
+        )
         self.fab_post.set_valign(Gtk.Align.END)
         self.fab_post.set_halign(Gtk.Align.END)
         self.fab_post.set_margin_bottom(20)
@@ -70,7 +73,11 @@ class MainWindow(Adw.ApplicationWindow):
 
         # 3. App View: Split View
         self.split_view = Adw.NavigationSplitView()
-        bp = Adw.Breakpoint.new(Adw.BreakpointCondition.new_length(Adw.BreakpointConditionLengthType.MAX_WIDTH, 800, Adw.LengthUnit.SP))
+        bp = Adw.Breakpoint.new(
+            Adw.BreakpointCondition.new_length(
+                Adw.BreakpointConditionLengthType.MAX_WIDTH, 800, Adw.LengthUnit.SP
+            )
+        )
         bp.add_setter(self.split_view, "collapsed", True)
         self.add_breakpoint(bp)
 
@@ -87,10 +94,16 @@ class MainWindow(Adw.ApplicationWindow):
         self.content_nav.push(self.feed_view)
 
         # 4. Login View
-        self.login_page = Adw.StatusPage(title="Welcome", icon_name="avatar-default-symbolic")
+        self.login_page = Adw.StatusPage(
+            title="Welcome", icon_name="avatar-default-symbolic"
+        )
         lb = Gtk.Button(label="Login", css_classes=["pill", "suggested-action"])
         lb.connect("clicked", self.on_login_clicked)
-        bx = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER)
+        bx = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            halign=Gtk.Align.CENTER,
+            valign=Gtk.Align.CENTER,
+        )
         bx.append(lb)
         self.login_page.set_child(bx)
 
@@ -121,22 +134,27 @@ class MainWindow(Adw.ApplicationWindow):
                     ImageLoader.MAX_WIDTH = int(target_width)
                 else:
                     ImageLoader.MAX_WIDTH = 800
-        except:
+        except Exception:
             ImageLoader.MAX_WIDTH = 800
 
     def on_settings_clicked(self):
         RelayPreferencesWindow(self.client, self).present()
 
     def on_menu_selected(self, r_id):
-        if r_id == "global": self.switch_feed("global")
-        elif r_id == "following": self.switch_feed("following")
-        elif r_id == "profile": 
-            if self.pub_key: self.show_profile(self.pub_key)
-        elif r_id == "search": self.show_search_dialog()
+        if r_id == "global":
+            self.switch_feed("global")
+        elif r_id == "following":
+            self.switch_feed("following")
+        elif r_id == "profile":
+            if self.pub_key:
+                self.show_profile(self.pub_key)
+        elif r_id == "search":
+            self.show_search_dialog()
         self.split_view.set_show_content(True)
 
     def on_login_clicked(self, btn):
         from gnostr.dialogs import LoginDialog
+
         LoginDialog(self.client, self).present()
 
     def on_logout_clicked(self):
@@ -146,11 +164,13 @@ class MainWindow(Adw.ApplicationWindow):
 
     def on_fab_post_clicked(self, button):
         from gnostr.dialogs import ComposeWindow
+
         def handle_post(text):
             if self.client.publish_post(text):
                 self.add_toast(Adw.Toast(title="Post Published"))
             else:
                 self.add_toast(Adw.Toast(title="Failed to Publish Post"))
+
         win = ComposeWindow(self, handle_post)
         win.present()
 
@@ -193,8 +213,9 @@ class MainWindow(Adw.ApplicationWindow):
 
     def on_event_received(self, client, eid, pubkey, content, tags_json):
         import json
+
         tags = json.loads(tags_json)
-        
+
         # If we are on the feed and this post belongs here, add it
         if self.content_nav.get_visible_page() == self.feed_view:
             # Simple heuristic: only add to feed if it's a Kind 1 event
@@ -203,11 +224,17 @@ class MainWindow(Adw.ApplicationWindow):
             self.feed_view.posts_box.prepend(w)
 
     def on_status_changed(self, client, status):
-        emoji = {"CONNECTED": "🟢", "WARNING": "🟡", "DISCONNECTED": "🔴"}.get(status, "⚪")
+        emoji = {"CONNECTED": "🟢", "WARNING": "🟡", "DISCONNECTED": "🔴"}.get(
+            status, "⚪"
+        )
         self.sidebar.update_status(emoji)
 
-    def on_contacts_updated(self, client): pass
-    def on_profile_updated(self, client, pubkey): pass
+    def on_contacts_updated(self, client):
+        pass
+
+    def on_profile_updated(self, client, pubkey):
+        pass
+
     def on_metrics_updated(self, client, eid, likes, reposts, replies):
         # Update labels on PostWidgets by event_id
         if eid in self.event_widgets:
@@ -220,7 +247,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.priv_key = priv_hex
         self.pub_key = gnostr.nostr_utils.get_public_key(priv_hex)
         self.main_stack.set_visible_child_name("app")
-        self.sidebar.update_status("🟢") 
+        self.sidebar.update_status("🟢")
         self.fab_post.set_visible(True)
         GLib.idle_add(self.client.connect_all)
 
@@ -229,40 +256,59 @@ class MainWindow(Adw.ApplicationWindow):
         # Clear existing posts
         while self.feed_view.posts_box.get_first_child():
             self.feed_view.posts_box.remove(self.feed_view.posts_box.get_first_child())
-        
+
         cached = []
         if feed_type == "following" and self.pub_key:
             cached = self.db.get_feed_following(self.pub_key)
             contacts = self.db.get_following_list(self.pub_key)
             if contacts:
-                self.client.subscribe("sub_following", {"kinds": [1], "authors": contacts[:300], "limit": 50})
+                self.client.subscribe(
+                    "sub_following",
+                    {"kinds": [1], "authors": contacts[:300], "limit": 50},
+                )
         elif feed_type == "global":
-            self.client.subscribe("sub_global", {"kinds": [1], "limit": 20}, snapshot=True)
+            self.client.subscribe(
+                "sub_global", {"kinds": [1], "limit": 20}, snapshot=True
+            )
         elif feed_type == "me" and self.pub_key:
             cached = self.db.get_feed_for_user(self.pub_key)
-            self.client.subscribe("sub_me", {"kinds": [1], "authors": [self.pub_key], "limit": 20})
-        
+            self.client.subscribe(
+                "sub_me", {"kinds": [1], "authors": [self.pub_key], "limit": 20}
+            )
+
         for ev in cached:
-            w = PostWidget(self, ev['pubkey'], ev['content'], ev['id'], ev.get('tags', []))
+            w = PostWidget(
+                self, ev["pubkey"], ev["content"], ev["id"], ev.get("tags", [])
+            )
             self.feed_view.posts_box.prepend(w)
+
 
 class GnostrApp(Adw.Application):
     def __init__(self, **kwargs):
-        super().__init__(application_id="tech.livingonlinux.gnostr", flags=Gio.ApplicationFlags.FLAGS_NONE, **kwargs)
+        super().__init__(
+            application_id="tech.livingonlinux.gnostr",
+            flags=Gio.ApplicationFlags.FLAGS_NONE,
+            **kwargs,
+        )
+
     def do_activate(self):
         win = self.props.active_window
-        if not win: win = MainWindow(application=self)
+        if not win:
+            win = MainWindow(application=self)
         win.present()
         # Initialize GStreamer for video/GIF support
         try:
             from gi.repository import Gst
+
             Gst.init(None)
         except Exception as e:
             print(f"GStreamer init failed: {e}")
 
+
 def main(version):
     app = GnostrApp()
     return app.run(sys.argv)
+
 
 if __name__ == "__main__":
     main(None)

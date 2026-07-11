@@ -1,11 +1,12 @@
-
 import gi
-gi.require_version('Gtk', '4.0')
-gi.require_version('Adw', '1')
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw, Gdk
 from gnostr.ui.post_widget import PostWidget
 from gnostr.renderer import ContentRenderer, ImageLoader, VideoPlayer
 from gnostr.nostr_utils import hex_to_npub
+
 
 class ProfileView(Adw.Bin):
     def __init__(self, main_window, pubkey):
@@ -13,8 +14,14 @@ class ProfileView(Adw.Bin):
         self.main_window = main_window
         self.pubkey = pubkey
 
-        self.layout = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
-                             margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
+        self.layout = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=12,
+            margin_top=12,
+            margin_bottom=12,
+            margin_start=12,
+            margin_end=12,
+        )
         self.set_child(self.layout)
 
         # Header with back button, avatar, npub
@@ -31,20 +38,24 @@ class ProfileView(Adw.Bin):
 
         # Avatar - supports animated GIFs/videos
         prof = self.main_window.db.get_profile(pubkey)
-        name = prof.get('display_name') or prof.get('name') or pubkey[:8] if prof else pubkey[:8]
-        
+        name = (
+            prof.get("display_name") or prof.get("name") or pubkey[:8]
+            if prof
+            else pubkey[:8]
+        )
+
         # Use a container that can hold either avatar or video
         self.avatar_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.avatar_container.set_size_request(120, 120)
         self.avatar_container.set_halign(Gtk.Align.CENTER)
-        
+
         # Default: show avatar
         self.avatar = Adw.Avatar(size=120, show_initials=True, text=name)
         self.avatar_container.append(self.avatar)
         header.append(self.avatar_container)
-        
-        if prof and prof.get('picture'):
-            picture_url = prof['picture']
+
+        if prof and prof.get("picture"):
+            picture_url = prof["picture"]
             # Check if it's animated (gif/webm)
             if ContentRenderer.is_video_url(picture_url):
                 # Show video player for animated media
@@ -52,7 +63,9 @@ class ProfileView(Adw.Bin):
                 VideoPlayer.load_and_play(picture_url, self.avatar_container, None)
             else:
                 # Show static image via avatar
-                ImageLoader.load_avatar(picture_url, lambda t: self.avatar.set_custom_image(t))
+                ImageLoader.load_avatar(
+                    picture_url, lambda t: self.avatar.set_custom_image(t)
+                )
 
         # Username (big bold)
         lbl_name = Gtk.Label(label=name, xalign=0.5, css_classes=["heading", "large"])
@@ -85,7 +98,14 @@ class ProfileView(Adw.Bin):
         # Load posts from DB
         posts = self.main_window.db.get_feed_for_user(pubkey)
         for ev in posts:
-            w = PostWidget(self.main_window, ev['pubkey'], ev['content'], ev['id'], ev.get('tags', []), is_hero=False)
+            w = PostWidget(
+                self.main_window,
+                ev["pubkey"],
+                ev["content"],
+                ev["id"],
+                ev.get("tags", []),
+                is_hero=False,
+            )
             self.posts_box.append(w)
 
     def copy_to_clipboard(self, text):
