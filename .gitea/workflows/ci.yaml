@@ -9,18 +9,21 @@ on:
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
+    # CRITICAL: Force Gitea to use a modern Ubuntu container with GTK4/Libadwaita repos
+    container: ubuntu:22.04
     
     steps:
     - uses: actions/checkout@v4
     
     - name: Install system dependencies
       run: |
-        # Removed 'sudo' since Gitea runner containers execute as root by default
+        # Prevent interactive prompts from halting apt during build
+        export DEBIAN_FRONTEND=noninteractive
         apt-get update
         
-        # Install Python 3.11, Flatpak builder, and all GTK/GStreamer dependencies natively
+        # Install Python 3, Flatpak, and modern GTK4/GStreamer stacks
         apt-get install -y \
-          python3.11 python3.11-venv python3-pip \
+          python3 python3-venv python3-pip \
           xvfb \
           flatpak flatpak-builder \
           libgtk-4-dev \
@@ -34,10 +37,8 @@ jobs:
           gstreamer1.0-plugins-bad \
           gstreamer1.0-plugins-ugly \
           gstreamer1.0-libav \
-          gcc
-          
-        # Ensure 'python3' points to the newly installed Python 3.11 environment
-        update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
+          gcc \
+          curl
     
     - name: Install Python dependencies
       run: |
@@ -64,7 +65,7 @@ jobs:
       run: |
         touch test_report.log 
         
-        curl -X POST http://your-hermes-agent-url:8080/webhook/repair \
+        curl -X POST http://192.168.5.134:8080/webhook/repair \
         -H "Content-Type: application/json" \
         -d '{
           "repository": "${{ github.repository }}",
