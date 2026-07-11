@@ -418,19 +418,13 @@ class VideoPlayer:
                 # Avatar Mode: The container has strict sizes (e.g., 120x120 or 24x24)
                 if req_w > 0 and req_h > 0:
                     video.set_size_request(req_w, req_h)
-                    video.set_content_fit(Gtk.ContentFit.COVER) # Crop perfectly to the square
+                    video.set_content_fit(Gtk.ContentFit.COVER)
                 
-                # Feed Mode: The container is flexible (width is usually -1)
+                # Feed Mode: Flexible width, rigid height to prevent Adwaita overflow
                 else:
-                    video.set_content_fit(Gtk.ContentFit.CONTAIN) # Letterbox, never stretch
-                    
-                    # Dynamically size based on screen width
-                    if window_ref:
-                        win_w = window_ref.get_width()
-                        target_w = win_w - 40 if win_w < 650 else 600
-                        video.set_size_request(target_w, int(target_w * 0.5625)) # Standard 16:9 fallback
-                    else:
-                        video.set_size_request(320, 180)
+                    video.set_content_fit(Gtk.ContentFit.CONTAIN)
+                    # -1 tells GTK to flex the width dynamically to fit the screen
+                    video.set_size_request(-1, 200)
 
                 video.set_halign(Gtk.Align.CENTER)
                 video.set_valign(Gtk.Align.CENTER)
@@ -472,7 +466,11 @@ class VideoPlayer:
             video = Gtk.Picture()
             video.set_paintable(paintable)
             
-            # Removed the hardcoded size request here so `on_ready` can handle it dynamically
+            # CRITICAL FIX: Bind the pipeline to the video widget!
+            # If we don't do this, Python's Garbage Collector instantly kills 
+            # the pipeline the moment this function ends, resulting in blank videos.
+            video._pipeline = pipeline
+            
             video.set_vexpand(False)
             video.set_hexpand(False)
             video.set_can_shrink(True)
