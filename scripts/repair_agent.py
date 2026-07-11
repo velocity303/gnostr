@@ -5,10 +5,12 @@ Gnostr Repair Agent
 This agent monitors for issues with 'needs-repair' label and automatically
 creates fixes for CI failures.
 """
+
 import os
 import sys
 from pathlib import Path
 from datetime import datetime
+
 
 def monitor_repair_issues():
     """Monitor for issues that need repair."""
@@ -28,7 +30,7 @@ def monitor_repair_issues():
         "title": "CI Failure: Repair needed for main",
         "body": "## CI Repair Request\n\nRepository: gnostr\nBranch: main\nCommit: abc123\n\n### Test Report\n```\nERROR: test_codec_support.py::TestCodecSupport::test_is_video_url_mp4\n    assert ContentRenderer.is_video_url(url) is True\nE   assert False is True\n```\n\n### Instructions for Repair Agent\n1. Analyze the test failures in the report above\n2. Identify the root cause\n3. Create a fix that addresses the failing tests\n4. Submit a PR to branch main with the fix\n5. Ensure all tests pass before submitting\n\n### Labels to Add\n- needs-repair\n- ci-failure\n\n---\n*This issue was automatically created by the CI pipeline.*",
         "created_at": "2026-07-11T10:00:00Z",
-        "labels": ["needs-repair", "ci-failure"]
+        "labels": ["needs-repair", "ci-failure"],
     }
 
     print(f"Found issue: {sample_issue['title']}")
@@ -37,13 +39,14 @@ def monitor_repair_issues():
     # Process the issue
     process_repair_issue(sample_issue, repo_path, branch)
 
+
 def process_repair_issue(issue, repo_path, branch):
     """Process a repair issue and create a fix."""
     print(f"\n=== Processing Repair Issue #{issue['id']} ===")
     print(f"Title: {issue['title']}")
 
     # Parse the test report from the issue body
-    body = issue['body']
+    body = issue["body"]
     test_report = extract_test_report(body)
 
     print(f"\nTest Report:\n{test_report}")
@@ -59,6 +62,7 @@ def process_repair_issue(issue, repo_path, branch):
     # Submit the fix as a PR
     submit_fix_as_pr(fix, repo_path, branch)
 
+
 def extract_test_report(body):
     """Extract the test report from the issue body."""
     # Simple extraction - in reality, you'd use more robust parsing
@@ -67,6 +71,7 @@ def extract_test_report(body):
         end = body.find("\n", start)
         return body[start:end].strip()
     return ""
+
 
 def analyze_failure(test_report):
     """Analyze the test failure and identify the root cause."""
@@ -77,6 +82,7 @@ def analyze_failure(test_report):
         return "Video URL detection for MOV files is failing."
     else:
         return "Unknown test failure. Please examine the test report manually."
+
 
 def create_fix(analysis, repo_path):
     """Create a fix for the identified issue."""
@@ -109,6 +115,7 @@ assert '.mp4' in ContentRenderer.VIDEO_EXTS
 
     return fix_content
 
+
 def submit_fix_as_pr(fix, repo_path, branch):
     """Submit the fix as a pull request to the specified branch."""
     print(f"\n=== Submitting Fix to Branch: {branch} ===")
@@ -122,6 +129,7 @@ def submit_fix_as_pr(fix, repo_path, branch):
     # 5. Link the PR to the original issue
 
     print("Fix submitted successfully!")
+
 
 if __name__ == "__main__":
     monitor_repair_issues()
