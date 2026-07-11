@@ -15,10 +15,11 @@ jobs:
     
     - name: Install system dependencies
       run: |
-        sudo apt-get update
+        # Removed 'sudo' since Gitea runner containers execute as root by default
+        apt-get update
         
         # Install Python 3.11, Flatpak builder, and all GTK/GStreamer dependencies natively
-        sudo apt-get install -y \
+        apt-get install -y \
           python3.11 python3.11-venv python3-pip \
           xvfb \
           flatpak flatpak-builder \
@@ -36,7 +37,7 @@ jobs:
           gcc
           
         # Ensure 'python3' points to the newly installed Python 3.11 environment
-        sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
+        update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
     
     - name: Install Python dependencies
       run: |
@@ -45,27 +46,22 @@ jobs:
     
     - name: Lint codebase
       run: |
-        # Using '|| true' ensures the pipeline proceeds to run tests and generates a complete report for Hermes
         black --check src/ tests/ || true
         flake8 src/ tests/ --max-line-length=120 || true
     
     - name: Run tests with xvfb
       id: run_tests
       run: |
-        # Run tests headlessly and pipe output to a log file for the AI agent
         PYTHONPATH=. xvfb-run --auto-servernum pytest tests/ -v --tb=short > test_report.log
     
     - name: Build Flatpak
       run: |
-        # Add the flathub remote so flatpak-builder can resolve base runtimes/SDKs on a fresh runner
         flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
         flatpak-builder --force-clean --repo=repo build_dir tech.livingonlinux.gnostr.json
         
     - name: Dispatch Hermes AI Repair Webhook
       if: failure()
       run: |
-        # If tests or the build fail, send the encoded log to your local orchestration agent
-        # The touch command ensures the file exists even if the pipeline crashed before the test step
         touch test_report.log 
         
         curl -X POST http://your-hermes-agent-url:8080/webhook/repair \
