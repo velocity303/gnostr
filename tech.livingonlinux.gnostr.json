@@ -4,6 +4,14 @@
     "runtime-version": "50",
     "sdk": "org.gnome.Sdk",
     "command": "gnostr",
+    "add-extensions": {
+        "org.freedesktop.Platform.ffmpeg-full": {
+            "directory": "lib/ffmpeg",
+            "version": "24.08",
+            "add-ld-path": ".",
+            "autodownload": true
+        }
+    },
     "finish-args": [
         "--share=network",
         "--share=ipc",
@@ -12,6 +20,7 @@
         "--socket=wayland",
         "--talk-name=org.freedesktop.secrets",
         "--env=PYTHONPATH=/app/lib/python3.12/site-packages",
+        "--env=GST_PLUGIN_SYSTEM_PATH=/app/lib/gstreamer-1.0:/usr/lib/aarch64-linux-gnu/gstreamer-1.0",
         "--env=GST_VAAPI_ALL_DRIVERS=1"
     ],
     "cleanup": [
@@ -23,6 +32,9 @@
         "/share/man",
         "*.la",
         "*.a"
+    ],
+    "cleanup-commands": [
+        "mkdir -p /app/lib/ffmpeg"
     ],
     "build-options": {
         "env": {
@@ -46,7 +58,6 @@
                 }
             ]
         },
-
         {
             "name": "pluggy",
             "buildsystem": "simple",
@@ -89,7 +100,7 @@
                 }
             ]
         },
-	{
+        {
             "name": "six",
             "buildsystem": "simple",
             "build-commands": [
@@ -103,7 +114,6 @@
                 }
             ]
         },
-
         {
             "name": "python3-websocket-client",
             "buildsystem": "simple",
