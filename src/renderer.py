@@ -6,6 +6,7 @@ import threading
 import concurrent.futures
 from urllib.parse import urlparse
 import traceback
+import subprocess
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
@@ -87,6 +88,10 @@ class ContentRenderer:
                         ContentRenderer._add_image(box, clean_part, window_ref)
                     elif ContentRenderer.is_video_url(clean_part):
                         ContentRenderer._add_video(box, clean_part, window_ref)
+                    elif "youtube.com/watch" in clean_part or "youtu.be/" in clean_part:
+                        # Resolve the YouTube link to a raw MP4 stream
+                        raw_stream_url = get_youtube_stream(clean_part)
+                        ContentRenderer._add_video(box, raw_stream_url, window_ref)
                     else:
                         ContentRenderer._add_link(box, clean_part)
                         
@@ -299,6 +304,18 @@ def _launch_ext(win, s):
     try: Gtk.UriLauncher(uri=f"https://njump.me/{s}").launch(win, None, None)
     except: pass
 
+def get_youtube_stream(url):
+    """Extract direct stream URL from YouTube link using yt-dlp."""
+    try:
+        result = subprocess.run(
+            ["yt-dlp", "-g", "-f", "best[ext=mp4]", url],
+            capture_output=True, text=True, check=True
+        )
+        return result.stdout.strip()
+    except subprocess.CalledProcessError as e:
+        print(f"Failed to resolve YouTube URL: {e}")
+        return url
+
 class ImageLoader:
     _executor = concurrent.futures.ThreadPoolExecutor(max_workers=16)
     _cache = {}
@@ -444,18 +461,13 @@ class VideoPlayer:
 
         video = None
         try:
-            # Force color space conversion for mobile compatibility
             pipeline = Gst.parse_launch(
                 f"uridecodebin uri={url} ! "
-                f"videoconvert ! "
-                f"video/x-raw,format=RGBA ! "
-                f"videoscale ! "
-                f"gtk4paintablesink name=vsink"
+                f"videoconvert ! videoscale ! "
+                f"queue ! gtk4paintablesink name=vsink"
             )
             
             vsink = pipeline.get_by_name("vsink")
-            pipeline.set_property("mute", True)
-            
             paintable = vsink.get_property("paintable")
             video = Gtk.Picture()
             video.set_paintable(paintable)
@@ -467,30 +479,21 @@ class VideoPlayer:
             video.set_hexpand(False)
             video.set_can_shrink(True)
 
-            # --- NEW: GStreamer Bus Watcher for Looping & Errors ---
+            # GStreamer Bus Watcher for Looping & Errors
             bus = pipeline.get_bus()
             bus.add_signal_watch()
             
             def on_bus_message(bus, msg, p=pipeline, media_url=url):
                 if msg.type == Gst.MessageType.EOS:
-                    # Catch End-Of-Stream and seek to 0 to loop infinitely
                     p.seek_simple(Gst.Format.TIME, Gst.SeekFlags.FLUSH, 0)
                 elif msg.type == Gst.MessageType.ERROR:
                     err, debug = msg.parse_error()
                     print(f"\n❌ [Media Codec Error] {media_url}\n   -> {err.message}")
                     
             bus.connect("message", on_bus_message)
-            video._bus = bus # Bind bus to widget to keep listener alive
-            # -------------------------------------------------------
-            
-            click_gesture = Gtk.GestureClick.new()
-            def on_video_click(gesture, n_press, x, y, p=pipeline):
-                current_mute = p.get_property("mute")
-                p.set_property("mute", not current_mute)
-                
-            click_gesture.connect("pressed", on_video_click)
-            video.add_controller(click_gesture)
+            video._bus = bus 
 
+            # Start playback
             pipeline.set_state(Gst.State.PLAYING)
             
         except Exception as e:
