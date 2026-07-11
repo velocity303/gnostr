@@ -66,8 +66,10 @@ jobs:
         COMMIT_SHA="${{ github.sha }}"
         TEST_REPORT=$(cat test_report.log)
 
-        # Create issue via Gitea API using HOST and TOKEN secrets
-        curl -X POST "https://${{ secrets.HOST }}/api/v1/repos/${REPO_PATH}/issues" \
+        # Create issue via Gitea API (HTTP on port 3000)
+        # Format: http://{host}:3000/api/v1/repos/{owner}/{repo}/issues
+        # Authentication: Authorization header with token
+        curl -X POST "http://${{ secrets.HOST }}:3000/api/v1/repos/${REPO_PATH}/issues" \
           -H "Authorization: token ${{ secrets.TOKEN }}" \
           -H "Content-Type: application/json" \
           -d "{\"title\": \"CI Failure: Repair needed for $BRANCH\", \"body\": \"## CI Repair Request\n\nRepository: $REPO_PATH\nBranch: $BRANCH\nCommit: $COMMIT_SHA\n\n### Test Report\n\`\`\`\n$TEST_REPORT\n\`\`\`\n\n### Instructions for Repair Agent\n1. Analyze the test failures in the report above\n2. Identify the root cause\n3. Create a fix that addresses the failing tests\n4. Submit a PR to branch $BRANCH with the fix\n5. Ensure all tests pass before submitting\n\n### Labels to Add\n- needs-repair\n- ci-failure\n\n---\n*This issue was automatically created by the CI pipeline.*\", \"labels\": [\"needs-repair\", \"ci-failure\"]}"
