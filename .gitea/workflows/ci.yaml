@@ -9,15 +9,16 @@ on:
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
-    # CRITICAL: Force Gitea to use a modern Ubuntu container with GTK4/Libadwaita repos
-    container: ubuntu:22.04
+    # FIXED: Using a container image that has Node pre-installed so actions work,
+    # but uses a modern Ubuntu base so our apt-get dependencies resolve perfectly.
+    container: catthehacker/ubuntu:act-22.04
     
     steps:
-    - uses: actions/checkout@v4
+    - name: Check out repository code
+      uses: actions/checkout@v4
     
     - name: Install system dependencies
       run: |
-        # Prevent interactive prompts from halting apt during build
         export DEBIAN_FRONTEND=noninteractive
         apt-get update
         
@@ -65,6 +66,7 @@ jobs:
       run: |
         touch test_report.log 
         
+        # Be sure to swap this with your actual Hermes instance/network orchestration endpoint
         curl -X POST http://192.168.5.134:8080/webhook/repair \
         -H "Content-Type: application/json" \
         -d '{
