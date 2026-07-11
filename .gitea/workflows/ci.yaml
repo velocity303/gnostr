@@ -9,8 +9,6 @@ on:
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
-    # FIXED: Using a container image that has Node pre-installed so actions work,
-    # but uses a modern Ubuntu base so our apt-get dependencies resolve perfectly.
     container: catthehacker/ubuntu:act-22.04
     
     steps:
@@ -22,9 +20,9 @@ jobs:
         export DEBIAN_FRONTEND=noninteractive
         apt-get update
         
-        # Install Python 3, Flatpak, and modern GTK4/GStreamer stacks
+        # Added pkg-config to ensure PyGObject pip installation compiles cleanly
         apt-get install -y \
-          python3 python3-venv python3-pip \
+          python3 python3-venv python3-pip pkg-config \
           xvfb \
           flatpak flatpak-builder \
           libgtk-4-dev \
@@ -56,17 +54,13 @@ jobs:
       run: |
         PYTHONPATH=. xvfb-run --auto-servernum pytest tests/ -v --tb=short > test_report.log
     
-    - name: Build Flatpak
-      run: |
-        flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-        flatpak-builder --force-clean --repo=repo build_dir tech.livingonlinux.gnostr.json
-        
     - name: Dispatch Hermes AI Repair Webhook
-      if: failure()
+      # CRITICAL FIX: Only trigger Hermes if the *tests* specifically failed.
+      if: failure() && steps.run_tests.outcome == 'failure'
       run: |
         touch test_report.log 
         
-        # Be sure to swap this with your actual Hermes instance/network orchestration endpoint
+        # Webhook explicitly targeting your local network orchestration endpoint
         curl -X POST http://192.168.5.134:8080/webhook/repair \
         -H "Content-Type: application/json" \
         -d '{
@@ -75,3 +69,10 @@ jobs:
           "commit_sha": "${{ github.sha }}",
           "report": "'"$(cat test_report.log | base64)"'"
         }'
+
+    - name: Build Flatpak
+      # Only deploy the package if the codebase passed all testing constraints
+      if: success()
+      run: |
+        flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+        flatpak-builder --force-clean --repo=repo build_dir tech.livingonlinux.gnostr.json
