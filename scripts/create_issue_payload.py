@@ -32,11 +32,10 @@ Commit: {commit_sha}
 *This issue was automatically created by the CI pipeline.*
 '''
     
-    # Use labels_names instead of labels
+    # Remove labels to avoid API issues
     payload = {
         'title': f'CI Failure: Repair needed for {branch}',
         'body': body,
-        'labels_names': ['needs-repair', 'ci-failure']
     }
     
     print(json.dumps(payload, ensure_ascii=False))
