@@ -444,11 +444,16 @@ class VideoPlayer:
 
         video = None
         try:
-            pipeline = Gst.ElementFactory.make("playbin", "player")
-            pipeline.set_property("uri", url)
+            # Force color space conversion for mobile compatibility
+            pipeline = Gst.parse_launch(
+                f"uridecodebin uri={url} ! "
+                f"videoconvert ! "
+                f"video/x-raw,format=RGBA ! "
+                f"videoscale ! "
+                f"gtk4paintablesink name=vsink"
+            )
             
-            vsink = Gst.ElementFactory.make("gtk4paintablesink", "vsink")
-            pipeline.set_property("video-sink", vsink)
+            vsink = pipeline.get_by_name("vsink")
             pipeline.set_property("mute", True)
             
             paintable = vsink.get_property("paintable")

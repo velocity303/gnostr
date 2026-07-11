@@ -11,7 +11,8 @@
         "--device=dri",
         "--socket=wayland",
         "--talk-name=org.freedesktop.secrets",
-        "--env=PYTHONPATH=/app/lib/python3.12/site-packages"
+        "--env=PYTHONPATH=/app/lib/python3.12/site-packages",
+        "--env=GST_VAAPI_ALL_DRIVERS=1"
     ],
     "cleanup": [
         "/include",
