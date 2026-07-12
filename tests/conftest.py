@@ -18,7 +18,7 @@ mock_gst.parse_error.return_value = (Mock(message="test error"), "debug")
 
 mock_gtk = Mock()
 mock_box_instance = Mock()
-mock_box_instance.get_children.return_value = []
+mock_box_instance.get_children.return_value = [Mock()]  # Return non-empty list
 mock_box_instance.append.return_value = None
 mock_gtk.Box.return_value = mock_box_instance
 mock_gtk.Picture.return_value = Mock()
