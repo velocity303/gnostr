@@ -1,26 +1,34 @@
-import sys
-from pathlib import Path
-from unittest.mock import MagicMock
+"""
+Global test configuration and fixtures.
+"""
 
 import pytest
+from unittest.mock import MagicMock, patch, Mock
+import gi
 
-# Add project root to sys.path
-PROJECT_ROOT = Path(__file__).parent.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-
-@pytest.fixture(scope="function")
-def mock_db():
-    """Provides a fresh instance of the DatabaseGateway."""
-    mock = MagicMock()
-    mock.find_events.return_value = []
-    return mock
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Gtk, Adw, Gst
 
 
-@pytest.fixture(scope="function")
-def mock_kv():
-    """Provides a fresh instance of the KeyValueStore."""
-    mock = MagicMock()
-    mock.get_key.return_value = None
-    return mock
+@pytest.fixture(scope="module", autouse=True)
+def mock_renderer_modules():
+    """Mock GStreamer and GTK before renderer module is imported."""
+    # Patch the src.renderer module's Gst and Gtk before any import
+    with patch("src.renderer.Gst") as mock_gst, patch("src.renderer.Gtk") as mock_gtk:
+        mock_gst.parse_launch.return_value = Mock()
+        mock_gst.State = Mock(PLAYING=1)
+        mock_gst.Format = Mock(TIME=1)
+        mock_gst.SeekFlags = Mock(FLUSH=1)
+        mock_gst.MessageType = Mock(EOS=1, ERROR=2)
+        mock_gst.parse_error.return_value = (Mock(message="test error"), "debug")
+
+        # Mock Gtk.Box to have get_children() method for GTK4 compatibility
+        mock_box_instance = Mock()
+        mock_box_instance.get_children.return_value = []
+        mock_box_instance.append.return_value = None
+        mock_gtk.Box.return_value = mock_box_instance
+
+        mock_gtk.Picture.return_value = Mock()
+        mock_gtk.Spinner.return_value = Mock()
+        yield mock_gst, mock_gtk
