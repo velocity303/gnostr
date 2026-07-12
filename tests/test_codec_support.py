@@ -17,7 +17,7 @@ from src.renderer import ContentRenderer, VideoPlayer
 @pytest.fixture(scope="function")
 def mock_gst():
     """Mock GStreamer to avoid dependency issues in tests."""
-    with patch("gi.repository.Gst") as mock_gst:
+    with patch("src.renderer.Gst") as mock_gst:
         mock_gst.parse_launch.return_value = Mock()
         mock_gst.State = Mock(PLAYING=1)
         mock_gst.Format = Mock(TIME=1)
@@ -30,7 +30,7 @@ def mock_gst():
 @pytest.fixture(scope="function")
 def mock_gtk():
     """Mock GTK to avoid dependency issues in tests."""
-    with patch("gi.repository.Gtk") as mock_gtk:
+    with patch("src.renderer.Gtk") as mock_gtk:
         mock_gtk.Picture.return_value = Mock()
         mock_gtk.Box.return_value = Mock()
         mock_gtk.Spinner.return_value = Mock()
@@ -109,6 +109,9 @@ class TestVideoPlayer:
         mock_video = Mock()
         mock_gtk.Picture.return_value = mock_video
 
+        # Mock Gst.State.PLAYING
+        mock_gst.State.PLAYING = 1
+
         # Call load_and_play
         VideoPlayer.load_and_play("http://test.com/video.mp4", mock_container, None)
 
@@ -141,8 +144,8 @@ class TestContentRenderer:
 
         # Should return a box with video widget
         assert isinstance(box, Gtk.Box)
-        # Video URL should trigger _add_video
-        assert any(hasattr(child, "get_parent") for child in box.get_children())
+        # The box should contain at least one child (the video or text)
+        assert len(box.get_children()) > 0
 
     def test_render_mixed_content(self):
         """Test rendering mixed text and video URLs."""

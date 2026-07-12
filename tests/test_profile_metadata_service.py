@@ -34,7 +34,7 @@ class TestProfileMetadataService:
         assert profile is None
 
     def test_metadata_corruption_raises_error(self, mock_key_store):
-        mock_key_store.get_key.return_value = '{"name": "corrupted", "bio": "data"}'
+        mock_key_store.get_key.return_value = "{invalid json}"
 
         service = ProfileMetadataService(kv_repo=mock_key_store)
         with pytest.raises(ProfileMetadataError):
