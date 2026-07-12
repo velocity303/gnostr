@@ -8,6 +8,7 @@ on:
 
 env:
   GITEA_HOST: 192.168.5.134
+  GITEA_URL: http://${{ env.GITEA_HOST }}:3000
 
 jobs:
   lint-and-test:
@@ -17,21 +18,20 @@ jobs:
       network_mode: host
 
     steps:
+    - name: Test connectivity to Gitea
+      run: |
+        curl -f ${GITEA_URL}/api/v1/user || echo "Gitea not accessible"
+
     - name: Check out repository code
-      uses: actions/checkout@v4
-      with:
-        repository: VelocityNet/gnostr
-        token: ${{ secrets.GITHUB_TOKEN }}
-        fetch-depth: 0
+      run: |
+        git clone ${GITEA_URL}/VelocityNet/gnostr.git /workspace/gnostr
+        cd /workspace/gnostr
+        git config --global url."https://${{ secrets.TOKEN }}@${{ env.GITEA_HOST }}".insteadOf "http://${{ env.GITEA_HOST }}/"
 
     - name: Configure git
       run: |
-        git config --global url."https://${{ secrets.TOKEN }}@${{ env.GITEA_HOST }}".insteadOf "http://${{ env.GITEA_HOST }}/"
-        git remote set-url origin "https://${{ env.GITEA_HOST }}/VelocityNet/gnostr"
-
-    - name: Test connectivity to Gitea
-      run: |
-        curl -f http://${{ env.GITEA_HOST }}:3000/api/v1/user || echo "Gitea not accessible"
+        cd /workspace/gnostr
+        git remote set-url origin ${GITEA_URL}/VelocityNet/gnostr
 
     - name: Install system dependencies
       run: |
@@ -59,21 +59,25 @@ jobs:
 
     - name: Install Python dependencies
       run: |
+        cd /workspace/gnostr
         python3 -m pip install --upgrade pip
         python3 -m pip install -e .
 
     - name: Install test tools
       run: |
+        cd /workspace/gnostr
         python3 -m pip install pytest black flake8 PyGObject
 
     - name: Lint codebase
       run: |
+        cd /workspace/gnostr
         black --check src/ tests/ || true
         flake8 src/ tests/ --max-line-length=120 || true
 
     - name: Run tests with xvfb
       id: run_tests
       run: |
+        cd /workspace/gnostr
         PYTHONPATH=. xvfb-run --auto-servernum pytest tests/ -v --tb=short > test_report.log
 
     - name: Create Repair Issue on Failure
@@ -91,7 +95,7 @@ jobs:
         python3 scripts/create_issue_payload.py > issue_payload.json
 
         # Submit the issue to Gitea API
-        curl -X POST "http://${{ env.GITEA_HOST }}:3000/api/v1/repos/VelocityNet/gnostr/issues" \
+        curl -X POST "${GITEA_URL}/api/v1/repos/VelocityNet/gnostr/issues" \
           -H "Authorization: token ${{ secrets.TOKEN }}" \
           -H "Content-Type: application/json" \
           -d @issue_payload.json
@@ -99,5 +103,6 @@ jobs:
     - name: Build Flatpak
       if: success()
       run: |
+        cd /workspace/gnostr
         flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
         flatpak-builder --force-clean --repo=repo build_dir tech.livingonlinux.gnostr.json
