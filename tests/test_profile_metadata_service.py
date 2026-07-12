@@ -34,7 +34,8 @@ class TestProfileMetadataService:
         assert profile is None
 
     def test_metadata_corruption_raises_error(self, mock_key_store):
-        mock_key_store.get_key.return_value = "{invalid json}"
+        # Use truly invalid JSON - missing quotes around keys
+        mock_key_store.get_key.return_value = "{invalid key: invalid value}"
 
         service = ProfileMetadataService(kv_repo=mock_key_store)
         with pytest.raises(ProfileMetadataError):

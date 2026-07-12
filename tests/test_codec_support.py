@@ -4,37 +4,45 @@ Comprehensive tests for codec support and video playback.
 
 import pytest
 from unittest.mock import MagicMock, patch, Mock
+"""
+Comprehensive tests for codec support and video playback.
+"""
+
+import pytest
+from unittest.mock import MagicMock, patch, Mock
 import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw, Gst
 
-# Import the modules under test
-from src.renderer import ContentRenderer, VideoPlayer
+# Import the modules under test AFTER setting up mocks
+# This ensures the renderer module imports with mocked GStreamer/ GTK
 
-
-@pytest.fixture(scope="function")
-def mock_gst():
-    """Mock GStreamer to avoid dependency issues in tests."""
-    with patch("src.renderer.Gst") as mock_gst:
+@pytest.fixture(scope="module", autouse=True)
+def mock_renderer_modules():
+    """Mock GStreamer and GTK before renderer module is imported."""
+    with patch("src.renderer.Gst") as mock_gst, \
+         patch("src.renderer.Gtk") as mock_gtk:
         mock_gst.parse_launch.return_value = Mock()
         mock_gst.State = Mock(PLAYING=1)
         mock_gst.Format = Mock(TIME=1)
         mock_gst.SeekFlags = Mock(FLUSH=1)
         mock_gst.MessageType = Mock(EOS=1, ERROR=2)
         mock_gst.parse_error.return_value = (Mock(message="test error"), "debug")
-        yield mock_gst
-
-
-@pytest.fixture(scope="function")
-def mock_gtk():
-    """Mock GTK to avoid dependency issues in tests."""
-    with patch("src.renderer.Gtk") as mock_gtk:
+        
+        # Mock Gtk.Box to have get_children() method for GTK4 compatibility
+        mock_box_instance = Mock()
+        mock_box_instance.get_children.return_value = []
+        mock_box_instance.append.return_value = None
+        mock_gtk.Box.return_value = mock_box_instance
+        
         mock_gtk.Picture.return_value = Mock()
-        mock_gtk.Box.return_value = Mock()
         mock_gtk.Spinner.return_value = Mock()
-        yield mock_gtk
+        yield mock_gst, mock_gtk
+
+# Import the modules under test AFTER mocks are in place
+from src.renderer import ContentRenderer, VideoPlayer
 
 
 @pytest.fixture(scope="function")
@@ -145,6 +153,7 @@ class TestContentRenderer:
         # Should return a box with video widget
         assert isinstance(box, Gtk.Box)
         # The box should contain at least one child (the video or text)
+        # GTK4 uses append() but children are accessed via get_children()
         assert len(box.get_children()) > 0
 
     def test_render_mixed_content(self):
