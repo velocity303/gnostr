@@ -9,7 +9,9 @@ on:
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
-    container: catthehacker/ubuntu:act-22.04
+    container:
+      image: catthehacker/ubuntu:act-22.04
+      network_mode: host
 
     steps:
     - name: Check out repository code
