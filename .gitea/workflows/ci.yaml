@@ -9,4 +9,5 @@ jobs:
       - run: |
           apt-get update && apt-get install -y python3-pip
           pip3 install pytest
-          PYTHONPATH=. python3 -m pytest tests/ -v --tb=short
+          pip3 install -e .
+          python3 -m pytest tests/ -v --tb=short
