@@ -1,7 +1,5 @@
 from enum import Enum
 
-
-
 class ConnectionStatus(Enum):
     """Type-safe representation of connection states."""
 
