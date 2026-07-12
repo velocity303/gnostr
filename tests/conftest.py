@@ -4,8 +4,10 @@ Global test configuration and fixtures.
 
 import sys
 from unittest.mock import Mock, MagicMock
+import pytest
 
-# Create mock for Gst
+
+# Set up mocks BEFORE any test imports
 mock_gst = Mock()
 mock_gst.parse_launch.return_value = Mock()
 mock_gst.State = Mock(PLAYING=1)
@@ -14,7 +16,6 @@ mock_gst.SeekFlags = Mock(FLUSH=1)
 mock_gst.MessageType = Mock(EOS=1, ERROR=2)
 mock_gst.parse_error.return_value = (Mock(message="test error"), "debug")
 
-# Create mock for Gtk
 mock_gtk = Mock()
 mock_box_instance = Mock()
 mock_box_instance.get_children.return_value = []
@@ -23,7 +24,6 @@ mock_gtk.Box.return_value = mock_box_instance
 mock_gtk.Picture.return_value = Mock()
 mock_gtk.Spinner.return_value = Mock()
 
-# Patch sys.modules BEFORE any test imports
 mock_gi = Mock()
 mock_gi.require_version = lambda x, y: None
 mock_gi.Gst = mock_gst
