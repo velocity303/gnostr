@@ -2,7 +2,7 @@
 name = "gnostr"
 version = "0.1.0"
 description = "A Nostr client for GNOME"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = [
     "ecdsa",
     "websocket-client",
@@ -35,7 +35,7 @@ exclude = '''
 line-length = 88
 target-version = "py311"
 lint.select = ["E", "F", "I", "N", "UP", "B", "C4", "DTZ", "EXE", "G", "PGH", "SIM", "TID", "ERA", "PERF", "RSE", "PYI", "SLOT", "FLY", "ANN", "ARG", "PTH", "PIE", "PT", "Q", "RSE", "RUF", "T20", "UP"]
-lint.ignore = ["SIM105", "RUF001", "RUF002", "RUF003", "B008", "ANN101", "ANN102", "ARG001", "ARG002", "PT011", "RUF012"]
+lint.ignore = ["SIM105", "RUF001", "RUF000", "RUF003", "B008", "ANN101", "ANN102", "ARG001", "ARG002", "PT011", "RUF012"]
 lint.per-file-ignores = {"__init__.py" = ["F401"], "tests/*" = ["ANN201", "ANN202", "S101"]}
 
 [tool.mypy]
