@@ -50,6 +50,10 @@ jobs:
     - name: Install Python dependencies
       run: |
         python3 -m pip install --upgrade pip
+        python3 -m pip install -e .
+
+    - name: Install test tools
+      run: |
         python3 -m pip install pytest black flake8 PyGObject
 
     - name: Lint codebase
