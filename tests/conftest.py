@@ -2,18 +2,14 @@
 Global test configuration and fixtures.
 """
 
-import sys
-from unittest.mock import Mock
-import gi
-
-gi.require_version("Gtk", "4.0")
-gi.require_version("Adw", "1")
-from gi.repository import Gtk, Adw, Gst
+import pytest
+from unittest.mock import Mock, MagicMock
 
 
-# Pre-import patching: ensure src.renderer imports with mocked Gst/Gtk
-def _setup_renderer_mocks():
+@pytest.fixture(scope="module", autouse=True)
+def mock_renderer_modules(monkeypatch):
     """Mock GStreamer and GTK before renderer module is imported."""
+    # Create mock for Gst
     mock_gst = Mock()
     mock_gst.parse_launch.return_value = Mock()
     mock_gst.State = Mock(PLAYING=1)
@@ -22,6 +18,7 @@ def _setup_renderer_mocks():
     mock_gst.MessageType = Mock(EOS=1, ERROR=2)
     mock_gst.parse_error.return_value = (Mock(message="test error"), "debug")
 
+    # Create mock for Gtk
     mock_gtk = Mock()
     mock_box_instance = Mock()
     mock_box_instance.get_children.return_value = []
@@ -30,16 +27,30 @@ def _setup_renderer_mocks():
     mock_gtk.Picture.return_value = Mock()
     mock_gtk.Spinner.return_value = Mock()
 
-    sys.modules['src.renderer.Gst'] = mock_gst
-    sys.modules['src.renderer.Gtk'] = mock_gtk
+    # Patch sys.modules
+    mock_gi = Mock()
+    mock_gi.require_version = lambda x, y: None
+    mock_gi.Gst = mock_gst
+    mock_gi.Gtk = mock_gtk
 
-    return mock_gst, mock_gtk
+    import sys
+    sys.modules["gi.repository"] = mock_gi
+    sys.modules["gi"] = mock_gi
+
+    # Patch src.renderer
+    sys.modules["src.renderer.Gst"] = mock_gst
+    sys.modules["src.renderer.Gtk"] = mock_gtk
+
+    yield mock_gst, mock_gtk
 
 
-# Run setup immediately
-mock_gst, mock_gtk = _setup_renderer_mocks()
+@pytest.fixture
+def mock_db():
+    """Provides a mock database repository."""
+    return MagicMock()
 
 
-def pytest_configure():
-    """Register the mock modules with pytest."""
-    pass
+@pytest.fixture
+def mock_kv():
+    """Provides a mock key-value store."""
+    return MagicMock()
