@@ -29,10 +29,10 @@ mock_gi.require_version = lambda x, y: None
 mock_gi.Gst = mock_gst
 mock_gi.Gtk = mock_gtk
 
+# Patch the actual import path used by renderer.py
+sys.modules["gi.repository.Gtk"] = mock_gtk
 sys.modules["gi.repository"] = mock_gi
 sys.modules["gi"] = mock_gi
-sys.modules["src.renderer.Gst"] = mock_gst
-sys.modules["src.renderer.Gtk"] = mock_gtk
 
 
 @pytest.fixture
