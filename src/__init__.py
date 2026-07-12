@@ -1,1 +1,1 @@
-"""gnostr package."""
+# Empty to make src a package

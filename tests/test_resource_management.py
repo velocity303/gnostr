@@ -1,7 +1,9 @@
-import pytest
 from unittest.mock import MagicMock, patch
-from src.util.cache_manager import BoundedCacheManager
+
+import pytest
+
 from src.service.feed_service import FeedService
+from src.util.cache_manager import BoundedCacheManager
 
 
 @pytest.fixture(scope="function")

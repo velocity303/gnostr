@@ -1,6 +1,8 @@
-import pytest
 from unittest.mock import MagicMock, patch
-from src.gateway.gateway import DatabaseGateway, IEventRepository, IKeyValueStore
+
+import pytest
+
+from src.gateway.gateway import DatabaseGateway
 
 
 @pytest.fixture(scope="function")

@@ -18,9 +18,7 @@ except Exception as e:
     print(f"Failed to require Gst 1.0: {e}")
 from gi.repository import Gtk, Adw, GLib, Gdk, GdkPixbuf, Pango, Gst, Gio
 
-print(f"Gst module imported: {Gst.__name__}")
-print(f"Gtk.Video available: {hasattr(Gtk, 'Video')}")
-import gnostr.nostr_utils as nostr_utils
+from . import nostr_utils
 
 
 class ContentRenderer:

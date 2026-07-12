@@ -1,9 +1,11 @@
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
+
 from src.gateway.gateway import IKeyValueStore
 from src.service.profile_metadata_service import (
-    ProfileMetadataService,
     ProfileMetadataError,
+    ProfileMetadataService,
 )
 
 
@@ -13,7 +15,6 @@ def mock_key_store():
 
 
 class TestProfileMetadataService:
-
     def test_metadata_retrieval_success(self, mock_key_store):
         mock_key_store.get_key.return_value = '{"pubkey": "testpub", "name": "Jane Doe", "bio": "DevOps enthusiast.", "picture_url": "http://pic.com/jane"}'
 
@@ -33,7 +34,7 @@ class TestProfileMetadataService:
         assert profile is None
 
     def test_metadata_corruption_raises_error(self, mock_key_store):
-        mock_key_store.get_key.return_value = '{"name": "corrupted", "bio": "data"'
+        mock_key_store.get_key.return_value = '{"name": "corrupted", "bio": "data"}'
 
         service = ProfileMetadataService(kv_repo=mock_key_store)
         with pytest.raises(ProfileMetadataError):

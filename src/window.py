@@ -22,8 +22,7 @@
 #
 # SPDX-License-Identifier: MIT
 
-from gi.repository import Adw
-from gi.repository import Gtk
+from gi.repository import Adw, Gtk
 
 
 @Gtk.Template(resource_path="/me/velocitynet/gnostr/window.ui")

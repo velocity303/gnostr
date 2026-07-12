@@ -1,8 +1,7 @@
 # src/service/profile_service.py
 import json
-from typing import Optional, Dict
-from src.gateway.gateway import IKeyValueStore
 
+from src.gateway.gateway import IKeyValueStore
 from src.service.profile_metadata_service import ProfileMetadataService
 
 
@@ -12,7 +11,7 @@ class ProfileService:
         self._db = db_repo
         self._metadata_service = ProfileMetadataService(kv_repo=kv_repo)
 
-    def get_full_profile(self, pubkey: str) -> Optional[Dict]:
+    def get_full_profile(self, pubkey: str) -> dict | None:
         metadata = self._metadata_service.get_metadata(pubkey)
         if metadata is None:
             return None
@@ -27,5 +26,5 @@ class ProfileService:
         full_view["recent_posts"] = recent_posts
         return full_view
 
-    def _save_profile_data(self, pubkey: str, data: Dict):
+    def _save_profile_data(self, pubkey: str, data: dict):
         self._kv.set_key(f"profile:{pubkey}", json.dumps(data))

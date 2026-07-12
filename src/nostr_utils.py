@@ -1,7 +1,6 @@
-import binascii
-import time
-import json
 import hashlib
+import json
+
 import ecdsa
 
 

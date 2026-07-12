@@ -1,5 +1,7 @@
+from unittest.mock import MagicMock
+
 import pytest
-from unittest.mock import MagicMock, patch
+
 from src.service.profile_service import ProfileService
 
 
