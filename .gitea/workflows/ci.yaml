@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  GITEA_HOST: 192.168.5.134
+
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
@@ -23,8 +26,12 @@ jobs:
 
     - name: Configure git
       run: |
-        git config --global url."https://${{ secrets.TOKEN }}@${{ secrets.HOST }}/".insteadOf "http://${{ secrets.HOST }}/"
-        git remote set-url origin "https://${{ secrets.HOST }}/VelocityNet/gnostr"
+        git config --global url."https://${{ secrets.TOKEN }}@${{ env.GITEA_HOST }}".insteadOf "http://${{ env.GITEA_HOST }}/"
+        git remote set-url origin "https://${{ env.GITEA_HOST }}/VelocityNet/gnostr"
+
+    - name: Test connectivity to Gitea
+      run: |
+        curl -f http://${{ env.GITEA_HOST }}:3000/api/v1/user || echo "Gitea not accessible"
 
     - name: Install system dependencies
       run: |
@@ -84,7 +91,7 @@ jobs:
         python3 scripts/create_issue_payload.py > issue_payload.json
 
         # Submit the issue to Gitea API
-        curl -X POST "http://${{ secrets.HOST }}:3000/api/v1/repos/VelocityNet/gnostr/issues" \
+        curl -X POST "http://${{ env.GITEA_HOST }}:3000/api/v1/repos/VelocityNet/gnostr/issues" \
           -H "Authorization: token ${{ secrets.TOKEN }}" \
           -H "Content-Type: application/json" \
           -d @issue_payload.json
