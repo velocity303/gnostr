@@ -5,7 +5,7 @@ Comprehensive tests for codec support and video playback.
 import pytest
 from unittest.mock import Mock
 
-# Import AFTER conftest fixtures are loaded
+# Import the modules under test AFTER conftest fixtures are loaded
 from src.renderer import ContentRenderer, VideoPlayer
 
 
@@ -68,8 +68,10 @@ class TestCodecSupport:
 class TestVideoPlayer:
     """Tests for VideoPlayer functionality."""
 
-    def test_load_and_play_success(self, mock_gst, mock_gtk, mock_container):
+    def test_load_and_play_success(self, mock_container, mock_renderer_modules):
         """Test successful video player initialization."""
+        mock_gst, mock_gtk = mock_renderer_modules
+
         # Mock pipeline and bus
         mock_pipeline = Mock()
         mock_bus = Mock()
@@ -93,8 +95,10 @@ class TestVideoPlayer:
         # Verify pipeline state was set to PLAYING
         mock_pipeline.set_state.assert_called_with(1)
 
-    def test_load_and_play_failure(self, mock_gst, mock_gtk, mock_container):
+    def test_load_and_play_failure(self, mock_container, mock_renderer_modules):
         """Test video player initialization failure."""
+        mock_gst, mock_gtk = mock_renderer_modules
+
         # Force parse_launch to raise
         mock_gst.parse_launch.side_effect = Exception("Test error")
 
@@ -108,35 +112,35 @@ class TestVideoPlayer:
 class TestContentRenderer:
     """Tests for content rendering with video support."""
 
-    def test_render_video_url(self, mock_gst, mock_gtk):
+    def test_render_video_url(self, mock_renderer_modules):
         """Test rendering a video URL in content."""
         content = "Check this out: https://example.com/video.mp4"
         window_ref = Mock()
         box = ContentRenderer.render(content, window_ref)
 
         # Should return a box with video widget
-        assert isinstance(box, Mock)  # Box is mocked in conftest
+        # The mock_gtk.Box is used, so it's a Mock
+        assert isinstance(box, Mock)
         # The box should contain at least one child (the video or text)
-        # GTK4 uses append() but children are accessed via get_children()
         assert len(box.get_children()) > 0
 
-    def test_render_mixed_content(self, mock_gst, mock_gtk):
+    def test_render_mixed_content(self, mock_renderer_modules):
         """Test rendering mixed text and video URLs."""
         content = "Text before https://example.com/video.mp4 text after"
         window_ref = Mock()
         box = ContentRenderer.render(content, window_ref)
 
-        assert isinstance(box, Mock)  # Box is mocked in conftest
+        assert isinstance(box, Mock)
 
-    def test_render_no_video(self, mock_gst, mock_gtk):
+    def test_render_no_video(self, mock_renderer_modules):
         """Test rendering content without video URLs."""
         content = "Just plain text"
         window_ref = Mock()
         box = ContentRenderer.render(content, window_ref)
 
-        assert isinstance(box, Mock)  # Box is mocked in conftest
+        assert isinstance(box, Mock)
 
-    def test_render_with_profile_video(self, mock_gst, mock_gtk):
+    def test_render_with_profile_video(self, mock_renderer_modules):
         """Test rendering profile picture that is a video."""
         profile = {"picture": "https://example.com/animated.gif", "name": "Test User"}
         window_ref = Mock()
@@ -146,4 +150,4 @@ class TestContentRenderer:
         # Simulate profile card rendering
         box = ContentRenderer.render("Test", window_ref)
 
-        assert isinstance(box, Mock)  # Box is mocked in conftest
+        assert isinstance(box, Mock)
