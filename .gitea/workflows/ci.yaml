@@ -78,7 +78,7 @@ jobs:
         
         # Submit the issue to Gitea API
         curl -X POST "http://${{ secrets.HOST }}:3000/api/v1/repos/VelocityNet/gnostr/issues" \
-          -H "Authorization: token *** secrets.TOKEN }}" \
+          -H "Authorization: token ${{ secrets.TOKEN }}" \
           -H "Content-Type: application/json" \
           -d @issue_payload.json
 
