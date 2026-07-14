@@ -1,8 +1,8 @@
 # src/service/profile_service.py
 import json
 
-from src.gateway.gateway import IKeyValueStore
-from src.service.profile_metadata_service import ProfileMetadataService
+from ..gateway.gateway import IKeyValueStore
+from .profile_metadata_service import ProfileMetadataService
 
 
 class ProfileService:

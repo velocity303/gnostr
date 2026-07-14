@@ -2,7 +2,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.service.profile_service import ProfileService
+from gnostr.service.profile_service import ProfileService
 
 
 @pytest.fixture(scope="function")

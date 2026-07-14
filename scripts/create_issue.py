@@ -1,25 +1,27 @@
 #!/usr/bin/env python3
 """Create a Gitea issue with proper JSON escaping."""
+
 import json
 import os
 import sys
 from pathlib import Path
 
+
 def main():
     # Get environment variables
-    repo_path = os.environ.get('REPO_PATH', 'VelocityNet/gnostr')
-    branch = os.environ.get('BRANCH', 'main')
-    commit_sha = os.environ.get('COMMIT_SHA', 'unknown')
-    
+    repo_path = os.environ.get("REPO_PATH", "VelocityNet/gnostr")
+    branch = os.environ.get("BRANCH", "main")
+    commit_sha = os.environ.get("COMMIT_SHA", "unknown")
+
     # Read test report from file
-    test_report_file = Path('test_report.log')
+    test_report_file = Path("test_report.log")
     if test_report_file.exists():
         test_report = test_report_file.read_text()
     else:
         test_report = "No test report available"
-    
+
     # Build the body with proper escaping
-    body = f'''## CI Repair Request
+    body = f"""## CI Repair Request
 
 Repository: {repo_path}
 Branch: {branch}
@@ -43,17 +45,18 @@ Commit: {commit_sha}
 
 ---
 *This issue was automatically created by the CI pipeline.*
-'''
-    
+"""
+
     # Build the payload
     payload = {
-        'title': f'CI Failure: Repair needed for {branch}',
-        'body': body,
-        'labels': ['needs-repair', 'ci-failure']
+        "title": f"CI Failure: Repair needed for {branch}",
+        "body": body,
+        "labels": ["needs-repair", "ci-failure"],
     }
-    
+
     # Output JSON
     print(json.dumps(payload, ensure_ascii=False))
+
 
 if __name__ == "__main__":
     main()

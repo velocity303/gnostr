@@ -2,8 +2,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.service.feed_service import FeedService
-from src.util.cache_manager import BoundedCacheManager
+from gnostr.service.feed_service import FeedService
+from gnostr.util.cache_manager import BoundedCacheManager
 
 
 @pytest.fixture(scope="function")
@@ -29,7 +29,7 @@ def test_cache_hit_on_global_fetch(feed_service, mock_event_repo, cache_manager)
     }
     cache_manager.set("global_feed:initial:20", cached_data, ttl_seconds=3600)
 
-    with patch("src.service.feed_service.CACHE", cache_manager):
+    with patch("gnostr.service.feed_service.CACHE", cache_manager):
         result = feed_service.get_paginated_global_feed(
             current_cursor="initial", page_size=20
         )
@@ -45,7 +45,7 @@ def test_cache_miss_and_successful_fetch(feed_service, mock_event_repo, cache_ma
     MOCK_SUCCESS_EVENTS = [{"id": "mock_event1", "content": "LIVE data"}]
     mock_event_repo.find_paginated_events.return_value = MOCK_SUCCESS_EVENTS
 
-    with patch("src.service.feed_service.CACHE", cache_manager):
+    with patch("gnostr.service.feed_service.CACHE", cache_manager):
         result = feed_service.get_paginated_global_feed(
             current_cursor="initial", page_size=20
         )
@@ -62,7 +62,7 @@ def test_cache_miss_and_successful_fetch(feed_service, mock_event_repo, cache_ma
 def test_expired_cache_forces_refetch(feed_service, mock_event_repo, cache_manager):
     cache_key = "global_feed:initial:20"
     initial_data = {"source": "live", "events": [], "cursor": None}
-    from src.util.cache_manager import CacheEntry
+    from gnostr.util.cache_manager import CacheEntry
 
     cache_manager._cache[cache_key] = CacheEntry(initial_data, ttl_seconds=0.01)
 
@@ -72,7 +72,7 @@ def test_expired_cache_forces_refetch(feed_service, mock_event_repo, cache_manag
 
     mock_event_repo.find_paginated_events.return_value = []
 
-    with patch("src.service.feed_service.CACHE", cache_manager):
+    with patch("gnostr.service.feed_service.CACHE", cache_manager):
         result = feed_service.get_paginated_global_feed(
             current_cursor="initial", page_size=20
         )

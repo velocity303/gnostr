@@ -1,7 +1,7 @@
 from typing import Dict, Any, List, Optional
 
 # 1. Import our new utility cache manager at the top level
-from src.util.cache_manager import CACHE
+from ..util.cache_manager import CACHE
 
 # We assume the gateway repository classes were updated to accept a CacheManager instance upon init for perfect coupling
 # For now, we'll pass it in manually during instantiation placeholder:

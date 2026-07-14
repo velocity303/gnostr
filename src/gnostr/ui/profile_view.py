@@ -3,9 +3,9 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw, Gdk
-from gnostr.ui.post_widget import PostWidget
-from gnostr.renderer import ContentRenderer, ImageLoader, VideoPlayer
-from gnostr.nostr_utils import hex_to_npub
+from .post_widget import PostWidget
+from ..renderer import ContentRenderer, ImageLoader, VideoPlayer
+from ..nostr_utils import hex_to_npub
 
 
 class ProfileView(Adw.Bin):

@@ -2,7 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.gateway.gateway import DatabaseGateway
+from gnostr.gateway.gateway import DatabaseGateway
 
 
 @pytest.fixture(scope="function")

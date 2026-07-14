@@ -2,8 +2,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.gateway.gateway import IKeyValueStore
-from src.service.profile_metadata_service import (
+from gnostr.gateway.gateway import IKeyValueStore
+from gnostr.service.profile_metadata_service import (
     ProfileMetadataError,
     ProfileMetadataService,
 )

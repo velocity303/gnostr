@@ -6,14 +6,14 @@ import time
 import gi
 import traceback
 import gnostr
-from gnostr.key_manager import KeyManager
-from gnostr.database import Database
-from gnostr.client import NostrClient
-from gnostr.renderer import ContentRenderer, ImageLoader
-from gnostr.dialogs import LoginDialog, RelayPreferencesWindow
-from gnostr.ui.sidebar import Sidebar
-from gnostr.ui.feed_view import FeedView
-from gnostr.ui.post_widget import PostWidget
+from .key_manager import KeyManager
+from .database import Database
+from .client import NostrClient
+from .renderer import ContentRenderer, ImageLoader
+from .dialogs import LoginDialog, RelayPreferencesWindow
+from .ui.sidebar import Sidebar
+from .ui.feed_view import FeedView
+from .ui.post_widget import PostWidget
 
 # Ensure package imports work when run as __main__
 if __name__ == "__main__":

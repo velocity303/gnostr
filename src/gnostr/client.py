@@ -5,7 +5,7 @@ import os
 from gi.repository import GObject, GLib
 import traceback
 import gnostr
-from gnostr.util.connection_state import ConnectionState
+from .util.connection_state import ConnectionState
 
 # Connection status definitions (Name, ColorCode)
 STATUS = {

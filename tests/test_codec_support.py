@@ -5,9 +5,6 @@ Comprehensive tests for codec support and video playback.
 import pytest
 from unittest.mock import Mock
 
-# Import the modules under test AFTER conftest fixtures are loaded
-from src.renderer import ContentRenderer, VideoPlayer
-
 
 @pytest.fixture(scope="function")
 def mock_container():
@@ -23,41 +20,57 @@ class TestCodecSupport:
 
     def test_is_video_url_mp4(self):
         """Test MP4 URL detection."""
+        from gnostr.renderer import ContentRenderer
+
         url = "https://example.com/video.mp4"
         assert ContentRenderer.is_video_url(url) is True
 
     def test_is_video_url_mov(self):
         """Test MOV URL detection."""
+        from gnostr.renderer import ContentRenderer
+
         url = "https://example.com/video.mov"
         assert ContentRenderer.is_video_url(url) is True
 
     def test_is_video_url_webm(self):
         """Test WebM URL detection."""
+        from gnostr.renderer import ContentRenderer
+
         url = "https://example.com/video.webm"
         assert ContentRenderer.is_video_url(url) is True
 
     def test_is_video_url_gif(self):
         """Test GIF URL detection."""
+        from gnostr.renderer import ContentRenderer
+
         url = "https://example.com/animation.gif"
         assert ContentRenderer.is_video_url(url) is True
 
     def test_is_video_url_jpg(self):
         """Test JPG URL is not a video."""
+        from gnostr.renderer import ContentRenderer
+
         url = "https://example.com/image.jpg"
         assert ContentRenderer.is_video_url(url) is False
 
     def test_is_video_url_png(self):
         """Test PNG URL is not a video."""
+        from gnostr.renderer import ContentRenderer
+
         url = "https://example.com/image.png"
         assert ContentRenderer.is_video_url(url) is False
 
     def test_is_video_url_empty(self):
         """Test empty string handling."""
+        from gnostr.renderer import ContentRenderer
+
         url = ""
         assert ContentRenderer.is_video_url(url) is False
 
     def test_is_video_url_none(self):
         """Test None handling."""
+        from gnostr.renderer import ContentRenderer
+
         url = None
         try:
             ContentRenderer.is_video_url(url)
@@ -70,6 +83,8 @@ class TestVideoPlayer:
 
     def test_load_and_play_success(self, mock_container, mock_renderer_modules):
         """Test successful video player initialization."""
+        from gnostr.renderer import VideoPlayer
+
         mock_gst, mock_gtk = mock_renderer_modules
 
         # Mock pipeline and bus
@@ -97,6 +112,8 @@ class TestVideoPlayer:
 
     def test_load_and_play_failure(self, mock_container, mock_renderer_modules):
         """Test video player initialization failure."""
+        from gnostr.renderer import VideoPlayer
+
         mock_gst, mock_gtk = mock_renderer_modules
 
         # Force parse_launch to raise
@@ -114,6 +131,8 @@ class TestContentRenderer:
 
     def test_render_video_url(self, mock_renderer_modules):
         """Test rendering a video URL in content."""
+        from gnostr.renderer import ContentRenderer
+
         content = "Check this out: https://example.com/video.mp4"
         window_ref = Mock()
         box = ContentRenderer.render(content, window_ref)
@@ -122,10 +141,15 @@ class TestContentRenderer:
         # The mock_gtk.Box is used, so it's a Mock
         assert isinstance(box, Mock)
         # The box should contain at least one child (the video or text)
-        assert len(box.get_children()) > 0
+        # In GTK4, get_children() returns a list directly
+        children = box.get_children()
+        assert isinstance(children, list)
+        assert len(children) > 0
 
     def test_render_mixed_content(self, mock_renderer_modules):
         """Test rendering mixed text and video URLs."""
+        from gnostr.renderer import ContentRenderer
+
         content = "Text before https://example.com/video.mp4 text after"
         window_ref = Mock()
         box = ContentRenderer.render(content, window_ref)
@@ -134,6 +158,8 @@ class TestContentRenderer:
 
     def test_render_no_video(self, mock_renderer_modules):
         """Test rendering content without video URLs."""
+        from gnostr.renderer import ContentRenderer
+
         content = "Just plain text"
         window_ref = Mock()
         box = ContentRenderer.render(content, window_ref)
@@ -142,6 +168,8 @@ class TestContentRenderer:
 
     def test_render_with_profile_video(self, mock_renderer_modules):
         """Test rendering profile picture that is a video."""
+        from gnostr.renderer import ContentRenderer
+
         profile = {"picture": "https://example.com/animated.gif", "name": "Test User"}
         window_ref = Mock()
         window_ref.db = Mock()

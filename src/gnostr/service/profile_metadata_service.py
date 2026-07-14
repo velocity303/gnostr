@@ -1,7 +1,7 @@
 # src/service/profile_metadata_service.py
 import json
 from typing import Optional, Dict
-from src.gateway.gateway import IKeyValueStore
+from ..gateway.gateway import IKeyValueStore
 
 
 class ProfileMetadataError(Exception):

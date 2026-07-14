@@ -3,14 +3,15 @@ import json
 import os
 from pathlib import Path
 
+
 def main():
-    repo_path = os.environ.get('REPO_PATH', 'VelocityNet/gnostr')
-    branch = os.environ.get('BRANCH', 'main')
-    commit_sha = os.environ.get('COMMIT_SHA', 'unknown')
-    
-    test_report = Path('test_report.log').read_text()
-    
-    body = f'''## CI Repair Request
+    repo_path = os.environ.get("REPO_PATH", "VelocityNet/gnostr")
+    branch = os.environ.get("BRANCH", "main")
+    commit_sha = os.environ.get("COMMIT_SHA", "unknown")
+
+    test_report = Path("test_report.log").read_text()
+
+    body = f"""## CI Repair Request
 
 Repository: {repo_path}
 Branch: {branch}
@@ -30,15 +31,16 @@ Commit: {commit_sha}
 
 ---
 *This issue was automatically created by the CI pipeline.*
-'''
-    
+"""
+
     # Remove labels to avoid API issues
     payload = {
-        'title': f'CI Failure: Repair needed for {branch}',
-        'body': body,
+        "title": f"CI Failure: Repair needed for {branch}",
+        "body": body,
     }
-    
+
     print(json.dumps(payload, ensure_ascii=False))
+
 
 if __name__ == "__main__":
     main()

@@ -4,7 +4,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw, GLib, Pango
-from gnostr.renderer import ContentRenderer, ImageLoader
+from ..renderer import ContentRenderer, ImageLoader
 
 
 class PostWidget(Adw.Bin):
