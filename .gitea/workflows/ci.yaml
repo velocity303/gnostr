@@ -15,6 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     # Swap to Ubuntu 22.04 for native Python 3.10 and GTK4 system packages
     container: ubuntu:22.04
+    options: --privileged --cap-add=SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined
 
     steps:
       - name: Bootstrap Container & Install Node.js
