@@ -37,6 +37,10 @@ jobs:
             curl \
             libglib2.0-dev
 
+      - name: Add flathub remote
+        run: |
+          flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+
       - name: Install Flatpak SDKs
         run: |
           flatpak install -y flathub org.gnome.Sdk//50 org.gnome.Platform//50
@@ -80,5 +84,4 @@ jobs:
       - name: Build Flatpak
         if: success()
         run: |
-          flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
           flatpak-builder --force-clean --repo=repo build_dir tech.livingonlinux.gnostr.json
