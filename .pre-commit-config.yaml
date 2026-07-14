@@ -1,0 +1,31 @@
+repos:
+- repo: https://github.com/pre-commit/pre-commit-hooks
+  rev: v5.0.0
+  hooks:
+  - id: trailing-whitespace
+  - id: end-of-file-fixer
+  - id: check-yaml
+  - id: check-added-large-files
+
+- repo: https://github.com/psf/black
+  rev: 26.5.1
+  hooks:
+  - id: black
+    language_version: python3
+
+- repo: https://github.com/astral-sh/ruff-pre-commit
+  rev: v0.15.21
+  hooks:
+  - id: ruff
+    args: [--fix, --exit-non-zero-on-fix, --select, "F401,F403,F405,F521,F522,F523,F541,F631,F632,F641,F642,F643,F644,F645,F701,F702,F704,F706,F707,F722,F811,F821,F841,F901,W191,W291,W292,W293,W391,W503,W504,E111,E112,E113,E114,E115,E116,E117,E121,E122,E123,E124,E125,E126,E127,E128,E129,E131,E201,E202,E203,E204,E211,E221,E222,E223,E224,E225,E226,E227,E231,E241,E242,E251,E252,E261,E262,E265,E266,E271,E272,E273,E274,E275,E301,E302,E303,E304,E305,E306,E401,E402,E501,E502,E503,E701,E702,E703,E704,E721,E722,E731,E741,E742,E743"]
+    files: \.py$
+  - id: ruff-format
+
+- repo: https://github.com/pre-commit/mirrors-mypy
+  rev: v2.2.0
+  hooks:
+  - id: mypy
+    additional_dependencies: [types-requests, types-pygit2, types-setuptools]
+    entry: mypy
+    args: [--ignore-missing-imports, --follow-imports=skip]
+    files: \.py$
