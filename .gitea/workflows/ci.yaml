@@ -18,7 +18,7 @@ jobs:
     steps:
       - name: Test connectivity to Gitea
         run: |
-          curl -f ${GITEA_URL}/api/v1/user || echo "Gitea not accessible"
+          curl -f ${GITEA_URL}/api/v1/user || echo "Gitea not accessible "
 
       # NEW: Install Node.js 20 and Git so the runner can execute standard actions
       - name: Pre-install Node.js for Actions
