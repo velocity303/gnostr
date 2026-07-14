@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 env:
-  GITEA_HOST: 192.168.5.134
+  GITEA_HOST: ${{secrets.HOST}}
   GITEA_URL: http://${{ env.GITEA_HOST }}:3000
 
 jobs:
