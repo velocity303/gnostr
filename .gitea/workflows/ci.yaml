@@ -13,6 +13,8 @@ env:
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
+    # This overrides the default runner OS and uses the official Python 3.10 image
+    container: python:3.10-bullseye
 
     steps:
       - name: Test connectivity to Gitea
@@ -28,25 +30,16 @@ jobs:
         run: |
           export DEBIAN_FRONTEND=noninteractive
           apt-get update
-          
-          # 1. Install prerequisites for adding repositories
-          apt-get install -y software-properties-common
-          
-          # 2. Add the Deadsnakes PPA which archives older Python versions
-          add-apt-repository ppa:deadsnakes/ppa -y
-          apt-get update
 
-          # 3. Install Python 3.10 alongside your build tools
+          # No PPAs needed; Python 3.10 is already installed.
+          # Just grab the C-libraries and Flatpak tools.
           apt-get install -y \
-            python3.10 python3.10-dev python3.10-venv python3.10-distutils pkg-config \
             xvfb \
             flatpak flatpak-builder \
             gcc \
             curl \
-            libglib2.0-dev
-
-          # 4. Bootstrap pip for Python 3.10
-          curl -sS https://bootstrap.pypa.io/get-pip.py | python3.10
+            libglib2.0-dev \
+            pkg-config
 
       - name: Add flathub remote
         run: |
@@ -58,19 +51,42 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          python3.10 -m pip install --upgrade pip
-          python3.10 -m pip install -e .
+          python -m pip install --upgrade pip
+          python -m pip install -e .
 
       - name: Install test tools
         run: |
-          python3.10 -m pip install pytest black flake8 PyGObject
+          python -m pip install pytest black flake8 PyGObject
 
       - name: Lint codebase
         run: |
-          python3.10 -m black --check src/ tests/ || true
-          python3.10 -m flake8 src/ tests/ --max-line-length=120 || true
+          python -m black --check src/ tests/ || true
+          python -m flake8 src/ tests/ --max-line-length=120 || true
 
       - name: Run tests with xvfb
         id: run_tests
         run: |
-          PYTHONPATH=. python3.10 -
+          # Added xvfb-run to actually utilize the virtual framebuffer for UI testing
+          PYTHONPATH=. xvfb-run -a python -m pytest tests/ -v --tb=short > test_report.log
+
+      - name: Create Repair Issue on Failure
+        if: failure() && steps.run_tests.outcome == 'failure'
+        run: |
+          touch test_report.log
+          echo "Creating repair issue for CI failure..."
+
+          export REPO_PATH="${{ github.repository }}"
+          export BRANCH="${{ github.ref_name }}"
+          export COMMIT_SHA="${{ github.sha }}"
+
+          python scripts/create_issue_payload.py > issue_payload.json
+
+          curl -X POST "${GITEA_URL}/api/v1/repos/VelocityNet/gnostr/issues" \
+            -H "Authorization: token ${{ secrets.TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d @issue_payload.json
+
+      - name: Build Flatpak
+        if: success()
+        run: |
+          flatpak-builder --force-clean --repo=repo build_dir tech.livingonlinux.gnostr.json
