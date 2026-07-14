@@ -37,6 +37,19 @@ jobs:
             curl \
             libglib2.0-dev
 
+      - name: Add deadsnakes PPA and install Python 3.11
+        run: |
+          apt-get install -y software-properties-common
+          add-apt-repository -y ppa:deadsnakes/ppa
+          apt-get update
+          apt-get install -y python3.11 python3.11-dev python3.11-venv python3.11-pip
+
+      - name: Set Python 3.11 as default
+        run: |
+          update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
+          update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 2
+          python3 --version
+
       - name: Add flathub remote
         run: |
           flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
@@ -47,22 +60,22 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          python3 -m pip install --upgrade pip
-          python3 -m pip install -e .
+          python3.11 -m pip install --upgrade pip
+          python3.11 -m pip install -e .
 
       - name: Install test tools
         run: |
-          python3 -m pip install pytest black flake8 PyGObject
+          python3.11 -m pip install pytest black flake8 PyGObject
 
       - name: Lint codebase
         run: |
-          black --check src/ tests/ || true
-          flake8 src/ tests/ --max-line-length=120 || true
+          python3.11 -m black --check src/ tests/ || true
+          python3.11 -m flake8 src/ tests/ --max-line-length=120 || true
 
       - name: Run tests with xvfb
         id: run_tests
         run: |
-          PYTHONPATH=. xvfb-run -a pytest tests/ -v --tb=short > test_report.log
+          PYTHONPATH=. python3.11 -m pytest tests/ -v --tb=short > test_report.log
 
       - name: Create Repair Issue on Failure
         if: failure() && steps.run_tests.outcome == 'failure'
@@ -74,7 +87,7 @@ jobs:
           export BRANCH="${{ github.ref_name }}"
           export COMMIT_SHA="${{ github.sha }}"
 
-          python3 scripts/create_issue_payload.py > issue_payload.json
+          python3.11 scripts/create_issue_payload.py > issue_payload.json
 
           curl -X POST "${GITEA_URL}/api/v1/repos/VelocityNet/gnostr/issues" \
             -H "Authorization: token ${{ secrets.TOKEN }}" \
