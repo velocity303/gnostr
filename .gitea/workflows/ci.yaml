@@ -74,8 +74,9 @@ jobs:
       - name: Run tests with xvfb
         id: run_tests
         run: |
-          PYTHONPATH=. xvfb-run -a python3 -m pytest tests/ -v --tb=short > test_report.log
-
+          # Use | tee to print to the Gitea UI and save to the file simultaneously
+          PYTHONPATH=. xvfb-run -a python3 -m pytest tests/ -v --tb=short | tee test_report.log
+          
       - name: Create Repair Issue on Failure
         if: failure() && steps.run_tests.outcome == 'failure'
         run: |
@@ -92,13 +93,6 @@ jobs:
             -H "Authorization: token ${{ secrets.TOKEN }}" \
             -H "Content-Type: application/json" \
             -d @issue_payload.json
-      - name: Upload Test Report
-        if: always() # Ensures it uploads even if the tests fail
-        uses: actions/upload-artifact@v4
-        with:
-          name: pytest-report
-          path: test_report.log
-          retention-days: 7
           
       - name: Build Flatpak
         if: success()
