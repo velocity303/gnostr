@@ -13,13 +13,21 @@ env:
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
-    # This overrides the default runner OS and uses the official Python 3.10 image
     container: python:3.10-bullseye
 
     steps:
       - name: Test connectivity to Gitea
         run: |
           curl -f ${GITEA_URL}/api/v1/user || echo "Gitea not accessible"
+
+      # NEW: Install Node.js 20 and Git so the runner can execute standard actions
+      - name: Pre-install Node.js for Actions
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y curl ca-certificates git
+          curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+          apt-get install -y nodejs
 
       - name: Checkout repository code
         uses: actions/checkout@v4
@@ -31,8 +39,6 @@ jobs:
           export DEBIAN_FRONTEND=noninteractive
           apt-get update
 
-          # No PPAs needed; Python 3.10 is already installed.
-          # Just grab the C-libraries and Flatpak tools.
           apt-get install -y \
             xvfb \
             flatpak flatpak-builder \
@@ -66,7 +72,6 @@ jobs:
       - name: Run tests with xvfb
         id: run_tests
         run: |
-          # Added xvfb-run to actually utilize the virtual framebuffer for UI testing
           PYTHONPATH=. xvfb-run -a python -m pytest tests/ -v --tb=short > test_report.log
 
       - name: Create Repair Issue on Failure
