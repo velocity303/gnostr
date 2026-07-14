@@ -97,4 +97,4 @@ jobs:
       - name: Build Flatpak
         if: success()
         run: |
-          flatpak-builder --force-clean --repo=repo build_dir tech.livingonlinux.gnostr.json
+          flatpak-builder --disable-rofiles-fuse --force-clean --repo=repo build_dir tech.livingonlinux.gnostr.json
