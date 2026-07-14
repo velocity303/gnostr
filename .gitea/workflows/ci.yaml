@@ -26,12 +26,12 @@ jobs:
         run: |
           git clone ${GITEA_URL}/VelocityNet/gnostr.git /workspace/gnostr
           cd /workspace/gnostr
-          git config --global url."https://${{ secrets.TOKEN }}@{{ env.GITEA_HOST }}".insteadOf "http://${{ env.GITEA_HOST}}/"
 
       - name: Configure git
         run: |
           cd /workspace/gnostr
-          git remote set-url origin ${GITEA_URL}.VelocityNet/gnostr
+          git config --global url."https://${{ secrets.TOKEN }}@${{ env.GITEA_HOST }}".insteadOf "http://${{ env.GITEA_HOST}}/"
+          git remote set-url origin ${GITEA_URL}/VelocityNet/gnostr
 
       - name: Install system dependencies
         run: |
@@ -90,15 +90,12 @@ jobs:
           touch test_report.log
           echo "Creating repair issue for CI failure..."
 
-          # Export environment variables for Python script
           export REPO_PATH="${{ github.repository }}"
           export BRANCH="${{ github.ref_name }}"
           export COMMIT_SHA="${{ github.sha }}"
 
-          # Create issue using Python script
           python3 scripts/create_issue_payload.py > issue_payload.json
 
-          # Submit the issue to Gitea API
           curl -X POST "${GITEA_URL}/api/v1/repos/VelocityNet/gnostr/issues" \
             -H "Authorization: token ${{ secrets.TOKEN }}" \
             -H "Content-Type: application/json" \
