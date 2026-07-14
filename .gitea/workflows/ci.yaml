@@ -24,13 +24,20 @@ jobs:
         with:
           token: ${{ secrets.TOKEN }}
 
+      # NEW: Explicitly setup Python 3.10
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
       - name: Install system dependencies
         run: |
           export DEBIAN_FRONTEND=noninteractive
           apt-get update
 
+          # Removed the python3.10 apt packages; kept system and flatpak build tools
           apt-get install -y \
-            python3.10 python3.10-dev python3.10-venv python3.10-pip pkg-config \
+            pkg-config \
             xvfb \
             flatpak flatpak-builder \
             gcc \
@@ -47,22 +54,22 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          python3.10 -m pip install --upgrade pip
-          python3.10 -m pip install -e .
+          python -m pip install --upgrade pip
+          python -m pip install -e .
 
       - name: Install test tools
         run: |
-          python3.10 -m pip install pytest black flake8 PyGObject
+          python -m pip install pytest black flake8 PyGObject
 
       - name: Lint codebase
         run: |
-          python3.10 -m black --check src/ tests/ || true
-          python3.10 -m flake8 src/ tests/ --max-line-length=120 || true
+          python -m black --check src/ tests/ || true
+          python -m flake8 src/ tests/ --max-line-length=120 || true
 
       - name: Run tests with xvfb
         id: run_tests
         run: |
-          PYTHONPATH=. python3.10 -m pytest tests/ -v --tb=short > test_report.log
+          PYTHONPATH=. python -m pytest tests/ -v --tb=short > test_report.log
 
       - name: Create Repair Issue on Failure
         if: failure() && steps.run_tests.outcome == 'failure'
@@ -74,7 +81,7 @@ jobs:
           export BRANCH="${{ github.ref_name }}"
           export COMMIT_SHA="${{ github.sha }}"
 
-          python3.10 scripts/create_issue_payload.py > issue_payload.json
+          python scripts/create_issue_payload.py > issue_payload.json
 
           curl -X POST "${GITEA_URL}/api/v1/repos/VelocityNet/gnostr/issues" \
             -H "Authorization: token ${{ secrets.TOKEN }}" \
