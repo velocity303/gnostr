@@ -7,27 +7,17 @@ on:
     branches: [main]
 
 env:
-  GITEA_HOST: ${{secrets.HOST}}
+  GITEA_HOST: 192.168.5.134
   GITEA_URL: http://${{ env.GITEA_HOST }}:3000
 
 jobs:
   lint-and-test:
-    runs-on: ubuntu-latest
-    container: python:3.10-bullseye
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Test connectivity to Gitea
         run: |
           curl -f ${GITEA_URL}/api/v1/user || echo "Gitea not accessible"
-
-      # NEW: Install Node.js 20 and Git so the runner can execute standard actions
-      - name: Pre-install Node.js for Actions
-        run: |
-          export DEBIAN_FRONTEND=noninteractive
-          apt-get update
-          apt-get install -y curl ca-certificates git
-          curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-          apt-get install -y nodejs
 
       - name: Checkout repository code
         uses: actions/checkout@v4
@@ -40,12 +30,12 @@ jobs:
           apt-get update
 
           apt-get install -y \
+            python3-dev python3-venv python3-pip pkg-config \
             xvfb \
             flatpak flatpak-builder \
             gcc \
             curl \
-            libglib2.0-dev \
-            pkg-config
+            libglib2.0-dev
 
       - name: Add flathub remote
         run: |
@@ -57,22 +47,22 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e .
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -e .
 
       - name: Install test tools
         run: |
-          python -m pip install pytest black flake8 PyGObject
+          python3 -m pip install pytest black flake8 PyGObject
 
       - name: Lint codebase
         run: |
-          python -m black --check src/ tests/ || true
-          python -m flake8 src/ tests/ --max-line-length=120 || true
+          python3 -m black --check src/ tests/ || true
+          python3 -m flake8 src/ tests/ --max-line-length=120 || true
 
       - name: Run tests with xvfb
         id: run_tests
         run: |
-          PYTHONPATH=. xvfb-run -a python -m pytest tests/ -v --tb=short > test_report.log
+          PYTHONPATH=. python3 -m pytest tests/ -v --tb=short > test_report.log
 
       - name: Create Repair Issue on Failure
         if: failure() && steps.run_tests.outcome == 'failure'
@@ -84,7 +74,7 @@ jobs:
           export BRANCH="${{ github.ref_name }}"
           export COMMIT_SHA="${{ github.sha }}"
 
-          python scripts/create_issue_payload.py > issue_payload.json
+          python3 scripts/create_issue_payload.py > issue_payload.json
 
           curl -X POST "${GITEA_URL}/api/v1/repos/VelocityNet/gnostr/issues" \
             -H "Authorization: token ${{ secrets.TOKEN }}" \
