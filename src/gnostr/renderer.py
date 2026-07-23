@@ -47,23 +47,66 @@ class ContentRenderer:
             return False
 
     @staticmethod
-    def _add_video(box, url, window_ref):
-        # Use GStreamer's Gtk.Video for animated GIFs and videos
+    def _add_video(box, url, window_ref, original_url=None):
+        # Main container (vertical: video + controls)
         video_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        video_box.set_halign(Gtk.Align.FILL)
-        video_box.set_hexpand(True)
-        video_box.set_size_request(-1, 200)  # Placeholder height
+        
+        # Video display area
+        video_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        video_area.set_halign(Gtk.Align.FILL)
+        video_area.set_hexpand(True)
+        video_area.set_size_request(-1, 200)  # Placeholder height
 
         spinner = Gtk.Spinner()
         spinner.start()
         spinner.set_halign(Gtk.Align.CENTER)
         spinner.set_valign(Gtk.Align.CENTER)
         spinner.set_vexpand(True)
-        video_box.append(spinner)
+        video_area.append(spinner)
+        
+        # Load video with original URL preserved
+        VideoPlayer.load_and_play(url, video_area, spinner, window_ref, original_url)
+        video_box.append(video_area)
+        
+        # Control bar
+        controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        controls.set_margin_top(6)
+        controls.set_margin_bottom(6)
+        controls.set_margin_start(6)
+        controls.set_margin_end(6)
+        
+        # Play/Pause button
+        play_btn = Gtk.Button(icon_name="media-playback-start-symbolic")
+        play_btn.set_tooltip_text("Play/Pause")
+        play_btn.set_size_request(40, 40)
+        play_btn.connect("clicked", lambda b: VideoPlayer.toggle_play(video_area))
+        controls.append(play_btn)
+        
+        # Mute button
+        mute_btn = Gtk.Button(icon_name="audio-volume-muted-symbolic")
+        mute_btn.set_tooltip_text("Mute/Unmute")
+        mute_btn.set_size_request(40, 40)
+        mute_btn.connect("clicked", lambda b: VideoPlayer.toggle_mute(video_area, mute_btn))
+        controls.append(mute_btn)
+        
+        # Volume slider
+        vol_scale = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL)
+        vol_scale.set_range(0, 100)
+        vol_scale.set_value(0)  # Start muted
+        vol_scale.set_size_request(100, -1)
+        vol_scale.set_hexpand(True)
+        vol_scale.connect("value-changed", lambda s: VideoPlayer.set_volume(video_area, s.get_value() / 100))
+        controls.append(vol_scale)
+        
+        # YouTube link button (if applicable)
+        if original_url and ("youtube.com" in original_url or "youtu.be" in original_url):
+            yt_link = Gtk.LinkButton(uri=original_url, label="Open in YouTube")
+            yt_link.set_halign(Gtk.Align.END)
+            yt_link.set_hexpand(True)
+            controls.append(yt_link)
+        
+        video_box.append(controls)
         box.append(video_box)
-
-        # Pass original URL to VideoPlayer for YouTube link preservation
-        VideoPlayer.load_and_play(url, video_box, spinner, window_ref)
 
     @staticmethod
     def render(content, window_ref, post_widget_ref=None):
@@ -602,3 +645,79 @@ class VideoPlayer:
                 VideoPlayer._cache[url] = video
 
         callback(video)
+
+    @staticmethod
+    def toggle_play(video_container):
+        """Toggle play/pause state for the video in the container."""
+        # Find the Gtk.Picture widget in the container
+        video = None
+        for child in video_container:
+            if isinstance(child, Gtk.Picture):
+                video = child
+                break
+        
+        if not video or not hasattr(video, '_pipeline'):
+            return
+        
+        pipeline = video._pipeline
+        video._is_playing = not video._is_playing
+        
+        if video._is_playing:
+            pipeline.set_state(Gst.State.PLAYING)
+        else:
+            pipeline.set_state(Gst.State.PAUSED)
+
+    @staticmethod
+    def toggle_mute(video_container, mute_button):
+        """Toggle mute state and update button icon."""
+        # Find the Gtk.Picture widget in the container
+        video = None
+        for child in video_container:
+            if isinstance(child, Gtk.Picture):
+                video = child
+                break
+        
+        if not video or not hasattr(video, '_pipeline'):
+            return
+        
+        pipeline = video._pipeline
+        video._is_muted = not video._is_muted
+        volume = 0.0 if video._is_muted else 1.0
+        
+        pipeline.set_property("volume", volume)
+        
+        # Update button icon
+        if video._is_muted:
+            mute_button.set_icon_name("audio-volume-muted-symbolic")
+        else:
+            mute_button.set_icon_name("audio-volume-high-symbolic")
+
+    @staticmethod
+    def set_volume(video_container, volume):
+        """Set volume (0.0 to 1.0) and update mute state."""
+        # Find the Gtk.Picture widget in the container
+        video = None
+        for child in video_container:
+            if isinstance(child, Gtk.Picture):
+                video = child
+                break
+        
+        if not video or not hasattr(video, '_pipeline'):
+            return
+        
+        pipeline = video._pipeline
+        video._is_muted = (volume == 0.0)
+        
+        pipeline.set_property("volume", volume)
+        
+        # Update mute button icon if volume goes above 0
+        if volume > 0:
+            # Find mute button in parent's next sibling (controls bar)
+            controls = video_container.get_next_sibling()
+            if controls:
+                for child in controls:
+                    if isinstance(child, Gtk.Button):
+                        current_icon = child.get_icon_name()
+                        if current_icon == "audio-volume-muted-symbolic":
+                            child.set_icon_name("audio-volume-high-symbolic")
+                            break
