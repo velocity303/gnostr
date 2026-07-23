@@ -52,7 +52,7 @@
             "sources": [
                 {
                     "type": "file",
-                    "url": "https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl",
+                    "url": "https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl",
                     "sha256": "f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12"
                 }
             ]
@@ -66,7 +66,7 @@
             "sources": [
                 {
                     "type": "file",
-                    "url": "https://files.pythonhosted.org/packages/54/20/4d324d65cc6d9205fabedc306948156824eb9f0ee1633355a8f7ec5c66bff/pluggy-1.6.0-py3-none-any.whl",
+                    "url": "https://files.pythonhosted.org/packages/54/20/4d324d65cc6d9205fabedc306948156824eb9f0ee1633355a8f7ec5c66bf/pluggy-1.6.0-py3-none-any.whl",
                     "sha256": "e920276dd6813095e9377c0bc5566d94c932c33b27a3e3945d8389c374dd4746"
                 }
             ]
@@ -75,13 +75,13 @@
             "name": "pytest",
             "buildsystem": "simple",
             "build-commands": [
-                "pip3 install --verbose --prefix=/app --no-deps --no-build-isolation pytest-9.1.0-py3-none-any.whl"
+                "pip3 install --verbose --prefix=/app --no-deps --no-build-isolation pytest-9.1.1-py3-none-any.whl"
             ],
             "sources": [
                 {
                     "type": "file",
-                    "url": "https://files.pythonhosted.org/packages/8b/5a/ba30a81239b909821b3153e303e7def45178bfb353da4f72380e6c5e8793b/pytest-9.1.0-py3-none-any.whl",
-                    "sha256": "8ebb0e7888bdf2bdfc602ec51f8f62fd5020af37356c74e503c79a94f5c81f32"
+                    "url": "https://files.pythonhosted.org/packages/24/25/1de2678b631f5a49215c6c96fff41ba892b0a34df68d6d80292b1b48aa7f/pytest-9.1.1-py3-none-any.whl",
+                    "sha256": "37a86b45efb9a47a61a36449063e8e18d0cab3161329fc099eb21783169c4f0c"
                 }
             ]
         },
@@ -95,7 +95,7 @@
                 {
                     "type": "archive",
                     "url": "https://files.pythonhosted.org/packages/c0/1f/924e3caae75f471eae4b26bd13b698f6af2c44279f67af317439c2f4c46a/ecdsa-0.19.1.tar.gz",
-                    "sha256": "478cba7b62555866fcb3bbc3bf3fe985e06decbd68ef55713c4e5ab98c57d508e1"
+                    "sha256": "478cba7b62555866fcb3bb3fe985e06decbdb68ef55713c4e5ab98c57d508e61"
                 }
             ]
         },
@@ -109,7 +109,7 @@
                 {
                     "type": "archive",
                     "url": "https://files.pythonhosted.org/packages/94/e7/b2c673351809dca68a0e064b6af791aa332cf192da575fd474ed7d6f16a2/six-1.17.0.tar.gz",
-                    "sha256": "ff70335d468e7eb6ec65b95b99d3a283654063f63cac5171de367e83493a81"
+                    "sha256": "ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81"
                 }
             ]
         },
@@ -122,8 +122,8 @@
             "sources": [
                 {
                     "type": "archive",
-                    "url": "https://files.pythonhosted.org/packages/2c/41/aa4bf9664e4cd414c3b39865b12251e87d239f4cd0e3cc1b6c2ccde25c1/websocket_client-1.9.0.tar.gz",
-                    "sha256": "9e813624b6eb61999a97dc7958469217c3176312b3a16b4bd1bc7e08a46ec98"
+                    "url": "https://files.pythonhosted.org/packages/2c/41/aa4bf9664e4cda14c3b39865b12251e8e7d239f4cd0e3cc1b6c2ccde25c1/websocket_client-1.9.0.tar.gz",
+                    "sha256": "9e813624b6eb619999a97dc7958469217c3176312b3a16a4bd1bc7e08a46ec98"
                 }
             ]
         },
