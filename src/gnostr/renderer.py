@@ -22,7 +22,7 @@ from . import nostr_utils
 
 
 class ContentRenderer:
-    LINK_REGEX = re.compile(r"((?:https?://|nostr:)[^\s]+)")
+    LINK_REGEX = re.compile(r"(?:(?:https?://|nostr:)[^\s]+)")
     IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
     VIDEO_EXTS = {".mp4", ".mov", ".webm", ".gif"}
 
@@ -62,6 +62,7 @@ class ContentRenderer:
         video_box.append(spinner)
         box.append(video_box)
 
+        # Pass original URL to VideoPlayer for YouTube link preservation
         VideoPlayer.load_and_play(url, video_box, spinner, window_ref)
 
     @staticmethod
@@ -84,7 +85,7 @@ class ContentRenderer:
                         ContentRenderer._add_text(box, "".join(current_text_buffer))
                         current_text_buffer = []
 
-                    clean_part = part.rstrip(".,;!?)]}")
+                    clean_part = part.rstrip(".!,?;']}" )
                     trailing = part[len(clean_part) :]
 
                     if clean_part.startswith("nostr:"):
@@ -99,7 +100,8 @@ class ContentRenderer:
                     elif "youtube.com/watch" in clean_part or "youtu.be/" in clean_part:
                         # Resolve the YouTube link to a raw MP4 stream
                         raw_stream_url = get_youtube_stream(clean_part)
-                        ContentRenderer._add_video(box, raw_stream_url, window_ref)
+                        # Pass original URL for "Open in YouTube" link
+                        ContentRenderer._add_video(box, raw_stream_url, window_ref, clean_part)
                     else:
                         ContentRenderer._add_link(box, clean_part)
 
@@ -134,12 +136,12 @@ class ContentRenderer:
             label=markup, xalign=0, wrap=True, selectable=True, use_markup=True
         )
         lbl.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-        lbl.set_ellipsize(Pango.EllipsizeMode.END)
+        lbl.set_ellipsis(Pango.EllipsizeMode.END)
         box.append(lbl)
 
     @staticmethod
     def _add_link_button(box, url, label):
-        btn = Gtk.LinkButton(uri=url, label=label, halign=Gtk.Align.START)
+        btn = Gtk.LinkButton(uri=url, label=label, align=Gtk.Align.START)
         box.append(btn)
 
     @staticmethod
@@ -161,15 +163,15 @@ class ContentRenderer:
         ImageLoader.load_image_into_widget(url, img_box, spinner, window_ref)
 
     @staticmethod
-    def _add_nostr_card(box, uri, window, post_widget_ref=None):
+    def _add_nostr_card(box, url, window, post_widget_ref=None):
         try:
-            parts = uri.split(":")
+            parts = url.split(":")
             if len(parts) < 2:
                 return
 
             bech32_str = parts[1]
-            is_event = "nevent" in uri or "note" in uri
-            is_profile = "nprofile" in uri or "npub" in uri
+            is_event = "nevent" in url or "note" in url
+            is_profile = "nprofile" in url or "npub" in url
 
             if is_event:
                 hex_id = ContentRenderer._extract_hex_id(bech32_str)
@@ -261,10 +263,10 @@ class ContentRenderer:
                             )
                             av_container.set_size_request(32, 32)
                             av_container.set_halign(Gtk.Align.CENTER)
-                            VideoPlayer.load_and_play(picture_url, av_container, None)
+                            VideoLoader.load_and_play(picture_url, av_container, None)
                             prof_box.append(av_container)
                         else:
-                            ImageLoader.load_avatar(
+                            ImageLoader.load_avatars(
                                 profile["picture"], lambda t: av.set_custom_image(t)
                             )
                 else:
@@ -305,11 +307,11 @@ class ContentRenderer:
                 av_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
                 av_container.set_size_request(24, 24)
                 av_container.set_halign(Gtk.Align.CENTER)
-                VideoPlayer.load_and_play(picture_url, av_container, None)
+                VideoLoader.load_and_play(picture_url, av_container, None)
                 h_box.append(av_container)
             else:
                 h_box.append(av)
-                ImageLoader.load_avatar(
+                ImageLoader.load_avatars(
                     prof["picture"], lambda t: av.set_custom_image(t)
                 )
         else:
@@ -323,7 +325,7 @@ class ContentRenderer:
         if len(content) > 140:
             content = content[:140] + "..."
         lbl_content = Gtk.Label(label=content, wrap=True, xalign=0, max_width_chars=40)
-        lbl_content.set_ellipsize(Pango.EllipsizeMode.END)
+        lbl_content.set_ellipsis(Pango.EllipsizeMode.END)
         container.append(lbl_content)
 
     @staticmethod
@@ -377,9 +379,7 @@ def get_youtube_stream(url):
     try:
         result = subprocess.run(
             ["yt-dlp", "-g", "-f", "best[ext=mp4]", url],
-            capture_output=True,
-            text=True,
-            check=True,
+            capture_output=True, text=True, check=True
         )
         return result.stdout.strip()
     except subprocess.CalledProcessError as e:
@@ -395,7 +395,7 @@ class ImageLoader:
     _ongoing_lock = threading.Lock()
 
     @staticmethod
-    def load_avatar(url, callback):
+    def load_avatars(url, callback):
         ImageLoader._request_image(url, callback, size=(64, 64))
 
     @staticmethod
@@ -414,7 +414,7 @@ class ImageLoader:
                 available_width = 600  # Default feed clamp width
                 if window_ref:
                     win_w = window_ref.get_width()
-                    # On mobile (narrow window), use full width. On desktop, stick to clamp max.
+                    # On mobile (narrow window), use full width. On desktop, stick to clamp.
                     if win_w < 650:
                         available_width = win_w - 40  # accounting for margins
                     else:
@@ -489,14 +489,22 @@ class ImageLoader:
         return False
 
 
+class VideoLoader:
+    """Wrapper for VideoPlayer.load_and_play with consistent naming."""
+    
+    @staticmethod
+    def load_and_play(url, container, spinner, window_ref=None):
+        VideoPlayer.load_and_play(url, container, spinner, window_ref)
+
+
 class VideoPlayer:
-    """GStreamer-based video/GIF player using playbin and Gtk.Picture."""
+    """GStreamer-based video/GIF player using playbin3 and Gtk.Picture."""
 
     _cache = {}
     _lock = threading.Lock()
 
     @staticmethod
-    def load_and_play(url, container, spinner, window_ref=None):
+    def load_and_play(url, container, spinner, window_ref=None, original_url=None):
         def on_ready(video):
             if spinner and spinner.get_parent() == container:
                 container.remove(spinner)
@@ -524,22 +532,25 @@ class VideoPlayer:
             else:
                 container.append(Gtk.Image.new_from_icon_name("video-symbolic"))
 
-        VideoPlayer._fetch_player(url, on_ready)
+        VideoLoader._fetch_player(url, on_ready, original_url=original_url)
 
     @staticmethod
-    def _fetch_player(url, callback):
-        """Instantiates pipelines synchronously on the UI thread to ensure proper canvas binding."""
+    def _fetch_player(url, callback, original_url=None):
+        """Instantiate pipelines synchronously on the UI thread to ensure proper canvas binding."""
         with VideoPlayer._lock:
             if url in VideoPlayer._cache:
-                callback(VideoPlayer._cache[url])
+                cached_video = VideoPlayer._cache[url]
+                # If original_url is provided, store it for YouTube link button
+                if original_url and hasattr(cached_video, '_original_url'):
+                    cached_video._original_url = original_url
+                callback(cached_video)
                 return
 
         video = None
         try:
+            # Use playbin3 for simpler control API
             pipeline = Gst.parse_launch(
-                f"uridecodebin uri={url} ! "
-                f"videoconvert ! videoscale ! "
-                f"queue ! gtk4paintablesink name=vsink"
+                f"playbin3 uri={url} video-sink='gtk4paintablesink'"
             )
 
             vsink = pipeline.get_by_name("vsink")
@@ -563,13 +574,23 @@ class VideoPlayer:
                     p.seek_simple(Gst.Format.TIME, Gst.SeekFlags.FLUSH, 0)
                 elif msg.type == Gst.MessageType.ERROR:
                     err, debug = msg.parse_error()
-                    print(f"\n❌ [Media Codec Error] {media_url}\n   -> {err.message}")
+                    print(f"\n🎬 [Media Codec Error] {media_url}\n  -> {err.message}")
 
             bus.connect("message", on_bus_message)
             video._bus = bus
 
-            # Start playback
-            pipeline.set_state(Gst.State.PLAYING)
+            # Store original URL for YouTube link button
+            if original_url:
+                video._original_url = original_url
+            else:
+                video._original_url = url
+
+            # Initialize as PAUSED and MUTED
+            video._is_playing = False
+            video._is_muted = True
+            
+            # Start playback pipeline but keep it paused
+            pipeline.set_state(Gst.State.PAUSED)
 
         except Exception as e:
             print(f"GStreamer pipeline failed: {e}")
