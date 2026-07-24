@@ -1,4 +1,4 @@
-# src/ui/post_widget.py
+# src/gnostr/ui/post_widget.py
 import gi
 
 gi.require_version("Gtk", "4.0")
@@ -42,7 +42,8 @@ class PostWidget(Adw.Bin):
             size=48 if is_hero else 40, show_initials=True, text=name
         )
         if prof and prof.get("picture"):
-            ImageLoader.load_avatar(
+            # Fix: use load_avatars (plural) not load_avatar
+            ImageLoader.load_avatars(
                 prof["picture"], lambda t: self.avatar.set_custom_image(t)
             )
 
@@ -88,7 +89,6 @@ class PostWidget(Adw.Bin):
         footer.append(l_box)
 
         self.main_box.append(footer)
-
         # Interaction
         if not is_hero:
             ctrl = Gtk.GestureClick()
@@ -99,11 +99,3 @@ class PostWidget(Adw.Bin):
                 ),
             )
             self.add_controller(ctrl)
-
-    def _setup_metric(self, icon, container):
-        b = Gtk.Box(spacing=6)
-        b.append(Gtk.Image.new_from_icon_name(icon))
-        l = Gtk.Label(label="0", css_classes=["caption", "dim-label"])
-        b.append(l)
-        container.append(b)
-        return l, b
