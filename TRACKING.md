@@ -109,89 +109,40 @@ This document tracks all bugs, issues, and problems that need fixing.
 
 ## Feature Implementation: Enhanced Video Playback
 
-### Status: PLANNED - Ready for Implementation
+### Status: ✅ PHASES 1, 2, & 3 COMPLETE - READY FOR TESTING
 
-### Problem Statement
-Current video playback in Gnostr has the following limitations:
-1. **Auto-play**: Videos start playing immediately on load (can be disruptive)
-2. **No user controls**: No way to pause, play, mute, or adjust volume
-3. **YouTube links consumed**: YouTube URLs are resolved to raw streams and played directly, losing the ability to open the original YouTube page
-4. **Complex pipeline**: Uses `uridecodebin` which is harder to control programmatically
+### Summary
+Successfully implemented enhanced video playback controls with the following features:
+- ✅ Videos start **paused** and **muted** by default
+- ✅ Play/Pause button to toggle playback
+- ✅ Mute/Unmute button with icon updates
+- ✅ Volume slider (0-100%)
+- ✅ "Open in YouTube" link button for YouTube videos
+- ✅ Replaced complex `uridecodebin` pipeline with simpler `playbin3`
 
-### Target Features
-1. **Player Controls**: 
-   - Play/Pause toggle button
-   - Mute/Unmute toggle button  
-   - Volume slider (0-100%)
-2. **Default State**: 
-   - Videos start **paused** (no auto-play)
-   - Videos start **muted** (volume = 0)
-3. **YouTube Links**: 
-   - Add "Open in YouTube" link button to original YouTube page
-   - Preserve original URL for browser launch
-4. **Better Pipeline**: 
-   - Switch from `uridecodebin` to `playbin3` for simpler control API
+### Files Modified
+- `src/gnostr/renderer.py` - Complete refactor of VideoPlayer class and _add_video method
 
 ---
 
-### Implementation Plan
+### Implementation Completed
 
-#### Phase 1: Refactor VideoPlayer Class
-**File:** `src/gnostr/renderer.py`
-
-**Changes:**
-1. Replace `uridecodebin` pipeline with `playbin3`
-2. Add state tracking: `_is_muted`, `_is_playing`, `_original_url`
-3. Initialize pipeline with `PAUSED` state and `volume=0.0`
-4. Expose control methods:
+#### Phase 1: Refactor VideoPlayer Class ✅ COMPLETE
+**Changes Made:**
+1. ✅ Replaced `uridecodebin` pipeline with `playbin3`
+2. ✅ Added state tracking: `_is_muted`, `_is_playing`, `_original_url`
+3. ✅ Initialize pipeline with `PAUSED` state and `volume=0.0`
+4. ✅ Exposed control methods:
    - `toggle_play()`: Switch between PAUSED and PLAYING
    - `toggle_mute()`: Toggle mute state and update volume
    - `set_volume(value)`: Set volume (0.0-1.0)
-   - `get_original_url()`: Return stored YouTube URL
 
-**Code Structure:**
-```python
-class VideoPlayer:
-    def __init__(self):
-        self._pipeline = None
-        self._original_url = None
-        self._is_muted = True
-        self._is_playing = False
-        self._cache = {}
-        self._lock = threading.Lock()
-    
-    def load_and_play(self, url, container, spinner, window_ref):
-        # Fetch pipeline asynchronously
-        # On ready: create playbin3 pipeline
-        # Set state to PAUSED
-        # Set volume to 0.0 (muted)
-        # Store original URL if YouTube
-    
-    def toggle_play(self):
-        if self._is_playing:
-            self._pipeline.set_state(Gst.State.PAUSED)
-        else:
-            self._pipeline.set_state(Gst.State.PLAYING)
-        self._is_playing = not self._is_playing
-    
-    def toggle_mute(self):
-        self._is_muted = not self._is_muted
-        volume = 0.0 if self._is_muted else 1.0
-        self._pipeline.set_property("volume", volume)
-    
-    def set_volume(self, value):
-        self._is_muted = (value == 0.0)
-        self._pipeline.set_property("volume", value)
-```
-
-#### Phase 2: Add Control Bar UI
-**File:** `src/gnostr/renderer.py` (in `_add_video` method)
-
-**Changes:**
-1. Create vertical box to hold video + controls
-2. Add horizontal control bar below video with:
-   - Play/Pause button (icon: `media-playback-start-symbolic` / `media-playback-pause-symbolic`)
-   - Mute button (icon: `audio-volume-muted-symbolic` / `audio-volume-high-symbolic`)
+#### Phase 2: Add Control Bar UI ✅ COMPLETE
+**Changes Made:**
+1. ✅ Created vertical box to hold video + controls
+2. ✅ Added horizontal control bar below video with:
+   - Play/Pause button (icon: `media-playback-start-symbolic`)
+   - Mute button (icon: `audio-volume-muted-symbolic`)
    - Volume scale (Gtk.Scale, 0-100, default 0)
    - YouTube link button (if applicable, aligned to end)
 
@@ -205,80 +156,12 @@ class VideoPlayer:
 └─────────────────────────────────┘
 ```
 
-**Code Structure:**
-```python
-def _add_video(self, box, url, window_ref):
-    # Main container
-    video_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-    
-    # Video display area
-    video_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-    # ... existing video loading code ...
-    video_box.append(video_area)
-    
-    # Control bar
-    controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-    controls.set_margin_top(6)
-    controls.set_margin_bottom(6)
-    controls.set_margin_start(6)
-    controls.set_margin_end(6)
-    
-    # Play/Pause button
-    play_btn = Gtk.Button(icon_name="media-playback-start-symbolic")
-    play_btn.connect("clicked", lambda b: player.toggle_play())
-    controls.append(play_btn)
-    
-    # Mute button
-    mute_btn = Gtk.Button(icon_name="audio-volume-muted-symbolic")
-    mute_btn.connect("clicked", lambda b: player.toggle_mute())
-    controls.append(mute_btn)
-    
-    # Volume slider
-    vol_scale = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL)
-    vol_scale.set_range(0, 100)
-    vol_scale.set_value(0)
-    vol_scale.connect("value-changed", lambda s: player.set_volume(s.get_value() / 100))
-    controls.append(vol_scale)
-    
-    # YouTube link (if applicable)
-    if player._original_url and ("youtube.com" in player._original_url or "youtu.be" in player._original_url):
-        yt_link = Gtk.LinkButton(uri=player._original_url, label="Open in YouTube")
-        yt_link.set_halign(Gtk.Align.END)
-        yt_link.set_hexpand(True)
-        controls.append(yt_link)
-    
-    video_box.append(controls)
-    box.append(video_box)
-```
-
-#### Phase 3: YouTube URL Handling
-**File:** `src/gnostr/renderer.py`
-
-**Changes:**
-1. Modify `get_youtube_stream()` to return tuple: `(stream_url, original_url)`
-2. Update `_add_video()` to store original URL in VideoPlayer instance
-3. Ensure link button only appears for YouTube URLs
-
-**Code Structure:**
-```python
-def get_youtube_info(url):
-    """Extract stream URL and preserve original YouTube URL."""
-    try:
-        result = subprocess.run(
-            ["yt-dlp", "-g", "-f", "best[ext=mp4]", url],
-            capture_output=True, text=True, check=True
-        )
-        stream_url = result.stdout.strip()
-        return stream_url, url  # Return both
-    except subprocess.CalledProcessError:
-        return url, url  # Fallback
-
-# In _add_video:
-stream_url, original_url = get_youtube_info(url)
-player = VideoPlayer()
-player._original_url = original_url  # Store for later
-VideoPlayer.load_and_play(stream_url, ...)
-```
+#### Phase 3: YouTube URL Handling ✅ COMPLETE
+**Changes Made:**
+1. ✅ Modified `_add_video()` to accept `original_url` parameter
+2. ✅ Updated YouTube link parsing to pass original URL
+3. ✅ Store original URL in VideoPlayer instance for link button
+4. ✅ Link button only appears for YouTube URLs
 
 #### Phase 4: Testing & Edge Cases
 **Test Checklist:**
@@ -292,23 +175,6 @@ VideoPlayer.load_and_play(stream_url, ...)
 - [ ] Controls work with multiple videos on same page
 - [ ] Non-YouTube videos don't show link button
 - [ ] Pipeline state syncs with button states
-
----
-
-### Files to Modify
-| File | Changes |
-|------|---------|
-| `src/gnostr/renderer.py` | Refactor `VideoPlayer`, add control bar UI, update YouTube handling |
-
-### Dependencies
-- No new dependencies required
-- Uses existing GTK4, GStreamer, yt-dlp
-
-### Implementation Order
-1. **Phase 1**: Refactor `VideoPlayer` to use `playbin3` with paused/muted defaults
-2. **Phase 2**: Add control bar UI with play/pause, mute, volume
-3. **Phase 3**: Add YouTube link button
-4. **Phase 4**: Test and fix edge cases
 
 ---
 
@@ -360,7 +226,11 @@ VideoPlayer.load_and_play(stream_url, ...)
   - Fixed all wheel URLs and SHA256 hashes
 - Pinned yt-dlp to specific version (2026.7.4) with direct wheel URL
 - Added GStreamer extension to Flatpak manifest for uridecodebin support
-- **Planning Phase**: Enhanced video playback with controls
+- **Enhanced Video Playback Implementation:**
+  - ✅ Phase 1: Refactored VideoPlayer to use playbin3 with paused/muted defaults
+  - ✅ Phase 2: Added control bar UI with play/pause, mute, volume
+  - ✅ Phase 3: Added YouTube link button with original URL preservation
+  - ⏳ Phase 4: Testing and edge case verification (ready for user testing)
 
 ---
 
@@ -398,7 +268,7 @@ flake8 src/ tests/ --max-line-length=120
 ---
 
 ## Next Steps
-1. Complete Phase 1-4 of Enhanced Video Playback implementation
-2. Test video controls on multiple platforms
+1. ⏳ Test video controls on multiple platforms (Phase 4)
+2. Fix any edge cases discovered during testing
 3. Update documentation with new features
 4. Add unit tests for VideoPlayer controls
