@@ -39,9 +39,6 @@ class ContentRenderer:
         try:
             path = urlparse(url).path.lower()
             result = any(path.endswith(ext) for ext in ContentRenderer.VIDEO_EXTS)
-            print(
-                f"is_video_url({url}) -> {result}, VIDEO_EXTS={ContentRenderer.VIDEO_EXTS}"
-            )
             return result
         except Exception:
             return False
@@ -111,7 +108,16 @@ class ContentRenderer:
     @staticmethod
     def render(content, window_ref, post_widget_ref=None):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        
+        # Debug: log content status
+        print(f"[Renderer] Content type: {type(content)}, length: {len(content) if content else 0}")
+        
+        # Fix: Handle None/empty content with visible error message
         if not content:
+            print("[Renderer] WARNING: Empty or None content received")
+            error_label = Gtk.Label(label="[No content to display]", xalign=0)
+            error_label.add_css_class("dim-label")
+            box.append(error_label)
             return box
 
         try:
@@ -136,14 +142,11 @@ class ContentRenderer:
                             box, clean_part, window_ref, post_widget_ref
                         )
                     elif ContentRenderer.is_image_url(clean_part):
-                        # Pass window_ref to calculate proper sizing
                         ContentRenderer._add_image(box, clean_part, window_ref)
                     elif ContentRenderer.is_video_url(clean_part):
                         ContentRenderer._add_video(box, clean_part, window_ref)
                     elif "youtube.com/watch" in clean_part or "youtu.be/" in clean_part:
-                        # Resolve the YouTube link to a raw MP4 stream
                         raw_stream_url = get_youtube_stream(clean_part)
-                        # Pass original URL for "Open in YouTube" link
                         ContentRenderer._add_video(box, raw_stream_url, window_ref, clean_part)
                     else:
                         ContentRenderer._add_link(box, clean_part)
@@ -156,9 +159,16 @@ class ContentRenderer:
             if current_text_buffer:
                 ContentRenderer._add_text(box, "".join(current_text_buffer))
 
+            # Debug: check if anything was added
+            child_count = sum(1 for _ in box)
+            print(f"[Renderer] Rendered {child_count} child widgets")
+            
         except Exception as e:
-            print(f"Render Error: {e}")
-            ContentRenderer._add_text(box, content)
+            print(f"[Renderer] Render Error: {e}")
+            print(f"[Renderer] Traceback: {traceback.format_exc()}")
+            error_label = Gtk.Label(label=f"[Render error: {str(e)[:50]}]", xalign=0)
+            error_label.add_css_class("dim-label")
+            box.append(error_label)
 
         return box
 
@@ -189,11 +199,10 @@ class ContentRenderer:
 
     @staticmethod
     def _add_image(box, url, window_ref):
-        # Container
         img_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         img_box.set_halign(Gtk.Align.FILL)
         img_box.set_hexpand(True)
-        img_box.set_size_request(-1, 200)  # Placeholder height
+        img_box.set_size_request(-1, 200)
 
         spinner = Gtk.Spinner()
         spinner.start()
@@ -299,7 +308,6 @@ class ContentRenderer:
                     if profile.get("picture"):
                         picture_url = profile["picture"]
                         if ContentRenderer.is_video_url(picture_url):
-                            # Replace avatar with video player for animated media
                             prof_box.remove(av)
                             av_container = Gtk.Box(
                                 orientation=Gtk.Orientation.VERTICAL, spacing=0
@@ -330,7 +338,7 @@ class ContentRenderer:
                 box.append(wrapper_btn)
 
         except Exception as e:
-            print(f"Card Render Error: {e}")
+            print(f"[Renderer] Card Render Error: {e}")
 
     @staticmethod
     def _build_quote_content(container, event, window):
@@ -345,7 +353,6 @@ class ContentRenderer:
         if prof and prof.get("picture"):
             picture_url = prof["picture"]
             if ContentRenderer.is_video_url(picture_url):
-                # Keep placeholder avatar
                 h_box.append(av)
                 av_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
                 av_container.set_size_request(24, 24)
@@ -448,25 +455,19 @@ class ImageLoader:
                 container.remove(spinner)
 
             if texture:
-                # Calculate layout height to prevent collapse
                 width = texture.get_width()
                 height = texture.get_height()
                 ratio = width / height if height > 0 else 1.0
 
-                # Determine available width based on window context
-                available_width = 600  # Default feed clamp width
+                available_width = 600
                 if window_ref:
                     win_w = window_ref.get_width()
-                    # On mobile (narrow window), use full width. On desktop, stick to clamp.
                     if win_w < 650:
-                        available_width = win_w - 40  # accounting for margins
+                        available_width = win_w - 40
                     else:
                         available_width = 600
 
-                # Calculate height needed to fit this width
                 req_height = int(available_width / ratio)
-
-                # Set request. -1 width means "don't care", height is enforced.
                 container.set_size_request(-1, req_height)
 
                 p = Gtk.Picture.new_for_paintable(texture)
@@ -533,16 +534,12 @@ class ImageLoader:
 
 
 class VideoLoader:
-    """Wrapper for VideoPlayer.load_and_play with consistent naming."""
-    
     @staticmethod
     def load_and_play(url, container, spinner, window_ref=None):
         VideoPlayer.load_and_play(url, container, spinner, window_ref)
 
 
 class VideoPlayer:
-    """GStreamer-based video/GIF player using playbin3 and Gtk.Picture."""
-
     _cache = {}
     _lock = threading.Lock()
 
@@ -555,12 +552,9 @@ class VideoPlayer:
             if video:
                 req_w, req_h = container.get_size_request()
 
-                # Avatar Mode: Strict container size mapping
                 if req_w > 0 and req_h > 0:
                     video.set_size_request(req_w, req_h)
                     video.set_content_fit(Gtk.ContentFit.COVER)
-
-                # Feed Mode: Safe scaling without layout pushing
                 else:
                     video.set_content_fit(Gtk.ContentFit.CONTAIN)
                     video.set_size_request(-1, 200)
@@ -579,11 +573,9 @@ class VideoPlayer:
 
     @staticmethod
     def _fetch_player(url, callback, original_url=None):
-        """Instantiate pipelines synchronously on the UI thread to ensure proper canvas binding."""
         with VideoPlayer._lock:
             if url in VideoPlayer._cache:
                 cached_video = VideoPlayer._cache[url]
-                # If original_url is provided, store it for YouTube link button
                 if original_url and hasattr(cached_video, '_original_url'):
                     cached_video._original_url = original_url
                 callback(cached_video)
@@ -591,7 +583,6 @@ class VideoPlayer:
 
         video = None
         try:
-            # Use playbin3 for simpler control API
             pipeline = Gst.parse_launch(
                 f"playbin3 uri={url} video-sink='gtk4paintablesink'"
             )
@@ -601,14 +592,12 @@ class VideoPlayer:
             video = Gtk.Picture()
             video.set_paintable(paintable)
 
-            # Prevent Garbage Collection
             video._pipeline = pipeline
 
             video.set_vexpand(False)
             video.set_hexpand(False)
             video.set_can_shrink(True)
 
-            # GStreamer Bus Watcher for Looping & Errors
             bus = pipeline.get_bus()
             bus.add_signal_watch()
 
@@ -622,24 +611,20 @@ class VideoPlayer:
             bus.connect("message", on_bus_message)
             video._bus = bus
 
-            # Store original URL for YouTube link button
             if original_url:
                 video._original_url = original_url
             else:
                 video._original_url = url
 
-            # Initialize as PAUSED and MUTED
             video._is_playing = False
             video._is_muted = True
             
-            # Start playback pipeline but keep it paused
             pipeline.set_state(Gst.State.PAUSED)
 
         except Exception as e:
             print(f"GStreamer pipeline failed: {e}")
             video = None
 
-        # Cache the resulting widget handle
         if video:
             with VideoPlayer._lock:
                 VideoPlayer._cache[url] = video
@@ -648,8 +633,6 @@ class VideoPlayer:
 
     @staticmethod
     def toggle_play(video_container):
-        """Toggle play/pause state for the video in the container."""
-        # Find the Gtk.Picture widget in the container
         video = None
         for child in video_container:
             if isinstance(child, Gtk.Picture):
@@ -669,8 +652,6 @@ class VideoPlayer:
 
     @staticmethod
     def toggle_mute(video_container, mute_button):
-        """Toggle mute state and update button icon."""
-        # Find the Gtk.Picture widget in the container
         video = None
         for child in video_container:
             if isinstance(child, Gtk.Picture):
@@ -686,7 +667,6 @@ class VideoPlayer:
         
         pipeline.set_property("volume", volume)
         
-        # Update button icon
         if video._is_muted:
             mute_button.set_icon_name("audio-volume-muted-symbolic")
         else:
@@ -694,8 +674,6 @@ class VideoPlayer:
 
     @staticmethod
     def set_volume(video_container, volume):
-        """Set volume (0.0 to 1.0) and update mute state."""
-        # Find the Gtk.Picture widget in the container
         video = None
         for child in video_container:
             if isinstance(child, Gtk.Picture):
@@ -710,9 +688,7 @@ class VideoPlayer:
         
         pipeline.set_property("volume", volume)
         
-        # Update mute button icon if volume goes above 0
         if volume > 0:
-            # Find mute button in parent's next sibling (controls bar)
             controls = video_container.get_next_sibling()
             if controls:
                 for child in controls:
