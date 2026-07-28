@@ -16,7 +16,9 @@ Core application layer — GTK4 window, app lifecycle, Nostr client wiring, and 
 
 ## Local Contracts
 - `main.py` owns app startup and window construction. All widget instantiation happens here
+- Window layout: Adw.ToastOverlay → Adw.ViewStack → split_view. FAB floats on content-area Gtk.Overlay, not a global overlay — toast overlay stays constrained to window size
 - `client.py` is the sole relay communication layer — UI code never opens WebSockets directly
+- Subscription management: `subscribe()` CLOSEs the previous subscription before sending a new REQ to prevent relay REQ floods
 - `renderer.py` handles ALL content display rendering (text, images, video, nostr cards). UI widgets call `ContentRenderer.render()` and insert the returned box
 - `database.py` is the single persistence layer — no other module writes to SQLite
 - `key_manager.py` is the single key storage layer — no plaintext key files anywhere
