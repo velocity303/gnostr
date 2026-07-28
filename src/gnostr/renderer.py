@@ -341,7 +341,7 @@ class ContentRenderer:
         if len(content) > 140:
             content = content[:140] + "..."
         lbl_content = Gtk.Label(label=content, wrap=True, xalign=0, max_width_chars=40)
-        lbl_content.set_ellipsis(Pango.EllipsizeMode.END)
+        lbl_content.set_ellipsize(Pango.EllipsizeMode.END)
         container.append(lbl_content)
 
     @staticmethod
@@ -549,10 +549,12 @@ class VideoPlayer:
         video = None
         try:
             pipeline = Gst.parse_launch(
-                f"playbin3 uri={url} video-sink='gtk4paintablesink'"
+                f"playbin3 uri={url} video-sink='gtk4paintablesink name=vsink'"
             )
 
             vsink = pipeline.get_by_name("vsink")
+            if not vsink:
+                raise RuntimeError("Failed to get video sink from pipeline")
             paintable = vsink.get_property("paintable")
             video = Gtk.Picture()
             video.set_paintable(paintable)

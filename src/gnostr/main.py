@@ -51,15 +51,11 @@ class MainWindow(Adw.ApplicationWindow):
         self.toast_overlay = Adw.ToastOverlay()
         self.set_content(self.toast_overlay)
 
-        # FAB Wrapper
-        self.global_overlay = Gtk.Overlay()
-        self.toast_overlay.set_child(self.global_overlay)
-
-        # 2. Main Stack
+        # 2. Main Stack (direct child of ToastOverlay — no Gtk.Overlay wrapper)
         self.main_stack = Adw.ViewStack()
-        self.global_overlay.set_child(self.main_stack)
+        self.toast_overlay.set_child(self.main_stack)
 
-        # FAB Button
+        # FAB Button — place on the split view's content page via its own overlay
         self.fab_post = Gtk.Button(
             icon_name="edit-create-symbolic", css_classes=["suggested-action", "pill"]
         )
@@ -69,7 +65,6 @@ class MainWindow(Adw.ApplicationWindow):
         self.fab_post.set_margin_end(20)
         self.fab_post.connect("clicked", self.on_fab_post_clicked)
         self.fab_post.set_visible(False)
-        self.global_overlay.add_overlay(self.fab_post)
 
         # 3. App View: Split View
         self.split_view = Adw.NavigationSplitView()
@@ -90,8 +85,13 @@ class MainWindow(Adw.ApplicationWindow):
         self.feed_view = FeedView(self)
         self.content_nav = Adw.NavigationView()
         self.feed_page = Adw.NavigationPage(title="Content", child=self.content_nav)
-        self.split_view.set_content(self.feed_page)
         self.content_nav.push(self.feed_view)
+
+        # FAB lives on the content page overlay (not wrapping the whole window)
+        self.content_overlay = Gtk.Overlay()
+        self.content_overlay.set_child(self.feed_page)
+        self.content_overlay.add_overlay(self.fab_post)
+        self.split_view.set_content(self.content_overlay)
 
         # 4. Login View
         self.login_page = Adw.StatusPage(

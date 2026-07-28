@@ -98,9 +98,14 @@ class NostrRelay(GObject.Object):
         if not self.is_connected:
             return
 
-        # If it's a new subscription or different ID, close old one?
-        # Typically we just send REQ.
-        # For snapshots, track the ID.
+        # Close previous subscription before opening a new one
+        # This prevents "too many concurrent REQs" from relays
+        if self.sub_id and self.sub_id != sub_id:
+            try:
+                self.ws.send(json.dumps(["CLOSE", self.sub_id]))
+            except Exception:
+                pass
+
         if snapshot:
             self.snapshot_ids.add(sub_id)
         elif sub_id in self.snapshot_ids:
