@@ -544,66 +544,105 @@ class VideoPlayer:
 
         video = None
         try:
+            print(f"🎬 [Video] Building pipeline for: {url[:80]}...")
+
             # Use a full pipeline string that includes decode, convert, and appsink.
-            # playbin3 with programmatic video-sink often fails to link internally;
-            # a flat pipeline string avoids this.
             pipeline = Gst.parse_launch(
                 f"uridecodebin uri={url} ! videoconvert ! "
                 f"video/x-raw,format=RGB ! "
                 f"appsink name=sink"
             )
 
+            if not pipeline:
+                print("🎬 [Video] FAIL: Gst.parse_launch returned None")
+                raise RuntimeError("Pipeline creation returned None")
+
+            print("🎬 [Video] Pipeline created OK")
+
             sink = pipeline.get_by_name("sink")
+            if not sink:
+                print("🎬 [Video] FAIL: appsink 'sink' not found in pipeline")
+                raise RuntimeError("appsink not found in pipeline")
+
+            print("🎬 [Video] appsink found OK")
 
             # Create a Gtk.Picture to display frames
             picture = Gtk.Picture()
             picture.set_can_shrink(True)
+            print("🎬 [Video] Gtk.Picture created")
 
             def on_sample(s):
-                sample = s.emit("pull-sample")
-                if sample:
-                    buf = sample.get_buffer()
-                    caps = sample.get_caps()
-                    if caps and buf:
-                        structure = caps.get_structure(0)
-                        width = structure.get_int("width")[1]
-                        height = structure.get_int("height")[1]
+                try:
+                    sample = s.emit("pull-sample")
+                    if sample:
+                        print(f"🎬 [Video] Frame received — pulling sample")
+                        buf = sample.get_buffer()
+                        caps = sample.get_caps()
+                        if caps and buf:
+                            structure = caps.get_structure(0)
+                            width = structure.get_int("width")[1]
+                            height = structure.get_int("height")[1]
+                            print(f"🎬 [Video] Frame size: {width}x{height}")
 
-                        success, data = buf.map(Gst.MapFlags.READ)
-                        if success and data:
-                            try:
-                                raw = bytes(data)
-                                pixbuf = GdkPixbuf.Pixbuf.new_from_bytes(
-                                    GLib.Bytes.new(raw),
-                                    GdkPixbuf.Colorspace.RGB, 8,
-                                    width, height, width * 3
-                                )
-                                if pixbuf:
-                                    texture = Gdk.Texture.new_for_pixbuf(pixbuf)
-                                    GLib.idle_add(picture.set_paintable, texture)
-                            except Exception:
-                                pass
-                            buf.unmap(data)
+                            success, data = buf.map(Gst.MapFlags.READ)
+                            if success and data:
+                                try:
+                                    raw = bytes(data)
+                                    pixbuf = GdkPixbuf.Pixbuf.new_from_bytes(
+                                        GLib.Bytes.new(raw),
+                                        GdkPixbuf.Colorspace.RGB, 8,
+                                        width, height, width * 3
+                                    )
+                                    if pixbuf:
+                                        print(f"🎬 [Video] Pixbuf created OK, creating texture")
+                                        texture = Gdk.Texture.new_for_pixbuf(pixbuf)
+                                        GLib.idle_add(picture.set_paintable, texture)
+                                        print(f"🎬 [Video] Texture set on picture via idle_add")
+                                    else:
+                                        print(f"🎬 [Video] FAIL: pixbuf is None")
+                                except Exception as e:
+                                    print(f"🎬 [Video] FAIL in frame conversion: {e}")
+                                buf.unmap(data)
+                        else:
+                            print(f"🎬 [Video] Sample has no caps/buf: caps={caps}, buf={buf}")
+                    else:
+                        print(f"🎬 [Video] emit('pull-sample') returned None — no frame available")
+                except Exception as e:
+                    print(f"🎬 [Video] FAIL in on_sample: {e}")
                 return Gst.FlowReturn.OK
 
             sink.set_property("emit-signals", True)
             sink.set_property("max-buffers", 1)
             sink.set_property("drop", True)
             sink.connect("new-sample", on_sample)
+            print("🎬 [Video] appsink configured and connected")
 
             # Bus for error/EOS handling
             bus = pipeline.get_bus()
             bus.add_signal_watch()
             def on_bus_message(bus, msg, p=pipeline, media_url=url):
                 if msg.type == Gst.MessageType.EOS:
+                    print(f"🎬 [Media] EOS — looping {media_url[:50]}...")
                     p.seek_simple(Gst.Format.TIME, Gst.SeekFlags.FLUSH, 0)
                 elif msg.type == Gst.MessageType.ERROR:
                     err, debug = msg.parse_error()
-                    print(f"\n🎬 [Media Codec Error] {media_url}\n  -> {err.message}")
+                    print(f"🎬 [Media Codec Error] {media_url}\n  -> {err.message}")
+                elif msg.type == Gst.MessageType.WARNING:
+                    err, debug = msg.parse_error()
+                    print(f"🎬 [Media Warning] {media_url}\n  -> {err.message}")
+                elif msg.type == Gst.MessageType.STATE_CHANGED:
+                    old, new, pending = msg.parse_state_changed()
+                    if pending == Gst.State.VOID_PENDING:
+                        print(f"🎬 [Media] State changed: {old} → {new}")
+                else:
+                    print(f"🎬 [Media] Bus message: {msg.type}")
             bus.connect("message", on_bus_message)
+            print("🎬 [Video] Bus watcher connected")
 
             # Start in paused state
             pipeline.set_state(Gst.State.PAUSED)
+            print("🎬 [Video] Pipeline set to PAUSED")
+
             video = picture
             video._pipeline = pipeline
             video._appsink = sink
@@ -611,8 +650,10 @@ class VideoPlayer:
             video._is_muted = True
             video._original_url = original_url or url
 
+            print("🎬 [Video] Player setup complete — waiting for play")
+
         except Exception as e:
-            print(f"Video pipeline failed: {e}")
+            print(f"🎬 [Video] Pipeline failed: {e}")
             video = None
 
         if video:
@@ -633,21 +674,27 @@ class VideoPlayer:
     def toggle_play(video_container):
         video = VideoPlayer._find_video(video_container)
         if not video or not hasattr(video, '_pipeline'):
+            print("🎬 [Video] toggle_play: no video or pipeline found")
             return
         pipeline = video._pipeline
         video._is_playing = not video._is_playing
+        print(f"🎬 [Video] toggle_play: {'PLAYING' if video._is_playing else 'PAUSED'}")
         if video._is_playing:
-            pipeline.set_state(Gst.State.PLAYING)
+            ret = pipeline.set_state(Gst.State.PLAYING)
+            print(f"🎬 [Video] set_state(PLAYING) returned: {ret}")
         else:
-            pipeline.set_state(Gst.State.PAUSED)
+            ret = pipeline.set_state(Gst.State.PAUSED)
+            print(f"🎬 [Video] set_state(PAUSED) returned: {ret}")
 
     @staticmethod
     def toggle_mute(video_container, mute_button):
         video = VideoPlayer._find_video(video_container)
         if not video or not hasattr(video, '_pipeline'):
+            print("🎬 [Video] toggle_mute: no video or pipeline found")
             return
         pipeline = video._pipeline
         video._is_muted = not video._is_muted
+        print(f"🎬 [Video] toggle_mute: {'MUTED' if video._is_muted else 'UNMUTED'}")
         pipeline.set_property("volume", 0.0 if video._is_muted else 1.0)
         mute_button.set_icon_name(
             "audio-volume-muted-symbolic" if video._is_muted else "audio-volume-high-symbolic"
