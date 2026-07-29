@@ -16,7 +16,7 @@ try:
     print("Gst 1.0 required successfully")
 except Exception as e:
     print(f"Failed to require Gst 1.0: {e}")
-from gi.repository import Gtk, Adw, GLib, Gdk, GdkPixbuf, Pango, Gst, GstVideo, Gio
+from gi.repository import Gtk, Adw, GLib, Gdk, GdkPixbuf, Pango, Gst, Gio
 
 from . import nostr_utils
 
@@ -517,15 +517,14 @@ class VideoPlayer:
             if video:
                 req_w, req_h = container.get_size_request()
 
+                # Gtk.Video doesn't have set_content_fit — use set_size_request instead
                 if req_w > 0 and req_h > 0:
                     video.set_size_request(req_w, req_h)
-                    video.set_content_fit(Gtk.ContentFit.COVER)
                 else:
-                    video.set_content_fit(Gtk.ContentFit.CONTAIN)
                     video.set_size_request(-1, 200)
 
-                video.set_halign(Gtk.Align.CENTER)
-                video.set_valign(Gtk.Align.CENTER)
+                video.set_halign(Gtk.Align.FILL)
+                video.set_valign(Gtk.Align.FILL)
 
                 if video.get_parent() is not None:
                     video.get_parent().remove(video)
@@ -548,50 +547,19 @@ class VideoPlayer:
 
         video = None
         try:
-            # Create pipeline — playbin3 handles decoding
-            pipeline = Gst.parse_launch(f"playbin3 uri={url}")
+            # GTK 4.12+ has Gtk.Video — built-in widget that handles GStreamer internally
+            # GNOME 50 runtime provides GTK 4.16+, so this is always available
+            video = Gtk.Video()
+            video.set_url(url)
 
-            # Create the GTK4 paintable sink programmatically (not via pipeline string)
-            # GstVideo.Gtk4PaintableSink is a GStreamer element that produces a GdkPaintable
-            sink = GstVideo.Gtk4PaintableSink.new()
-            pipeline.set_property("video-sink", sink)
-
-            # Get the paintable directly from the sink
-            paintable = sink.get_property("paintable")
-            video = Gtk.Picture()
-            video.set_paintable(paintable)
-
-            video._pipeline = pipeline
-
-            video.set_vexpand(False)
-            video.set_hexpand(False)
-            video.set_can_shrink(True)
-
-            bus = pipeline.get_bus()
-            bus.add_signal_watch()
-
-            def on_bus_message(bus, msg, p=pipeline, media_url=url):
-                if msg.type == Gst.MessageType.EOS:
-                    p.seek_simple(Gst.Format.TIME, Gst.SeekFlags.FLUSH, 0)
-                elif msg.type == Gst.MessageType.ERROR:
-                    err, debug = msg.parse_error()
-                    print(f"\n🎬 [Media Codec Error] {media_url}\n  -> {err.message}")
-
-            bus.connect("message", on_bus_message)
-            video._bus = bus
-
-            if original_url:
-                video._original_url = original_url
-            else:
-                video._original_url = url
-
-            video._is_playing = False
+            # Store metadata for control methods
+            video._is_gtk_video = True
+            video._is_playing = True     # Gtk.Video auto-plays by default
             video._is_muted = True
-            
-            pipeline.set_state(Gst.State.PAUSED)
+            video._original_url = original_url or url
 
         except Exception as e:
-            print(f"GStreamer pipeline failed: {e}")
+            print(f"Video pipeline failed: {e}")
             video = None
 
         if video:
@@ -601,40 +569,39 @@ class VideoPlayer:
         callback(video)
 
     @staticmethod
-    def toggle_play(video_container):
-        video = None
+    def _find_video(video_container):
+        """Find the video widget (Gtk.Video or Gtk.Picture) in the container."""
         for child in video_container:
-            if isinstance(child, Gtk.Picture):
-                video = child
-                break
-        
-        if not video or not hasattr(video, '_pipeline'):
+            if isinstance(child, (Gtk.Video, Gtk.Picture)):
+                return child
+        return None
+
+    @staticmethod
+    def toggle_play(video_container):
+        video = VideoPlayer._find_video(video_container)
+        if not video:
             return
         
-        pipeline = video._pipeline
         video._is_playing = not video._is_playing
         
         if video._is_playing:
-            pipeline.set_state(Gst.State.PLAYING)
+            video.play()
         else:
-            pipeline.set_state(Gst.State.PAUSED)
+            video.pause()
 
     @staticmethod
     def toggle_mute(video_container, mute_button):
-        video = None
-        for child in video_container:
-            if isinstance(child, Gtk.Picture):
-                video = child
-                break
-        
-        if not video or not hasattr(video, '_pipeline'):
+        video = VideoPlayer._find_video(video_container)
+        if not video:
             return
         
-        pipeline = video._pipeline
         video._is_muted = not video._is_muted
         volume = 0.0 if video._is_muted else 1.0
         
-        pipeline.set_property("volume", volume)
+        # Gtk.Video uses GtkMediaStream for volume control
+        stream = video.get_media_stream()
+        if stream:
+            stream.set_volume(volume)
         
         if video._is_muted:
             mute_button.set_icon_name("audio-volume-muted-symbolic")
@@ -643,19 +610,16 @@ class VideoPlayer:
 
     @staticmethod
     def set_volume(video_container, volume):
-        video = None
-        for child in video_container:
-            if isinstance(child, Gtk.Picture):
-                video = child
-                break
-        
-        if not video or not hasattr(video, '_pipeline'):
+        video = VideoPlayer._find_video(video_container)
+        if not video:
             return
         
-        pipeline = video._pipeline
         video._is_muted = (volume == 0.0)
         
-        pipeline.set_property("volume", volume)
+        # Gtk.Video uses GtkMediaStream for volume control
+        stream = video.get_media_stream()
+        if stream:
+            stream.set_volume(volume)
         
         if volume > 0:
             controls = video_container.get_next_sibling()
