@@ -552,7 +552,7 @@ class VideoPlayer:
             )
 
             # Create appsink for video frame extraction
-            appsink = GstApp.AppSink.new()
+            appsink = Gst.ElementFactory.make("appsink", "sink")
             appsink.set_property("emit-signals", True)
             appsink.set_property("max-buffers", 1)
             appsink.set_property("drop", True)
@@ -568,7 +568,7 @@ class VideoPlayer:
             picture.set_can_shrink(True)
 
             def on_sample(sink):
-                sample = sink.pull_sample()
+                sample = GstApp.pull_sample(sink)
                 if sample:
                     buf = sample.get_buffer()
                     caps = sample.get_caps()
