@@ -544,32 +544,23 @@ class VideoPlayer:
 
         video = None
         try:
-            # Build a GStreamer pipeline that decodes video and outputs RGB frames
-            # to appsink. This works with any GStreamer setup — no dependency on
-            # Gtk.Video or Gtk4PaintableSink.
+            # Use a full pipeline string that includes decode, convert, and appsink.
+            # playbin3 with programmatic video-sink often fails to link internally;
+            # a flat pipeline string avoids this.
             pipeline = Gst.parse_launch(
-                f"playbin3 uri={url}"
+                f"uridecodebin uri={url} ! videoconvert ! "
+                f"video/x-raw,format=RGB ! "
+                f"appsink name=sink"
             )
 
-            # Create appsink for video frame extraction
-            appsink = Gst.ElementFactory.make("appsink", "sink")
-            appsink.set_property("emit-signals", True)
-            appsink.set_property("max-buffers", 1)
-            appsink.set_property("drop", True)
-            # Request RGB format from the pipeline
-            appsink.set_property(
-                "caps", Gst.Caps.from_string("video/x-raw,format=RGB")
-            )
-
-            pipeline.set_property("video-sink", appsink)
+            sink = pipeline.get_by_name("sink")
 
             # Create a Gtk.Picture to display frames
             picture = Gtk.Picture()
             picture.set_can_shrink(True)
 
-            def on_sample(sink):
-                # appsink has a "pull-sample" action signal — emit it to get the sample
-                sample = sink.emit("pull-sample")
+            def on_sample(s):
+                sample = s.emit("pull-sample")
                 if sample:
                     buf = sample.get_buffer()
                     caps = sample.get_caps()
@@ -581,7 +572,6 @@ class VideoPlayer:
                         success, data = buf.map(Gst.MapFlags.READ)
                         if success and data:
                             try:
-                                # Copy data — GdkPixbuf needs stable memory
                                 raw = bytes(data)
                                 pixbuf = GdkPixbuf.Pixbuf.new_from_bytes(
                                     GLib.Bytes.new(raw),
@@ -596,7 +586,10 @@ class VideoPlayer:
                             buf.unmap(data)
                 return Gst.FlowReturn.OK
 
-            appsink.connect("new-sample", on_sample)
+            sink.set_property("emit-signals", True)
+            sink.set_property("max-buffers", 1)
+            sink.set_property("drop", True)
+            sink.connect("new-sample", on_sample)
 
             # Bus for error/EOS handling
             bus = pipeline.get_bus()
@@ -613,7 +606,7 @@ class VideoPlayer:
             pipeline.set_state(Gst.State.PAUSED)
             video = picture
             video._pipeline = pipeline
-            video._appsink = appsink
+            video._appsink = sink
             video._is_playing = False
             video._is_muted = True
             video._original_url = original_url or url
