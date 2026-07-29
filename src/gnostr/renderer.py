@@ -516,19 +516,15 @@ class VideoPlayer:
 
             if video:
                 req_w, req_h = container.get_size_request()
-
-                # Gtk.Video doesn't have set_content_fit — use set_size_request instead
                 if req_w > 0 and req_h > 0:
                     video.set_size_request(req_w, req_h)
                 else:
                     video.set_size_request(-1, 200)
-
                 video.set_halign(Gtk.Align.FILL)
                 video.set_valign(Gtk.Align.FILL)
 
                 if video.get_parent() is not None:
                     video.get_parent().remove(video)
-
                 container.append(video)
             else:
                 container.append(Gtk.Image.new_from_icon_name("video-symbolic"))
@@ -547,21 +543,76 @@ class VideoPlayer:
 
         video = None
         try:
-            # GTK 4.12+ has Gtk.Video — built-in widget that handles GStreamer internally
-            video = Gtk.Video()
+            # Build a GStreamer pipeline that decodes video and outputs RGB frames
+            # to appsink. This works with any GStreamer setup — no dependency on
+            # Gtk.Video or Gtk4PaintableSink.
+            pipeline = Gst.parse_launch(
+                f"playbin3 uri={url}"
+            )
 
-            # GTK 4.14+ added set_url() for http/https URLs. GTK 4.12 only has set_resource_uri().
-            # Check which method is available at runtime.
-            if hasattr(video, 'set_url'):
-                video.set_url(url)
-            elif hasattr(video, 'set_resource_uri'):
-                video.set_resource_uri(url)
-            else:
-                raise RuntimeError("Gtk.Video has no URI setter available")
+            # Create appsink for video frame extraction
+            appsink = Gst.ElementFactory.make("appsink", "sink")
+            appsink.set_property("emit-signals", True)
+            appsink.set_property("max-buffers", 1)
+            appsink.set_property("drop", True)
+            # Request RGB format from the pipeline
+            appsink.set_property(
+                "caps", Gst.Caps.from_string("video/x-raw,format=RGB")
+            )
 
-            # Store metadata for control methods
-            video._is_gtk_video = True
-            video._is_playing = True     # Gtk.Video auto-plays by default
+            pipeline.set_property("video-sink", appsink)
+
+            # Create a Gtk.Picture to display frames
+            picture = Gtk.Picture()
+            picture.set_can_shrink(True)
+
+            def on_sample(sink):
+                sample = sink.pull_sample()
+                if sample:
+                    buf = sample.get_buffer()
+                    caps = sample.get_caps()
+                    if caps and buf:
+                        structure = caps.get_structure(0)
+                        width = structure.get_int("width")[1]
+                        height = structure.get_int("height")[1]
+
+                        success, data = buf.map(Gst.MapFlags.READ)
+                        if success and data:
+                            try:
+                                # Copy data — GdkPixbuf needs stable memory
+                                raw = bytes(data)
+                                pixbuf = GdkPixbuf.Pixbuf.new_from_bytes(
+                                    GLib.Bytes.new(raw),
+                                    GdkPixbuf.Colorspace.RGB, 8,
+                                    width, height, width * 3
+                                )
+                                if pixbuf:
+                                    texture = Gdk.Texture.new_for_pixbuf(pixbuf)
+                                    GLib.idle_add(picture.set_paintable, texture)
+                            except Exception:
+                                pass
+                            buf.unmap(data)
+                return Gst.FlowReturn.OK
+
+            appsink.connect("new-sample", on_sample)
+
+            # Bus for error/EOS handling
+            bus = pipeline.get_bus()
+            bus.add_signal_watch()
+            def on_bus_message(bus, msg, p=pipeline, media_url=url):
+                if msg.type == Gst.MessageType.EOS:
+                    p.seek_simple(Gst.Format.TIME, Gst.SeekFlags.FLUSH, 0)
+                elif msg.type == Gst.MessageType.ERROR:
+                    err, debug = msg.parse_error()
+                    print(f"\n🎬 [Media Codec Error] {media_url}\n  -> {err.message}")
+            bus.connect("message", on_bus_message)
+
+            # Start in paused state
+            pipeline.set_state(Gst.State.PAUSED)
+            video = picture
+            video._pipeline = pipeline
+            video._appsink = appsink
+            video._is_playing = False
             video._is_muted = True
             video._original_url = original_url or url
 
@@ -577,63 +628,49 @@ class VideoPlayer:
 
     @staticmethod
     def _find_video(video_container):
-        """Find the video widget (Gtk.Video or Gtk.Picture) in the container."""
+        """Find the video widget (Gtk.Picture) in the container."""
         for child in video_container:
-            if isinstance(child, (Gtk.Video, Gtk.Picture)):
+            if isinstance(child, Gtk.Picture):
                 return child
         return None
 
     @staticmethod
     def toggle_play(video_container):
         video = VideoPlayer._find_video(video_container)
-        if not video:
+        if not video or not hasattr(video, '_pipeline'):
             return
-        
+        pipeline = video._pipeline
         video._is_playing = not video._is_playing
-        
         if video._is_playing:
-            video.play()
+            pipeline.set_state(Gst.State.PLAYING)
         else:
-            video.pause()
+            pipeline.set_state(Gst.State.PAUSED)
 
     @staticmethod
     def toggle_mute(video_container, mute_button):
         video = VideoPlayer._find_video(video_container)
-        if not video:
+        if not video or not hasattr(video, '_pipeline'):
             return
-        
+        pipeline = video._pipeline
         video._is_muted = not video._is_muted
-        volume = 0.0 if video._is_muted else 1.0
-        
-        # Gtk.Video uses GtkMediaStream for volume control
-        stream = video.get_media_stream()
-        if stream:
-            stream.set_volume(volume)
-        
-        if video._is_muted:
-            mute_button.set_icon_name("audio-volume-muted-symbolic")
-        else:
-            mute_button.set_icon_name("audio-volume-high-symbolic")
+        pipeline.set_property("volume", 0.0 if video._is_muted else 1.0)
+        mute_button.set_icon_name(
+            "audio-volume-muted-symbolic" if video._is_muted else "audio-volume-high-symbolic"
+        )
 
     @staticmethod
     def set_volume(video_container, volume):
         video = VideoPlayer._find_video(video_container)
-        if not video:
+        if not video or not hasattr(video, '_pipeline'):
             return
-        
+        pipeline = video._pipeline
         video._is_muted = (volume == 0.0)
-        
-        # Gtk.Video uses GtkMediaStream for volume control
-        stream = video.get_media_stream()
-        if stream:
-            stream.set_volume(volume)
-        
+        pipeline.set_property("volume", volume)
         if volume > 0:
             controls = video_container.get_next_sibling()
             if controls:
                 for child in controls:
                     if isinstance(child, Gtk.Button):
-                        current_icon = child.get_icon_name()
-                        if current_icon == "audio-volume-muted-symbolic":
+                        if child.get_icon_name() == "audio-volume-muted-symbolic":
                             child.set_icon_name("audio-volume-high-symbolic")
                             break
