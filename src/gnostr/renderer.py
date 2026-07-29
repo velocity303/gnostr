@@ -585,10 +585,10 @@ class VideoPlayer:
                             height = structure.get_int("height")[1]
                             print(f"🎬 [Video] Frame size: {width}x{height}")
 
-                            success, data = buf.map(Gst.MapFlags.READ)
-                            if success and data:
+                            success, map_info = buf.map(Gst.MapFlags.READ)
+                            if success:
                                 try:
-                                    raw = bytes(data)
+                                    raw = bytes(map_info.data)
                                     pixbuf = GdkPixbuf.Pixbuf.new_from_bytes(
                                         GLib.Bytes.new(raw),
                                         GdkPixbuf.Colorspace.RGB, 8,
@@ -603,7 +603,7 @@ class VideoPlayer:
                                         print(f"🎬 [Video] FAIL: pixbuf is None")
                                 except Exception as e:
                                     print(f"🎬 [Video] FAIL in frame conversion: {e}")
-                                buf.unmap(data)
+                                buf.unmap(map_info)
                         else:
                             print(f"🎬 [Video] Sample has no caps/buf: caps={caps}, buf={buf}")
                     else:
