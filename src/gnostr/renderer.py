@@ -16,7 +16,7 @@ try:
     print("Gst 1.0 required successfully")
 except Exception as e:
     print(f"Failed to require Gst 1.0: {e}")
-from gi.repository import Gtk, Adw, GLib, Gdk, GdkPixbuf, Pango, Gst, Gio
+from gi.repository import Gtk, Adw, GLib, Gdk, GdkPixbuf, Pango, Gst, GstVideo, Gio
 
 from . import nostr_utils
 
@@ -548,14 +548,16 @@ class VideoPlayer:
 
         video = None
         try:
-            pipeline = Gst.parse_launch(
-                f"playbin3 uri={url} video-sink='gtk4paintablesink name=vsink'"
-            )
+            # Create pipeline — playbin3 handles decoding
+            pipeline = Gst.parse_launch(f"playbin3 uri={url}")
 
-            vsink = pipeline.get_by_name("vsink")
-            if not vsink:
-                raise RuntimeError("Failed to get video sink from pipeline")
-            paintable = vsink.get_property("paintable")
+            # Create the GTK4 paintable sink programmatically (not via pipeline string)
+            # GstVideo.Gtk4PaintableSink is a GStreamer element that produces a GdkPaintable
+            sink = GstVideo.Gtk4PaintableSink.new()
+            pipeline.set_property("video-sink", sink)
+
+            # Get the paintable directly from the sink
+            paintable = sink.get_property("paintable")
             video = Gtk.Picture()
             video.set_paintable(paintable)
 
