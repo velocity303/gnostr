@@ -548,9 +548,16 @@ class VideoPlayer:
         video = None
         try:
             # GTK 4.12+ has Gtk.Video — built-in widget that handles GStreamer internally
-            # GNOME 50 runtime provides GTK 4.16+, so this is always available
             video = Gtk.Video()
-            video.set_url(url)
+
+            # GTK 4.14+ added set_url() for http/https URLs. GTK 4.12 only has set_resource_uri().
+            # Check which method is available at runtime.
+            if hasattr(video, 'set_url'):
+                video.set_url(url)
+            elif hasattr(video, 'set_resource_uri'):
+                video.set_resource_uri(url)
+            else:
+                raise RuntimeError("Gtk.Video has no URI setter available")
 
             # Store metadata for control methods
             video._is_gtk_video = True
