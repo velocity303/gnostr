@@ -546,11 +546,11 @@ class VideoPlayer:
         try:
             print(f"🎬 [Video] Building pipeline for: {url[:80]}...")
 
-            # Use a full pipeline string that includes decode, convert, and appsink.
+            # Use playbin3 with appsink as the video-sink in the pipeline string.
+            # playbin3 handles all formats (unlike uridecodebin which failed) and
+            # the pipeline string approach handles internal linking correctly.
             pipeline = Gst.parse_launch(
-                f"uridecodebin uri={url} ! videoconvert ! "
-                f"video/x-raw,format=RGB ! "
-                f"appsink name=sink"
+                f"playbin3 uri={url} video-sink='appsink name=sink'"
             )
 
             if not pipeline:
@@ -621,21 +621,23 @@ class VideoPlayer:
             bus = pipeline.get_bus()
             bus.add_signal_watch()
             def on_bus_message(bus, msg, p=pipeline, media_url=url):
-                if msg.type == Gst.MessageType.EOS:
-                    print(f"🎬 [Media] EOS — looping {media_url[:50]}...")
-                    p.seek_simple(Gst.Format.TIME, Gst.SeekFlags.FLUSH, 0)
-                elif msg.type == Gst.MessageType.ERROR:
+                # Gst.MessageType is a flags enum — use bitwise AND to check
+                t = msg.type
+                if t & Gst.MessageType.ERROR:
                     err, debug = msg.parse_error()
                     print(f"🎬 [Media Codec Error] {media_url}\n  -> {err.message}")
-                elif msg.type == Gst.MessageType.WARNING:
+                elif t & Gst.MessageType.EOS:
+                    print(f"🎬 [Media] EOS — looping {media_url[:50]}...")
+                    p.seek_simple(Gst.Format.TIME, Gst.SeekFlags.FLUSH, 0)
+                elif t & Gst.MessageType.WARNING:
                     err, debug = msg.parse_error()
                     print(f"🎬 [Media Warning] {media_url}\n  -> {err.message}")
-                elif msg.type == Gst.MessageType.STATE_CHANGED:
+                elif t & Gst.MessageType.STATE_CHANGED:
                     old, new, pending = msg.parse_state_changed()
                     if pending == Gst.State.VOID_PENDING:
                         print(f"🎬 [Media] State changed: {old} → {new}")
                 else:
-                    print(f"🎬 [Media] Bus message: {msg.type}")
+                    print(f"🎬 [Media] Bus message: {t}")
             bus.connect("message", on_bus_message)
             print("🎬 [Video] Bus watcher connected")
 
