@@ -11,12 +11,13 @@ import subprocess
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 gi.require_version("GstVideo", "1.0")
+gi.require_version("GstApp", "1.0")
 try:
     gi.require_version("Gst", "1.0")
     print("Gst 1.0 required successfully")
 except Exception as e:
     print(f"Failed to require Gst 1.0: {e}")
-from gi.repository import Gtk, Adw, GLib, Gdk, GdkPixbuf, Pango, Gst, Gio
+from gi.repository import Gtk, Adw, GLib, Gdk, GdkPixbuf, Pango, Gst, GstApp, Gio
 
 from . import nostr_utils
 
@@ -551,7 +552,7 @@ class VideoPlayer:
             )
 
             # Create appsink for video frame extraction
-            appsink = Gst.ElementFactory.make("appsink", "sink")
+            appsink = GstApp.AppSink.new()
             appsink.set_property("emit-signals", True)
             appsink.set_property("max-buffers", 1)
             appsink.set_property("drop", True)
