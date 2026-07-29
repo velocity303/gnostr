@@ -568,7 +568,8 @@ class VideoPlayer:
             picture.set_can_shrink(True)
 
             def on_sample(sink):
-                sample = GstApp.pull_sample(sink)
+                # appsink has a "pull-sample" action signal — emit it to get the sample
+                sample = sink.emit("pull-sample")
                 if sample:
                     buf = sample.get_buffer()
                     caps = sample.get_caps()
