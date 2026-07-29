@@ -546,11 +546,9 @@ class VideoPlayer:
         try:
             print(f"🎬 [Video] Building pipeline for: {url[:80]}...")
 
-            # Use playbin3 with appsink as the video-sink in the pipeline string.
-            # playbin3 handles all formats (unlike uridecodebin which failed) and
-            # the pipeline string approach handles internal linking correctly.
+            # Create playbin3 with just the URI — it handles all formats internally
             pipeline = Gst.parse_launch(
-                f"playbin3 uri={url} video-sink='appsink name=sink'"
+                f"playbin3 uri={url}"
             )
 
             if not pipeline:
@@ -559,12 +557,15 @@ class VideoPlayer:
 
             print("🎬 [Video] Pipeline created OK")
 
-            sink = pipeline.get_by_name("sink")
+            # Create appsink separately and set as video-sink property
+            # (pipeline string approach doesn't expose the named element)
+            sink = Gst.ElementFactory.make("appsink", "sink")
             if not sink:
-                print("🎬 [Video] FAIL: appsink 'sink' not found in pipeline")
-                raise RuntimeError("appsink not found in pipeline")
+                print("🎬 [Video] FAIL: could not create appsink element")
+                raise RuntimeError("appsink creation failed")
 
-            print("🎬 [Video] appsink found OK")
+            pipeline.set_property("video-sink", sink)
+            print("🎬 [Video] appsink created and set as video-sink OK")
 
             # Create a Gtk.Picture to display frames
             picture = Gtk.Picture()
