@@ -84,14 +84,16 @@ class MainWindow(Adw.ApplicationWindow):
 
         self.feed_view = FeedView(self)
         self.content_nav = Adw.NavigationView()
-        self.feed_page = Adw.NavigationPage(title="Content", child=self.content_nav)
-        self.content_nav.push(self.feed_view)
 
-        # FAB lives on the content page overlay (not wrapping the whole window)
+        # Overlay wraps the navigation view, FAB floats on top
         self.content_overlay = Gtk.Overlay()
-        self.content_overlay.set_child(self.feed_page)
+        self.content_overlay.set_child(self.content_nav)
         self.content_overlay.add_overlay(self.fab_post)
-        self.split_view.set_content(self.content_overlay)
+
+        # NavigationPage contains the overlay — split_view expects a NavigationPage
+        self.feed_page = Adw.NavigationPage(title="Content", child=self.content_overlay)
+        self.content_nav.push(self.feed_view)
+        self.split_view.set_content(self.feed_page)
 
         # 4. Login View
         self.login_page = Adw.StatusPage(
