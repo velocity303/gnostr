@@ -29,7 +29,7 @@ Core application layer — GTK4 window, app lifecycle, Nostr client wiring, and 
 - Login flow: KeyManager.load_key() → perform_login() → switch stack to "app" view
 - Feed switching: switch_feed() clears post box, fetches from DB or subscribes via client
 - All async image loading goes through ImageLoader thread pool (max 16 workers, cache in dict)
-- VideoPlayer uses `playbin3` GStreamer pipeline, starts paused+mut ed, controls via toggle_play/toggle_mute/set_volume
+- VideoPlayer uses `Gtk.Video` widget (GTK 4.12+) — built-in GStreamer pipeline, controls via play()/pause()/get_media_stream().set_volume()
 - Error handling: renderer wraps everything in try/except, shows dim-label on failure
 - Do NOT import `gi.repository` directly in test files — mock them in conftest.py
 
