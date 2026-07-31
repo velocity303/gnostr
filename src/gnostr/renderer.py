@@ -543,7 +543,7 @@ class VideoPlayer:
                 if video.get_parent() is not None:
                     video.get_parent().remove(video)
                 container.append(video)
-                            VideoPlayer._start_position_timer(container, video)
+                VideoPlayer._start_position_timer(container, video)
 
             else:
                 container.append(Gtk.Image.new_from_icon_name("video-symbolic"))
