@@ -591,7 +591,7 @@ class VideoPlayer:
                                     raw = bytes(map_info.data)
                                     pixbuf = GdkPixbuf.Pixbuf.new_from_bytes(
                                         GLib.Bytes.new(raw),
-                                        GdkPixbuf.Colorspace.RGB, 8,
+                                        GdkPixbuf.Colorspace.RGB, False, 8,
                                         width, height, width * 3
                                     )
                                     if pixbuf:
@@ -625,14 +625,20 @@ class VideoPlayer:
                 # Gst.MessageType is a flags enum — use bitwise AND to check
                 t = msg.type
                 if t & Gst.MessageType.ERROR:
-                    err, debug = msg.parse_error()
-                    print(f"🎬 [Media Codec Error] {media_url}\n  -> {err.message}")
+                    try:
+                        err, debug = msg.parse_error()
+                        print(f"🎬 [Media Codec Error] {media_url}\n  -> {err.message}")
+                    except Exception:
+                        print(f"🎬 [Media] Bus message: {t}")
                 elif t & Gst.MessageType.EOS:
                     print(f"🎬 [Media] EOS — looping {media_url[:50]}...")
                     p.seek_simple(Gst.Format.TIME, Gst.SeekFlags.FLUSH, 0)
                 elif t & Gst.MessageType.WARNING:
-                    err, debug = msg.parse_warning()
-                    print(f"🎬 [Media Warning] {media_url}\n  -> {err.message}")
+                    try:
+                        err, debug = msg.parse_warning()
+                        print(f"🎬 [Media Warning] {media_url}\n  -> {err.message}")
+                    except Exception:
+                        print(f"🎬 [Media] Bus message: {t}")
                 elif t & Gst.MessageType.STATE_CHANGED:
                     old, new, pending = msg.parse_state_changed()
                     if pending == Gst.State.VOID_PENDING:
