@@ -1,1 +1,721 @@
-aW1wb3J0IHJlCmltcG9ydCBodG1sCmltcG9ydCBnaQppbXBvcnQgdXJsbGliLnJlcXVlc3QKaW1wb3J0IHRocmVhZGluZwppbXBvcnQgY29uY3VycmVudC5mdXR1cmVzCmZyb20gdXJsbGliLnBhcnNlIGltcG9ydCB1cmxwYXJzZQppbXBvcnQgdHJhY2ViYWNrCmltcG9ydCBzdWJwcm9jZXNzCgpnaS5yZXF1aXJlX3ZlcnNpb24oIkd0ayIsICI0LjAiKQpnaS5yZXF1aXJlX3ZlcnNpb24oIkFkdyIsICIxIikKZ2kucmVxdWlyZV92ZXJzaW9uKCJHc3RWaWRlbyIsICIxLjAiKQpnaS5yZXF1aXJlX3ZlcnNpb24oIkdzdEFwcCIsICIxLjAiKQp0cnk6CiAgICBnaS5yZXF1aXJlX3ZlcnNpb24oIkdzdCIsICIxLjAiKQogICAgcHJpbnQoIkdzdCAxLjAgcmVxdWlyZWQgc3VjY2Vzc2Z1bGx5IikKZXhjZXB0IEV4Y2VwdGlvbiBhcyBlOgogICAgcHJpbnQoZiJGYWlsZWQgdG8gcmVxdWlyZSBHc3QgMS4wOiB7ZX0iKQpmcm9tIGdpLnJlcG9zaXRvcnkgaW1wb3J0IEd0aywgQWR3LCBHTGliLCBHZGssIEdka1BpeGJ1ZiwgUGFuZ28sIEdzdCwgR3N0QXBwLCBHaW8KCmZyb20gLiBpbXBvcnQgbm9zdHJfdXRpbHMKCgpjbGFzcyBDb250ZW50UmVuZGVyZXI6CiAgICBMSU5LX1JFR0VYID0gcmUuY29tcGlsZShyIig/Ol58XHMpKCg/Omh0dHBzPzovL3xub3N0cjopW15cc10rKSIpCiAgICBJTUFHRV9FWFRTID0geyIuanBnIiwgIi5qcGVnIiwgIi5wbmciLCAiLndlYnAifQogICAgVklERU9fRVhUUyA9IHsiLm1wNCIsICIubW92IiwgIi53ZWJtIiwgIi5naWYifQoKICAgIEBzdGF0aWNtZXRob2QKICAgIGRlZiBpc19pbWFnZV91cmwodXJsKToKICAgICAgICB0cnk6CiAgICAgICAgICAgIHBhdGggPSB1cmxwYXJzZSh1cmwpLnBhdGgubG93ZXIoKQogICAgICAgICAgICByZXR1cm4gYW55KHBhdGguZW5kc3dpdGgoZXh0KSBmb3IgZXh0IGluIENvbnRlbnRSZW5kZXJlci5JTUFHRV9FWFRTKQogICAgICAgIGV4Y2VwdCBFeGNlcHRpb246CiAgICAgICAgICAgIHJldHVybiBGYWxzZQoKICAgIEBzdGF0aWNtZXRob2QKICAgIGRlZiBpc192aWRlb191cmwodXJsKToKICAgICAgICB0cnk6CiAgICAgICAgICAgIHBhdGggPSB1cmxwYXJzZSh1cmwpLnBhdGgubG93ZXIoKQogICAgICAgICAgICByZXR1cm4gYW55KHBhdGguZW5kc3dpdGgoZXh0KSBmb3IgZXh0IGluIENvbnRlbnRSZW5kZXJlci5WSURFT19FWFRTKQogICAgICAgIGV4Y2VwdCBFeGNlcHRpb246CiAgICAgICAgICAgIHJldHVybiBGYWxzZQoKICAgIEBzdGF0aWNtZXRob2QKICAgIGRlZiBfYWRkX3ZpZGVvKGJveCwgdXJsLCB3aW5kb3dfcmVmLCBvcmlnaW5hbF91cmw9Tm9uZSk6CiAgICAgICAgdmlkZW9fYm94ID0gR3RrLkJveChvcmllbnRhdGlvbj1HdGsuT3JpZW50YXRpb24uVkVSVElDQUwsIHNwYWNpbmc9MCkKICAgICAgICB2aWRlb19hcmVhID0gR3RrLkJveChvcmllbnRhdGlvbj1HdGsuT3JpZW50YXRpb24uVkVSVElDQUwsIHNwYWNpbmc9MCkKICAgICAgICB2aWRlb19hcmVhLnNldF9oYWxpZ24oR3RrLkFsaWduLkZJTEwpCiAgICAgICAgdmlkZW9fYXJlYS5zZXRfaGV4cGFuZChUcnVlKQogICAgICAgIHZpZGVvX2FyZWEuc2V0X3NpemVfcmVxdWVzdCgtMSwgMjAwKQoKICAgICAgICBzcGlubmVyID0gR3RrLlNwaW5uZXIoKQogICAgICAgIHNwaW5uZXIuc3RhcnQoKQogICAgICAgIHNwaW5uZXIuc2V0X2hhbGlnbihHdGsuQWxpZ24uQ0VOVEVSKQogICAgICAgIHNwaW5uZXIuc2V0X3ZhbGlnbihHdGsuQWxpZ24uQ0VOVEVSKQogICAgICAgIHNwaW5uZXIuc2V0X3ZleHBhbmQoVHJ1ZSkKICAgICAgICB2aWRlb19hcmVhLmFwcGVuZChzcGlubmVyKQogICAgICAgIAogICAgICAgIFZpZGVvUGxheWVyLmxvYWRfYW5kX3BsYXkodXJsLCB2aWRlb19hcmVhLCBzcGlubmVyLCB3aW5kb3dfcmVmLCBvcmlnaW5hbF91cmwpCiAgICAgICAgdmlkZW9fYm94LmFwcGVuZCh2aWRlb19hcmVhKQogICAgICAgIAogICAgICAgIGNvbnRyb2xzID0gR3RrLkJveChvcmllbnRhdGlvbj1HdGsuT3JpZW50YXRpb24uSE9SSVpPTlRBTCwgc3BhY2luZz02KQogICAgICAgIGNvbnRyb2xzLnNldF9tYXJnaW5fdG9wKDYpCiAgICAgICAgY29udHJvbHMuc2V0X21hcmdpbl9ib3R0b20oNikKICAgICAgICBjb250cm9scy5zZXRfbWFyZ2luX3N0YXJ0KDYpCiAgICAgICAgY29udHJvbHMuc2V0X21hcmdpbl9lbmQoNikKICAgICAgICAKICAgICAgICBwbGF5X2J0biA9IEd0ay5CdXR0b24oaWNvbl9uYW1lPSJtZWRpYS1wbGF5YmFjay1zdGFydC1zeW1ib2xpYyIpCiAgICAgICAgcGxheV9idG4uc2V0X3Rvb2x0aXBfdGV4dCgiUGxheS9QYXVzZSIpCiAgICAgICAgcGxheV9idG4uc2V0X3NpemVfcmVxdWVzdCg0MCwgNDApCiAgICAgICAgcGxheV9idG4uY29ubmVjdCgiY2xpY2tlZCIsIGxhbWJkYSBiOiBWaWRlb1BsYXllci50b2dnbGVfcGxheSh2aWRlb19hcmVhKSkKICAgICAgICBjb250cm9scy5hcHBlbmQocGxheV9idG4pCiAgICAgICAgCiAgICAgICAgbXV0ZV9idG4gPSBHdGsuQnV0dG9uKGljb25fbmFtZT0iYXVkaW8tdm9sdW1lLW11dGVkLXN5bWJvbGljIikKICAgICAgICBtdXRlX2J0bi5zZXRfdG9vbHRpcF90ZXh0KCJNdXRlL1VubXV0ZSIpCiAgICAgICAgbXV0ZV9idG4uc2V0X3NpemVfcmVxdWVzdCg0MCwgNDApCiAgICAgICAgbXV0ZV9idG4uY29ubmVjdCgiY2xpY2tlZCIsIGxhbWJkYSBiOiBWaWRlb1BsYXllci50b2dnbGVfbXV0ZSh2aWRlb19hcmVhLCBtdXRlX2J0bikpCiAgICAgICAgY29udHJvbHMuYXBwZW5kKG11dGVfYnRuKQogICAgICAgIAogICAgICAgIHZvbF9zY2FsZSA9IEd0ay5TY2FsZShvcmllbnRhdGlvbj1HdGsuT3JpZW50YXRpb24uSE9SSVpPTlRBTCkKICAgICAgICB2b2xfc2NhbGUuc2V0X3JhbmdlKDAsIDEwMCkKICAgICAgICB2b2xfc2NhbGUuc2V0X3ZhbHVlKDApCiAgICAgICAgdm9sX3NjYWxlLnNldF9zaXplX3JlcXVlc3QoMTAwLCAtMSkKICAgICAgICB2b2xfc2NhbGUuc2V0X2hleHBhbmQoVHJ1ZSkKICAgICAgICB2b2xfc2NhbGUuY29ubmVjdCgidmFsdWUtY2hhbmdlZCIsIGxhbWJkYSBzOiBWaWRlb1BsYXllci5zZXRfdm9sdW1lKHZpZGVvX2FyZWEsIHMuZ2V0X3ZhbHVlKCkgLyAxMDApKQogICAgICAgIGNvbnRyb2xzLmFwcGVuZCh2b2xfc2NhbGUpCiAgICAgICAgCiAgICAgICAgaWYgb3JpZ2luYWxfdXJsIGFuZCAoInlvdXR1YmUuY29tIiBpbiBvcmlnaW5hbF91cmwgb3IgInlvdXR1LmJlIiBpbiBvcmlnaW5hbF91cmwpOgogICAgICAgICAgICB5dF9saW5rID0gR3RrLkxpbmtCdXR0b24odXJpPW9yaWdpbmFsX3VybCwgbGFiZWw9Ik9wZW4gaW4gWW91VHViZSIpCiAgICAgICAgICAgIHl0X2xpbmsuc2V0X2hhbGlnbihHdGsuQWxpZ24uRU5EKQogICAgICAgICAgICB5dF9saW5rLnNldF9oZXhwYW5kKFRydWUpCiAgICAgICAgICAgIGNvbnRyb2xzLmFwcGVuZCh5dF9saW5rKQogICAgICAgIAogICAgICAgIHZpZGVvX2JveC5hcHBlbmQoY29udHJvbHMpCiAgICAgICAgYm94LmFwcGVuZCh2aWRlb19ib3gpCgogICAgQHN0YXRpY21ldGhvZAogICAgZGVmIHJlbmRlcihjb250ZW50LCB3aW5kb3dfcmVmLCBwb3N0X3dpZGdldF9yZWY9Tm9uZSk6CiAgICAgICAgYm94ID0gR3RrLkJveChvcmllbnRhdGlvbj1HdGsuT3JpZW50YXRpb24uVkVSVElDQUwsIHNwYWNpbmc9NikKICAgICAgICAKICAgICAgICBpZiBub3QgY29udGVudDoKICAgICAgICAgICAgZXJyb3JfbGFiZWwgPSBHdGsuTGFiZWwobGFiZWw9IltObyBjb250ZW50IHRvIGRpc3BsYXldIiwgeGFsaWduPTApCiAgICAgICAgICAgIGVycm9yX2xhYmVsLmFkZF9jc3NfY2xhc3MoImRpbS1sYWJlbCIpCiAgICAgICAgICAgIGJveC5hcHBlbmQoZXJyb3JfbGFiZWwpCiAgICAgICAgICAgIHJldHVybiBib3gKCiAgICAgICAgdHJ5OgogICAgICAgICAgICBjbGVhbl9jb250ZW50ID0gaHRtbC51bmVzY2FwZShjb250ZW50KQogICAgICAgICAgICBwYXJ0cyA9IENvbnRlbnRSZW5kZXJlci5MSU5LX1JFR0VYLnNwbGl0KGNsZWFuX2NvbnRlbnQpCiAgICAgICAgICAgIGN1cnJlbnRfdGV4dF9idWZmZXIgPSBbXQoKICAgICAgICAgICAgZm9yIHBhcnQgaW4gcGFydHM6CiAgICAgICAgICAgICAgICBpZiBub3QgcGFydDoKICAgICAgICAgICAgICAgICAgICBjb250aW51ZQoKICAgICAgICAgICAgICAgIGlmIENvbnRlbnRSZW5kZXJlci5MSU5LX1JFR0VYLm1hdGNoKHBhcnQpOgogICAgICAgICAgICAgICAgICAgIGlmIGN1cnJlbnRfdGV4dF9idWZmZXI6CiAgICAgICAgICAgICAgICAgICAgICAgIENvbnRlbnRSZW5kZXJlci5fYWRkX3RleHQoYm94LCAiIi5qb2luKGN1cnJlbnRfdGV4dF9idWZmZXIpKQogICAgICAgICAgICAgICAgICAgICAgICBjdXJyZW50X3RleHRfYnVmZmVyID0gW10KCiAgICAgICAgICAgICAgICAgICAgY2xlYW5fcGFydCA9IHBhcnQucnN0cmlwKCIuISw/OyddfSIgKQogICAgICAgICAgICAgICAgICAgIHRyYWlsaW5nID0gcGFydFtsZW4oY2xlYW5fcGFydCkgOl0KCiAgICAgICAgICAgICAgICAgICAgaWYgY2xlYW5fcGFydC5zdGFydHN3aXRoKCJub3N0cjoiKToKICAgICAgICAgICAgICAgICAgICAgICAgQ29udGVudFJlbmRlcmVyLl9hZGRfbm9zdHJfY2FyZChib3gsIGNsZWFuX3BhcnQsIHdpbmRvd19yZWYsIHBvc3Rfd2lkZ2V0X3JlZikKICAgICAgICAgICAgICAgICAgICBlbGlmIENvbnRlbnRSZW5kZXJlci5pc19pbWFnZV91cmwoY2xlYW5fcGFydCk6CiAgICAgICAgICAgICAgICAgICAgICAgIENvbnRlbnRSZW5kZXJlci5fYWRkX2ltYWdlKGJveCwgY2xlYW5fcGFydCwgd2luZG93X3JlZikKICAgICAgICAgICAgICAgICAgICBlbGlmIENvbnRlbnRSZW5kZXJlci5pc192aWRlb191cmwoY2xlYW5fcGFydCk6CiAgICAgICAgICAgICAgICAgICAgICAgIENvbnRlbnRSZW5kZXJlci5fYWRkX3ZpZGVvKGJveCwgY2xlYW5fcGFydCwgd2luZG93X3JlZikKICAgICAgICAgICAgICAgICAgICBlbGlmICJ5b3V0dWJlLmNvbS93YXRjaCIgaW4gY2xlYW5fcGFydCBvciAieW91dHUuYmUvIiBpbiBjbGVhbl9wYXJ0OgogICAgICAgICAgICAgICAgICAgICAgICByYXdfc3RyZWFtX3VybCA9IGdldF95b3V0dWJlX3N0cmVhbShjbGVhbl9wYXJ0KQogICAgICAgICAgICAgICAgICAgICAgICBDb250ZW50UmVuZGVyZXIuX2FkZF92aWRlbyhib3gsIHJhd19zdHJlYW1fdXJsLCB3aW5kb3dfcmVmLCBjbGVhbl9wYXJ0KQogICAgICAgICAgICAgICAgICAgIGVsc2U6CiAgICAgICAgICAgICAgICAgICAgICAgIENvbnRlbnRSZW5kZXJlci5fYWRkX2xpbmsoYm94LCBjbGVhbl9wYXJ0KQoKICAgICAgICAgICAgICAgICAgICBpZiB0cmFpbGluZzoKICAgICAgICAgICAgICAgICAgICAgICAgY3VycmVudF90ZXh0X2J1ZmZlci5hcHBlbmQodHJhaWxpbmcpCiAgICAgICAgICAgICAgICBlbHNlOgogICAgICAgICAgICAgICAgICAgIGN1cnJlbnRfdGV4dF9idWZmZXIuYXBwZW5kKHBhcnQpCgogICAgICAgICAgICBpZiBjdXJyZW50X3RleHRfYnVmZmVyOgogICAgICAgICAgICAgICAgQ29udGVudFJlbmRlcmVyLl9hZGRfdGV4dChib3gsICIiLmpvaW4oY3VycmVudF90ZXh0X2J1ZmZlcikpCgogICAgICAgIGV4Y2VwdCBFeGNlcHRpb24gYXMgZToKICAgICAgICAgICAgZXJyb3JfbGFiZWwgPSBHdGsuTGFiZWwobGFiZWw9ZiJbUmVuZGVyIGVycm9yOiB7c3RyKGUpWzo1MF19XSIsIHhhbGlnbj0wKQogICAgICAgICAgICBlcnJvcl9sYWJlbC5hZGRfY3NzX2NsYXNzKCJkaW0tbGFiZWwiKQogICAgICAgICAgICBib3guYXBwZW5kKGVycm9yX2xhYmVsKQoKICAgICAgICByZXR1cm4gYm94CgogICAgQHN0YXRpY21ldGhvZAogICAgZGVmIF9hZGRfdGV4dChib3gsIHRleHQpOgogICAgICAgIGxhYmVsID0gR3RrLkxhYmVsKGxhYmVsPXRleHQsIHhhbGlnbj0wLCBzZWxlY3RhYmxlPVRydWUpCiAgICAgICAgbGFiZWwuc2V0X3VzZV9tYXJrdXAoRmFsc2UpCiAgICAgICAgbGFiZWwuc2V0X3dyYXAoVHJ1ZSkKICAgICAgICBsYWJlbC5zZXRfd3JhcF9tb2RlKFBhbmdvLldyYXBNb2RlLldPUkRfQ0hBUikKICAgICAgICBsYWJlbC5zZXRfbWF4X3dpZHRoX2NoYXJzKDYwKQogICAgICAgIGJveC5hcHBlbmQobGFiZWwpCgogICAgQHN0YXRpY21ldGhvZAogICAgZGVmIF9hZGRfbGluayhib3gsIHVybCwgbGFiZWw9Tm9uZSk6CiAgICAgICAgZGlzcCA9IGxhYmVsIGlmIGxhYmVsIGVsc2UgKHVybFs6NDddICsgIi4uLiIgaWYgbGVuKHVybCkgPiA1MCBlbHNlIHVybCkKICAgICAgICBtYXJrdXAgPSBmJzxhIGhyZWY9IntHTGliLm1hcmt1cF9lc2NhcGVfdGV4dCh1cmwpfSI+e0dMaWIubWFya3VwX2VzY2FwZV90ZXh0KGRpc3ApfTwvYT4nCiAgICAgICAgbGJsID0gR3RrLkxhYmVsKAogICAgICAgICAgICBsYWJlbD1tYXJrdXAsIHhhbGlnbj0wLCB3cmFwPVRydWUsIHNlbGVjdGFibGU9VHJ1ZSwgdXNlX21hcmt1cD1UcnVlCiAgICAgICAgKQogICAgICAgIGxibC5zZXRfd3JhcF9tb2RlKFBhbmdvLldyYXBNb2RlLldPUkRfQ0hBUikKICAgICAgICBsYmwuc2V0X2VsbGlwc2l6ZShQYW5nby5FbGxpcHNpemVNb2RlLkVORCkKICAgICAgICBib3guYXBwZW5kKGxibCkKCiAgICBAc3RhdGljbWV0aG9kCiAgICBkZWYgX2FkZF9pbWFnZShib3gsIHVybCwgd2luZG93X3JlZik6CiAgICAgICAgaW1nX2JveCA9IEd0ay5Cb3gob3JpZW50YXRpb249R3RrLk9yaWVudGF0aW9uLlZFUlRJQ0FMLCBzcGFjaW5nPTApCiAgICAgICAgaW1nX2JveC5zZXRfaGFsaWduKEd0ay5BbGlnbi5GSUxMKQogICAgICAgIGltZ19ib3guc2V0X2hleHBhbmQoVHJ1ZSkKICAgICAgICBpbWdfYm94LnNldF9zaXplX3JlcXVlc3QoLTEsIDIwMCkKCiAgICAgICAgc3Bpbm5lciA9IEd0ay5TcGlubmVyKCkKICAgICAgICBzcGlubmVyLnN0YXJ0KCkKICAgICAgICBzcGlubmVyLnNldF9oYWxpZ24oR3RrLkFsaWduLkNFTlRFUikKICAgICAgICBzcGlubmVyLnNldF92YWxpZ24oR3RrLkFsaWduLkNFTlRFUikKICAgICAgICBzcGlubmVyLnNldF92ZXhwYW5kKFRydWUpCiAgICAgICAgaW1nX2JveC5hcHBlbmQoc3Bpbm5lcikKICAgICAgICBib3guYXBwZW5kKGltZ19ib3gpCgogICAgICAgIEltYWdlTG9hZGVyLmxvYWRfaW1hZ2VfaW50b193aWRnZXQodXJsLCBpbWdfYm94LCBzcGlubmVyLCB3aW5kb3dfcmVmKQoKICAgIEBzdGF0aWNtZXRob2QKICAgIGRlZiBfYWRkX25vc3RyX2NhcmQoYm94LCB1cmwsIHdpbmRvdywgcG9zdF93aWRnZXRfcmVmPU5vbmUpOgogICAgICAgIHRyeToKICAgICAgICAgICAgcGFydHMgPSB1cmwuc3BsaXQoIjoiKQogICAgICAgICAgICBpZiBsZW4ocGFydHMpIDwgMjoKICAgICAgICAgICAgICAgIHJldHVybgoKICAgICAgICAgICAgYmVjaDMyX3N0ciA9IHBhcnRzWzFdCiAgICAgICAgICAgIGlzX2V2ZW50ID0gIm5ldmVudCIgaW4gdXJsIG9yICJub3RlIiBpbiB1cmwKICAgICAgICAgICAgaXNfcHJvZmlsZSA9ICJucHJvZmlsZSIgaW4gdXJsIG9yICJucHViIiBpbiB1cmwKCiAgICAgICAgICAgIGlmIGlzX2V2ZW50OgogICAgICAgICAgICAgICAgaGV4X2lkID0gQ29udGVudFJlbmRlcmVyLl9leHRyYWN0X2hleF9pZChiZWNoMzJfc3RyKQogICAgICAgICAgICAgICAgaWYgbm90IGhleF9pZDoKICAgICAgICAgICAgICAgICAgICByZXR1cm4KCiAgICAgICAgICAgICAgICBldmVudCA9IHdpbmRvdy5kYi5nZXRfZXZlbnRfYnlfaWQoaGV4X2lkKQoKICAgICAgICAgICAgICAgIHF1b3RlX2ZyYW1lID0gR3RrLkZyYW1lKGNzc19jbGFzc2VzPVsicXVvdGUtY2FyZCJdKQogICAgICAgICAgICAgICAgcXVvdGVfYm94ID0gR3RrLkJveCgKICAgICAgICAgICAgICAgICAgICBvcmllbnRhdGlvbj1HdGsuT3JpZW50YXRpb24uVkVSVElDQUwsCiAgICAgICAgICAgICAgICAgICAgc3BhY2luZz02LAogICAgICAgICAgICAgICAgICAgIG1hcmdpbl90b3A9OCwKICAgICAgICAgICAgICAgICAgICBtYXJnaW5fYm90dG9tPTgsCiAgICAgICAgICAgICAgICAgICAgbWFyZ2luX3N0YXJ0PTgsCiAgICAgICAgICAgICAgICAgICAgbWFyZ2luX2VuZD04LAogICAgICAgICAgICAgICAgKQogICAgICAgICAgICAgICAgcXVvdGVfZnJhbWUuc2V0X2NoaWxkKHF1b3RlX2JveCkKCiAgICAgICAgICAgICAgICBpZiBldmVudDoKICAgICAgICAgICAgICAgICAgICBDb250ZW50UmVuZGVyZXIuX2J1aWxkX3F1b3RlX2NvbnRlbnQocXVvdGVfYm94LCBldmVudCwgd2luZG93KQogICAgICAgICAgICAgICAgZWxzZToKICAgICAgICAgICAgICAgICAgICBsYmwgPSBHdGsuTGFiZWwobGFiZWw9ZiJMb2FkaW5nIFF1b3RlZCBFdmVudC4uLiIsIGNzc19jbGFzc2VzPVsiZGltLWxhYmVsIl0pCiAgICAgICAgICAgICAgICAgICAgcXVvdGVfYm94LmFwcGVuZChsYmwpCiAgICAgICAgICAgICAgICAgICAgd2luZG93LmNsaWVudC5yZXF1ZXN0X29uY2UoCiAgICAgICAgICAgICAgICAgICAgICAgIGYicXVvdGVfe2hleF9pZFs6OF19IiwgeyJpZHMiOiBbaGV4X2lkXSwgImxpbWl0IjogMX0KICAgICAgICAgICAgICAgICAgICApCgogICAgICAgICAgICAgICAgICAgIGlmIHBvc3Rfd2lkZ2V0X3JlZjoKICAgICAgICAgICAgICAgICAgICAgICAgaWYgbm90IGhhc2F0dHIocG9zdF93aWRnZXRfcmVmLCAicXVvdGVfd2lkZ2V0cyIpOgogICAgICAgICAgICAgICAgICAgICAgICAgICAgcG9zdF93aWRnZXRfcmVmLnF1b3RlX3dpZGdldHMgPSBbXQogICAgICAgICAgICAgICAgICAgICAgICBwb3N0X3dpZGdldF9yZWYucXVvdGVfd2lkZ2V0cy5hcHBlbmQoKGhleF9pZCwgcXVvdGVfYm94KSkKCiAgICAgICAgICAgICAgICB3cmFwcGVyX2J0biA9IEd0ay5CdXR0b24oY3NzX2NsYXNzZXM9WyJmbGF0IiwgInF1b3RlLXdyYXBwZXIiXSkKICAgICAgICAgICAgICAgIHdyYXBwZXJfYnRuLnNldF9jaGlsZChxdW90ZV9mcmFtZSkKICAgICAgICAgICAgICAgIHdyYXBwZXJfYnRuLmNvbm5lY3QoCiAgICAgICAgICAgICAgICAgICAgImNsaWNrZWQiLAogICAgICAgICAgICAgICAgICAgIGxhbWJkYSBiOiB3aW5kb3cuc2hvd190aHJlYWQoaGV4X2lkLCAiVW5rbm93biIsICJMb2FkaW5nLi4uIiksCiAgICAgICAgICAgICAgICApCiAgICAgICAgICAgICAgICBib3guYXBwZW5kKHdyYXBwZXJfYnRuKQoKICAgICAgICAgICAgZWxpZiBpc19wcm9maWxlOgogICAgICAgICAgICAgICAgaGV4X3BrID0gQ29udGVudFJlbmRlcmVyLl9leHRyYWN0X2hleF9pZChiZWNoMzJfc3RyKQogICAgICAgICAgICAgICAgaWYgbm90IGhleF9wazoKICAgICAgICAgICAgICAgICAgICByZXR1cm4KCiAgICAgICAgICAgICAgICBwcm9mX2ZyYW1lID0gR3RrLkZyYW1lKGNzc19jbGFzc2VzPVsicHJvZmlsZS1jYXJkIl0pCiAgICAgICAgICAgICAgICBwcm9mX2JveCA9IEd0ay5Cb3goCiAgICAgICAgICAgICAgICAgICAgb3JpZW50YXRpb249R3RrLk9yaWVudGF0aW9uLkhPUklaT05UQUwsCiAgICAgICAgICAgICAgICAgICAgc3BhY2luZz0xMCwKICAgICAgICAgICAgICAgICAgICBtYXJnaW5fdG9wPTgsCiAgICAgICAgICAgICAgICAgICAgbWFyZ2luX2JvdHRvbT04LAogICAgICAgICAgICAgICAgICAgIG1hcmdpbl9zdGFydD04LAogICAgICAgICAgICAgICAgICAgIG1hcmdpbl9lbmQ9OCwKICAgICAgICAgICAgICAgICkKICAgICAgICAgICAgICAgIHByb2ZfZnJhbWUuc2V0X2NoaWxkKHByb2ZfYm94KQoKICAgICAgICAgICAgICAgIGF2ID0gQWR3LkF2YXRhcihzaXplPTMyLCBzaG93X2luaXRpYWxzPVRydWUsIHRleHQ9Ij8iKQogICAgICAgICAgICAgICAgcHJvZl9ib3guYXBwZW5kKGF2KQoKICAgICAgICAgICAgICAgIHZib3ggPSBHdGsuQm94KG9yaWVudGF0aW9uPUd0ay5PcmllbnRhdGlvbi5WRVJUSUNBTCkKICAgICAgICAgICAgICAgIGxibF9uYW1lID0gR3RrLkxhYmVsKGxhYmVsPSJVc2VyIFByb2ZpbGUiLCBjc3NfY2xhc3Nlcz1bImhlYWRpbmciXSwgeGFsaWduPTApCiAgICAgICAgICAgICAgICBsYmxfc3ViID0gR3RrLkxhYmVsKAogICAgICAgICAgICAgICAgICAgIGxhYmVsPWhleF9wa1s6OF0gKyAiLi4uIiwKICAgICAgICAgICAgICAgICAgICBjc3NfY2xhc3Nlcz1bImNhcHRpb24iLCAiZGltLWxhYmVsIl0sCiAgICAgICAgICAgICAgICAgICAgeGFsaWduPTAsCiAgICAgICAgICAgICAgICApCiAgICAgICAgICAgICAgICB2Ym94LmFwcGVuZChsYmxfbmFtZSkKICAgICAgICAgICAgICAgIHZib3guYXBwZW5kKGxibF9zdWIpCiAgICAgICAgICAgICAgICBwcm9mX2JveC5hcHBlbmQodmJveCkKCiAgICAgICAgICAgICAgICBwcm9maWxlID0gd2luZG93LmRiLmdldF9wcm9maWxlKGhleF9waykKICAgICAgICAgICAgICAgIGlmIHByb2ZpbGU6CiAgICAgICAgICAgICAgICAgICAgbmFtZSA9IHByb2ZpbGUuZ2V0KCJkaXNwbGF5X25hbWUiKSBvciBwcm9maWxlLmdldCgibmFtZSIpCiAgICAgICAgICAgICAgICAgICAgaWYgbmFtZToKICAgICAgICAgICAgICAgICAgICAgICAgbGJsX25hbWUuc2V0X2xhYmVsKG5hbWUpCiAgICAgICAgICAgICAgICAgICAgICAgIGF2LnNldF90ZXh0KG5hbWUpCiAgICAgICAgICAgICAgICAgICAgaWYgcHJvZmlsZS5nZXQoInBpY3R1cmUiKToKICAgICAgICAgICAgICAgICAgICAgICAgcGljdHVyZV91cmwgPSBwcm9maWxlWyJwaWN0dXJlIl0KICAgICAgICAgICAgICAgICAgICAgICAgaWYgQ29udGVudFJlbmRlcmVyLmlzX3ZpZGVvX3VybChwaWN0dXJlX3VybCk6CiAgICAgICAgICAgICAgICAgICAgICAgICAgICBwcm9mX2JveC5yZW1vdmUoYXYpCiAgICAgICAgICAgICAgICAgICAgICAgICAgICBhdl9jb250YWluZXIgPSBHdGsuQm94KG9yaWVudGF0aW9uPUd0ay5PcmllbnRhdGlvbi5WRVJUSUNBTCwgc3BhY2luZz0wKQogICAgICAgICAgICAgICAgICAgICAgICAgICAgYXZfY29udGFpbmVyLnNldF9zaXplX3JlcXVlc3QoMzIsIDMyKQogICAgICAgICAgICAgICAgICAgICAgICAgICAgYXZfY29udGFpbmVyLnNldF9oYWxpZ24oR3RrLkFsaWduLkNFTlRFUikKICAgICAgICAgICAgICAgICAgICAgICAgICAgIFZpZGVvTG9hZGVyLmxvYWRfYW5kX3BsYXkocGljdHVyZV91cmwsIGF2X2NvbnRhaW5lciwgTm9uZSkKICAgICAgICAgICAgICAgICAgICAgICAgICAgIHByb2ZfYm94LmFwcGVuZChhdl9jb250YWluZXIpCiAgICAgICAgICAgICAgICAgICAgICAgIGVsc2U6CiAgICAgICAgICAgICAgICAgICAgICAgICAgICBJbWFnZUxvYWRlci5sb2FkX2F2YXRhcnMoCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgcHJvZmlsZVsicGljdHVyZSJdLCBsYW1iZGEgdDogYXYuc2V0X2N1c3RvbV9pbWFnZSh0KQogICAgICAgICAgICAgICAgICAgICAgICAgICAgKQogICAgICAgICAgICAgICAgZWxzZToKICAgICAgICAgICAgICAgICAgICB3aW5kb3cuY2xpZW50LmZldGNoX3Byb2ZpbGUoaGV4X3BrKQoKICAgICAgICAgICAgICAgIGlmIHBvc3Rfd2lkZ2V0X3JlZjoKICAgICAgICAgICAgICAgICAgICBpZiBub3QgaGFzYXR0cihwb3N0X3dpZGdldF9yZWYsICJtZW50aW9uX3dpZGdldHMiKToKICAgICAgICAgICAgICAgICAgICAgICAgcG9zdF93aWRnZXRfcmVmLm1lbnRpb25fd2lkZ2V0cyA9IFtdCiAgICAgICAgICAgICAgICAgICAgcG9zdF93aWRnZXRfcmVmLm1lbnRpb25fd2lkZ2V0cy5hcHBlbmQoKGhleF9waywgbGJsX25hbWUsIGF2KSkKCiAgICAgICAgICAgICAgICB3cmFwcGVyX2J0biA9IEd0ay5CdXR0b24oY3NzX2NsYXNzZXM9WyJmbGF0IiwgInF1b3RlLXdyYXBwZXIiXSkKICAgICAgICAgICAgICAgIHdyYXBwZXJfYnRuLnNldF9jaGlsZChwcm9mX2ZyYW1lKQoKICAgICAgICAgICAgICAgIGRlZiBvbl9jbGlja19wcm9mKGIpOgogICAgICAgICAgICAgICAgICAgIHdpbmRvdy5zaG93X3Byb2ZpbGUoaGV4X3BrKQoKICAgICAgICAgICAgICAgIHdyYXBwZXJfYnRuLmNvbm5lY3QoImNsaWNrZWQiLCBvbl9jbGlja19wcm9mKQogICAgICAgICAgICAgICAgYm94LmFwcGVuZCh3cmFwcGVyX2J0bikKCiAgICAgICAgZXhjZXB0IEV4Y2VwdGlvbiBhcyBlOgogICAgICAgICAgICBwcmludChmIltSZW5kZXJlcl0gQ2FyZCBSZW5kZXIgRXJyb3I6IHtlfSIpCgogICAgQHN0YXRpY21ldGhvZAogICAgZGVmIF9idWlsZF9xdW90ZV9jb250ZW50KGNvbnRhaW5lciwgZXZlbnQsIHdpbmRvdyk6CiAgICAgICAgcHVia2V5ID0gZXZlbnRbInB1YmtleSJdCiAgICAgICAgcHJvZiA9IHdpbmRvdy5kYi5nZXRfcHJvZmlsZShwdWJrZXkpCiAgICAgICAgbmFtZSA9IHB1YmtleVs6OF0KICAgICAgICBpZiBwcm9mOgogICAgICAgICAgICBuYW1lID0gcHJvZi5nZXQoImRpc3BsYXlfbmFtZSIpIG9yIHByb2YuZ2V0KCJuYW1lIikgb3IgbmFtZQoKICAgICAgICBoX2JveCA9IEd0ay5Cb3goc3BhY2luZz02KQogICAgICAgIGF2ID0gQWR3LkF2YXRhcihzaXplPTI0LCBzaG93X2luaXRpYWxzPVRydWUsIHRleHQ9bmFtZSkKICAgICAgICBpZiBwcm9mIGFuZCBwcm9mLmdldCgicGljdHVyZSIpOgogICAgICAgICAgICBwaWN0dXJlX3VybCA9IHByb2ZbInBpY3R1cmUiXQogICAgICAgICAgICBpZiBDb250ZW50UmVuZGVyZXIuaXNfdmlkZW9fdXJsKHBpY3R1cmVfdXJsKToKICAgICAgICAgICAgICAgIGhfYm94LmFwcGVuZChhdikKICAgICAgICAgICAgICAgIGF2X2NvbnRhaW5lciA9IEd0ay5Cb3gob3JpZW50YXRpb249R3RrLk9yaWVudGF0aW9uLlZFUlRJQ0FMLCBzcGFjaW5nPTApCiAgICAgICAgICAgICAgICBhdl9jb250YWluZXIuc2V0X3NpemVfcmVxdWVzdCgyNCwgMjQpCiAgICAgICAgICAgICAgICBhdl9jb250YWluZXIuc2V0X2hhbGlnbihHdGsuQWxpZ24uQ0VOVEVSKQogICAgICAgICAgICAgICAgVmlkZW9Mb2FkZXIubG9hZF9hbmRfcGxheShwaWN0dXJlX3VybCwgYXZfY29udGFpbmVyLCBOb25lKQogICAgICAgICAgICAgICAgaF9ib3guYXBwZW5kKGF2X2NvbnRhaW5lcikKICAgICAgICAgICAgZWxzZToKICAgICAgICAgICAgICAgIGhfYm94LmFwcGVuZChhdikKICAgICAgICAgICAgICAgIEltYWdlTG9hZGVyLmxvYWRfYXZhdGFycygKICAgICAgICAgICAgICAgICAgICBwcm9mWyJwaWN0dXJlIl0sIGxhbWJkYSB0OiBhdi5zZXRfY3VzdG9tX2ltYWdlKHQpCiAgICAgICAgICAgICAgICApCiAgICAgICAgZWxzZToKICAgICAgICAgICAgaF9ib3guYXBwZW5kKGF2KQoKICAgICAgICBsYmxfbmFtZSA9IEd0ay5MYWJlbChsYWJlbD1uYW1lLCBjc3NfY2xhc3Nlcz1bImhlYWRpbmciLCAiY2FwdGlvbi1oZWFkaW5nIl0pCiAgICAgICAgaF9ib3guYXBwZW5kKGxibF9uYW1lKQogICAgICAgIGNvbnRhaW5lci5hcHBlbmQoaF9ib3gpCgogICAgICAgIGNvbnRlbnQgPSBldmVudC5nZXQoImNvbnRlbnQiLCAiIikKICAgICAgICBpZiBsZW4oY29udGVudCkgPiAxNDA6CiAgICAgICAgICAgIGNvbnRlbnQgPSBjb250ZW50WzoxNDBdICsgIi4uLiIKICAgICAgICBsYmxfY29udGVudCA9IEd0ay5MYWJlbChsYWJlbD1jb250ZW50LCB3cmFwPVRydWUsIHhhbGlnbj0wLCBtYXhfd2lkdGhfY2hhcnM9NDApCiAgICAgICAgbGJsX2NvbnRlbnQuc2V0X2VsbGlwc2l6ZShQYW5nby5FbGxpcHNpemVNb2RlLkVORCkKICAgICAgICBjb250YWluZXIuYXBwZW5kKGxibF9jb250ZW50KQo=
+import re
+import html
+import gi
+import urllib.request
+import threading
+import concurrent.futures
+from urllib.parse import urlparse
+import traceback
+import subprocess
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+gi.require_version("GstVideo", "1.0")
+gi.require_version("GstApp", "1.0")
+try:
+    gi.require_version("Gst", "1.0")
+    print("Gst 1.0 required successfully")
+except Exception as e:
+    print(f"Failed to require Gst 1.0: {e}")
+from gi.repository import Gtk, Adw, GLib, Gdk, GdkPixbuf, Pango, Gst, GstApp, Gio
+
+from . import nostr_utils
+
+
+class ContentRenderer:
+    LINK_REGEX = re.compile(r"(?:^|\s)((?:https?://|nostr:)[^\s]+)")
+    IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
+    VIDEO_EXTS = {".mp4", ".mov", ".webm", ".gif"}
+
+    @staticmethod
+    def is_image_url(url):
+        try:
+            path = urlparse(url).path.lower()
+            return any(path.endswith(ext) for ext in ContentRenderer.IMAGE_EXTS)
+        except Exception:
+            return False
+
+    @staticmethod
+    def is_video_url(url):
+        try:
+            path = urlparse(url).path.lower()
+            return any(path.endswith(ext) for ext in ContentRenderer.VIDEO_EXTS)
+        except Exception:
+            return False
+
+    @staticmethod
+    def _add_video(box, url, window_ref, original_url=None):
+        video_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        video_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        video_area.set_halign(Gtk.Align.FILL)
+        video_area.set_hexpand(True)
+        video_area.set_size_request(-1, 200)
+
+        spinner = Gtk.Spinner()
+        spinner.start()
+        spinner.set_halign(Gtk.Align.CENTER)
+        spinner.set_valign(Gtk.Align.CENTER)
+        spinner.set_vexpand(True)
+        video_area.append(spinner)
+        
+        VideoPlayer.load_and_play(url, video_area, spinner, window_ref, original_url)
+        video_box.append(video_area)
+        
+        controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        controls.set_margin_top(6)
+        controls.set_margin_bottom(6)
+        controls.set_margin_start(6)
+        controls.set_margin_end(6)
+        
+        play_btn = Gtk.Button(icon_name="media-playback-start-symbolic")
+        play_btn.set_tooltip_text("Play/Pause")
+        play_btn.set_size_request(40, 40)
+        play_btn.connect("clicked", lambda b: VideoPlayer.toggle_play(video_area))
+        controls.append(play_btn)
+        
+        mute_btn = Gtk.Button(icon_name="audio-volume-muted-symbolic")
+        mute_btn.set_tooltip_text("Mute/Unmute")
+        mute_btn.set_size_request(40, 40)
+        mute_btn.connect("clicked", lambda b: VideoPlayer.toggle_mute(video_area, mute_btn))
+        controls.append(mute_btn)
+        
+        vol_scale = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL)
+        vol_scale.set_range(0, 100)
+        vol_scale.set_value(0)
+        vol_scale.set_size_request(100, -1)
+        vol_scale.set_hexpand(True)
+        vol_scale.connect("value-changed", lambda s: VideoPlayer.set_volume(video_area, s.get_value() / 100))
+        controls.append(vol_scale)
+        
+        if original_url and ("youtube.com" in original_url or "youtu.be" in original_url):
+            yt_link = Gtk.LinkButton(uri=original_url, label="Open in YouTube")
+            yt_link.set_halign(Gtk.Align.END)
+            yt_link.set_hexpand(True)
+            controls.append(yt_link)
+        
+        video_box.append(controls)
+        box.append(video_box)
+
+    @staticmethod
+    def render(content, window_ref, post_widget_ref=None):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        
+        if not content:
+            error_label = Gtk.Label(label="[No content to display]", xalign=0)
+            error_label.add_css_class("dim-label")
+            box.append(error_label)
+            return box
+
+        try:
+            clean_content = html.unescape(content)
+            parts = ContentRenderer.LINK_REGEX.split(clean_content)
+            current_text_buffer = []
+
+            for part in parts:
+                if not part:
+                    continue
+
+                if ContentRenderer.LINK_REGEX.match(part):
+                    if current_text_buffer:
+                        ContentRenderer._add_text(box, "".join(current_text_buffer))
+                        current_text_buffer = []
+
+                    clean_part = part.rstrip(".!,?;']}" )
+                    trailing = part[len(clean_part) :]
+
+                    if clean_part.startswith("nostr:"):
+                        ContentRenderer._add_nostr_card(box, clean_part, window_ref, post_widget_ref)
+                    elif ContentRenderer.is_image_url(clean_part):
+                        ContentRenderer._add_image(box, clean_part, window_ref)
+                    elif ContentRenderer.is_video_url(clean_part):
+                        ContentRenderer._add_video(box, clean_part, window_ref)
+                    elif "youtube.com/watch" in clean_part or "youtu.be/" in clean_part:
+                        raw_stream_url = get_youtube_stream(clean_part)
+                        ContentRenderer._add_video(box, raw_stream_url, window_ref, clean_part)
+                    else:
+                        ContentRenderer._add_link(box, clean_part)
+
+                    if trailing:
+                        current_text_buffer.append(trailing)
+                else:
+                    current_text_buffer.append(part)
+
+            if current_text_buffer:
+                ContentRenderer._add_text(box, "".join(current_text_buffer))
+
+        except Exception as e:
+            error_label = Gtk.Label(label=f"[Render error: {str(e)[:50]}]", xalign=0)
+            error_label.add_css_class("dim-label")
+            box.append(error_label)
+
+        return box
+
+    @staticmethod
+    def _add_text(box, text):
+        label = Gtk.Label(label=text, xalign=0, selectable=True)
+        label.set_use_markup(False)
+        label.set_wrap(True)
+        label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        label.set_max_width_chars(60)
+        box.append(label)
+
+    @staticmethod
+    def _add_link(box, url, label=None):
+        disp = label if label else (url[:47] + "..." if len(url) > 50 else url)
+        markup = f'<a href="{GLib.markup_escape_text(url)}">{GLib.markup_escape_text(disp)}</a>'
+        lbl = Gtk.Label(
+            label=markup, xalign=0, wrap=True, selectable=True, use_markup=True
+        )
+        lbl.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        lbl.set_ellipsize(Pango.EllipsizeMode.END)
+        box.append(lbl)
+
+    @staticmethod
+    def _add_image(box, url, window_ref):
+        img_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        img_box.set_halign(Gtk.Align.FILL)
+        img_box.set_hexpand(True)
+        img_box.set_size_request(-1, 200)
+
+        spinner = Gtk.Spinner()
+        spinner.start()
+        spinner.set_halign(Gtk.Align.CENTER)
+        spinner.set_valign(Gtk.Align.CENTER)
+        spinner.set_vexpand(True)
+        img_box.append(spinner)
+        box.append(img_box)
+
+        ImageLoader.load_image_into_widget(url, img_box, spinner, window_ref)
+
+    @staticmethod
+    def _add_nostr_card(box, url, window, post_widget_ref=None):
+        try:
+            parts = url.split(":")
+            if len(parts) < 2:
+                return
+
+            bech32_str = parts[1]
+            is_event = "nevent" in url or "note" in url
+            is_profile = "nprofile" in url or "npub" in url
+
+            if is_event:
+                hex_id = ContentRenderer._extract_hex_id(bech32_str)
+                if not hex_id:
+                    return
+
+                event = window.db.get_event_by_id(hex_id)
+
+                quote_frame = Gtk.Frame(css_classes=["quote-card"])
+                quote_box = Gtk.Box(
+                    orientation=Gtk.Orientation.VERTICAL,
+                    spacing=6,
+                    margin_top=8,
+                    margin_bottom=8,
+                    margin_start=8,
+                    margin_end=8,
+                )
+                quote_frame.set_child(quote_box)
+
+                if event:
+                    ContentRenderer._build_quote_content(quote_box, event, window)
+                else:
+                    lbl = Gtk.Label(label=f"Loading Quoted Event...", css_classes=["dim-label"])
+                    quote_box.append(lbl)
+                    window.client.request_once(
+                        f"quote_{hex_id[:8]}", {"ids": [hex_id], "limit": 1}
+                    )
+
+                    if post_widget_ref:
+                        if not hasattr(post_widget_ref, "quote_widgets"):
+                            post_widget_ref.quote_widgets = []
+                        post_widget_ref.quote_widgets.append((hex_id, quote_box))
+
+                wrapper_btn = Gtk.Button(css_classes=["flat", "quote-wrapper"])
+                wrapper_btn.set_child(quote_frame)
+                wrapper_btn.connect(
+                    "clicked",
+                    lambda b: window.show_thread(hex_id, "Unknown", "Loading..."),
+                )
+                box.append(wrapper_btn)
+
+            elif is_profile:
+                hex_pk = ContentRenderer._extract_hex_id(bech32_str)
+                if not hex_pk:
+                    return
+
+                prof_frame = Gtk.Frame(css_classes=["profile-card"])
+                prof_box = Gtk.Box(
+                    orientation=Gtk.Orientation.HORIZONTAL,
+                    spacing=10,
+                    margin_top=8,
+                    margin_bottom=8,
+                    margin_start=8,
+                    margin_end=8,
+                )
+                prof_frame.set_child(prof_box)
+
+                av = Adw.Avatar(size=32, show_initials=True, text="?")
+                prof_box.append(av)
+
+                vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+                lbl_name = Gtk.Label(label="User Profile", css_classes=["heading"], xalign=0)
+                lbl_sub = Gtk.Label(
+                    label=hex_pk[:8] + "...",
+                    css_classes=["caption", "dim-label"],
+                    xalign=0,
+                )
+                vbox.append(lbl_name)
+                vbox.append(lbl_sub)
+                prof_box.append(vbox)
+
+                profile = window.db.get_profile(hex_pk)
+                if profile:
+                    name = profile.get("display_name") or profile.get("name")
+                    if name:
+                        lbl_name.set_label(name)
+                        av.set_text(name)
+                    if profile.get("picture"):
+                        picture_url = profile["picture"]
+                        if ContentRenderer.is_video_url(picture_url):
+                            prof_box.remove(av)
+                            av_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+                            av_container.set_size_request(32, 32)
+                            av_container.set_halign(Gtk.Align.CENTER)
+                            VideoLoader.load_and_play(picture_url, av_container, None)
+                            prof_box.append(av_container)
+                        else:
+                            ImageLoader.load_avatars(
+                                profile["picture"], lambda t: av.set_custom_image(t)
+                            )
+                else:
+                    window.client.fetch_profile(hex_pk)
+
+                if post_widget_ref:
+                    if not hasattr(post_widget_ref, "mention_widgets"):
+                        post_widget_ref.mention_widgets = []
+                    post_widget_ref.mention_widgets.append((hex_pk, lbl_name, av))
+
+                wrapper_btn = Gtk.Button(css_classes=["flat", "quote-wrapper"])
+                wrapper_btn.set_child(prof_frame)
+
+                def on_click_prof(b):
+                    window.show_profile(hex_pk)
+
+                wrapper_btn.connect("clicked", on_click_prof)
+                box.append(wrapper_btn)
+
+        except Exception as e:
+            print(f"[Renderer] Card Render Error: {e}")
+
+    @staticmethod
+    def _build_quote_content(container, event, window):
+        pubkey = event["pubkey"]
+        prof = window.db.get_profile(pubkey)
+        name = pubkey[:8]
+        if prof:
+            name = prof.get("display_name") or prof.get("name") or name
+
+        h_box = Gtk.Box(spacing=6)
+        av = Adw.Avatar(size=24, show_initials=True, text=name)
+        if prof and prof.get("picture"):
+            picture_url = prof["picture"]
+            if ContentRenderer.is_video_url(picture_url):
+                h_box.append(av)
+                av_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+                av_container.set_size_request(24, 24)
+                av_container.set_halign(Gtk.Align.CENTER)
+                VideoLoader.load_and_play(picture_url, av_container, None)
+                h_box.append(av_container)
+            else:
+                h_box.append(av)
+                ImageLoader.load_avatars(
+                    prof["picture"], lambda t: av.set_custom_image(t)
+                )
+        else:
+            h_box.append(av)
+
+        lbl_name = Gtk.Label(label=name, css_classes=["heading", "caption-heading"])
+        h_box.append(lbl_name)
+        container.append(h_box)
+
+        content = event.get("content", "")
+        if len(content) > 140:
+            content = content[:140] + "..."
+        lbl_content = Gtk.Label(label=content, wrap=True, xalign=0, max_width_chars=40)
+        lbl_content.set_ellipsize(Pango.EllipsizeMode.END)
+        container.append(lbl_content)
+
+    @staticmethod
+    def _extract_hex_id(bech32_str):
+        try:
+            hrp, data = nostr_utils.bech32_decode(bech32_str)
+            if not data:
+                return None
+            acc = 0
+            bits = 0
+            ret = []
+            maxv = 255
+            max_acc = (1 << 12) - 1
+            for value in data:
+                if value < 0 or (value >> 5):
+                    return None
+                acc = ((acc << 5) | value) & max_acc
+                bits += 5
+                while bits >= 8:
+                    bits -= 8
+                    ret.append((acc >> bits) & maxv)
+            raw_bytes = bytes(ret)
+            if hrp in ["note", "npub"]:
+                return raw_bytes.hex()
+            if hrp in ["nevent", "nprofile"]:
+                i = 0
+                while i < len(raw_bytes):
+                    if i + 2 > len(raw_bytes):
+                        break
+                    t = raw_bytes[i]
+                    l = raw_bytes[i + 1]
+                    if i + 2 + l > len(raw_bytes):
+                        break
+                    if t == 0 and l == 32:
+                        return raw_bytes[i + 2 : i + 2 + l].hex()
+                    i += 2 + l
+        except Exception:
+            pass
+        return None
+
+
+def _launch_ext(win, s):
+    try:
+        Gtk.UriLauncher(uri=f"https://njump.me/{s}").launch(win, None, None)
+    except Exception:
+        pass
+
+
+def get_youtube_stream(url):
+    try:
+        result = subprocess.run(
+            ["yt-dlp", "-g", "-f", "best[ext=mp4]", url],
+            capture_output=True, text=True, check=True
+        )
+        return result.stdout.strip()
+    except subprocess.CalledProcessError as e:
+        print(f"Failed to resolve YouTube URL: {e}")
+        return url
+
+
+class ImageLoader:
+    _executor = concurrent.futures.ThreadPoolExecutor(max_workers=16)
+    _cache = {}
+    _cache_lock = threading.Lock()
+    _ongoing = {}
+    _ongoing_lock = threading.Lock()
+
+    @staticmethod
+    def load_avatars(url, callback):
+        ImageLoader._request_image(url, callback, size=(64, 64))
+
+    @staticmethod
+    def load_image_into_widget(url, container, spinner, window_ref=None):
+        def on_ready(texture):
+            if spinner and spinner.get_parent() == container:
+                container.remove(spinner)
+
+            if texture:
+                width = texture.get_width()
+                height = texture.get_height()
+                ratio = width / height if height > 0 else 1.0
+
+                available_width = 600
+                if window_ref:
+                    win_w = window_ref.get_width()
+                    if win_w < 650:
+                        available_width = win_w - 40
+                    else:
+                        available_width = 600
+
+                req_height = int(available_width / ratio)
+                container.set_size_request(-1, req_height)
+
+                p = Gtk.Picture.new_for_paintable(texture)
+                p.set_can_shrink(True)
+                p.set_content_fit(Gtk.ContentFit.CONTAIN)
+                p.set_halign(Gtk.Align.FILL)
+
+                container.append(p)
+            else:
+                container.append(Gtk.Image.new_from_icon_name("image-missing-symbolic"))
+
+        ImageLoader._request_image(url, on_ready, size=None)
+
+    @staticmethod
+    def _request_image(url, callback, size=None):
+        if not url:
+            callback(None)
+            return
+
+        with ImageLoader._cache_lock:
+            if url in ImageLoader._cache:
+                callback(ImageLoader._cache[url])
+                return
+
+        with ImageLoader._ongoing_lock:
+            if url in ImageLoader._ongoing:
+                ImageLoader._ongoing[url].append((callback, size))
+                return
+            else:
+                ImageLoader._ongoing[url] = [(callback, size)]
+
+        ImageLoader._executor.submit(ImageLoader._worker_fetch, url)
+
+    @staticmethod
+    def _worker_fetch(url):
+        texture = None
+        try:
+            if url.startswith("http"):
+                req = urllib.request.Request(url, headers={"User-Agent": "Gnostr/1.0"})
+                with urllib.request.urlopen(req, timeout=15) as r:
+                    data = r.read()
+                loader = GdkPixbuf.PixbufLoader()
+                loader.write(data)
+                loader.close()
+                pix = loader.get_pixbuf()
+                if pix:
+                    texture = Gdk.Texture.new_for_pixbuf(pix)
+        except Exception:
+            pass
+        GLib.idle_add(ImageLoader._notify_main_thread, url, texture)
+
+    @staticmethod
+    def _notify_main_thread(url, texture):
+        if texture:
+            with ImageLoader._cache_lock:
+                ImageLoader._cache[url] = texture
+
+        with ImageLoader._ongoing_lock:
+            callbacks = ImageLoader._ongoing.pop(url, [])
+
+        for cb, size in callbacks:
+            cb(texture)
+        return False
+
+
+class VideoLoader:
+    @staticmethod
+    def load_and_play(url, container, spinner, window_ref=None):
+        VideoPlayer.load_and_play(url, container, spinner, window_ref)
+
+
+class VideoPlayer:
+    _cache = {}
+    _lock = threading.Lock()
+
+    @staticmethod
+    def load_and_play(url, container, spinner, window_ref=None, original_url=None):
+        def on_ready(video):
+            if spinner and spinner.get_parent() == container:
+                container.remove(spinner)
+
+            if video:
+                req_w, req_h = container.get_size_request()
+                if req_w > 0 and req_h > 0:
+                    video.set_size_request(req_w, req_h)
+                else:
+                    video.set_size_request(-1, 200)
+                video.set_halign(Gtk.Align.FILL)
+                video.set_valign(Gtk.Align.FILL)
+
+                if video.get_parent() is not None:
+                    video.get_parent().remove(video)
+                container.append(video)
+            else:
+                container.append(Gtk.Image.new_from_icon_name("video-symbolic"))
+
+        VideoPlayer._fetch_player(url, on_ready, original_url=original_url)
+
+    @staticmethod
+    def _fetch_player(url, callback, original_url=None):
+        with VideoPlayer._lock:
+            if url in VideoPlayer._cache:
+                cached_video = VideoPlayer._cache[url]
+                if original_url and hasattr(cached_video, '_original_url'):
+                    cached_video._original_url = original_url
+                callback(cached_video)
+                return
+
+        video = None
+        try:
+            print(f"🎬 [Video] Building pipeline for: {url[:80]}...")
+
+            # Create playbin3 with just the URI — it handles all formats internally
+            pipeline = Gst.parse_launch(
+                f"playbin3 uri={url}"
+            )
+
+            if not pipeline:
+                print("🎬 [Video] FAIL: Gst.parse_launch returned None")
+                raise RuntimeError("Pipeline creation returned None")
+
+            print("🎬 [Video] Pipeline created OK")
+
+            # Create appsink separately and set as video-sink property
+            # (pipeline string approach doesn't expose the named element)
+            sink = Gst.ElementFactory.make("appsink", "sink")
+            if not sink:
+                print("🎬 [Video] FAIL: could not create appsink element")
+                raise RuntimeError("appsink creation failed")
+
+            pipeline.set_property("video-sink", sink)
+            print("🎬 [Video] appsink created and set as video-sink OK")
+
+            # Create a Gtk.Picture to display frames
+            picture = Gtk.Picture()
+            picture.set_can_shrink(True)
+            print("🎬 [Video] Gtk.Picture created")
+
+            def on_sample(s):
+                try:
+                    sample = s.pull_sample()
+                    if sample:
+                        print(f"🎬 [Video] Frame received — pulling sample")
+                        buf = sample.get_buffer()
+                        caps = sample.get_caps()
+                        if caps and buf:
+                            structure = caps.get_structure(0)
+                            width = structure.get_int("width")[1]
+                            height = structure.get_int("height")[1]
+                            print(f"🎬 [Video] Frame size: {width}x{height}")
+
+                            success, map_info = buf.map(Gst.MapFlags.READ)
+                            if success:
+                                try:
+                                    raw = bytes(map_info.data)
+                                    pixbuf = GdkPixbuf.Pixbuf.new_from_bytes(
+                                        GLib.Bytes.new(raw),
+                                        GdkPixbuf.Colorspace.RGB, 8,
+                                        width, height, width * 3
+                                    )
+                                    if pixbuf:
+                                        print(f"🎬 [Video] Pixbuf created OK, creating texture")
+                                        texture = Gdk.Texture.new_for_pixbuf(pixbuf)
+                                        GLib.idle_add(picture.set_paintable, texture)
+                                        print(f"🎬 [Video] Texture set on picture via idle_add")
+                                    else:
+                                        print(f"🎬 [Video] FAIL: pixbuf is None")
+                                except Exception as e:
+                                    print(f"🎬 [Video] FAIL in frame conversion: {e}")
+                                buf.unmap(map_info)
+                        else:
+                            print(f"🎬 [Video] Sample has no caps/buf: caps={caps}, buf={buf}")
+                    else:
+                        print(f"🎬 [Video] emit('pull-sample') returned None — no frame available")
+                except Exception as e:
+                    print(f"🎬 [Video] FAIL in on_sample: {e}")
+                return Gst.FlowReturn.OK
+
+            sink.set_property("emit-signals", True)
+            sink.set_property("max-buffers", 1)
+            sink.set_property("drop", True)
+            sink.connect("new-sample", on_sample)
+            print("🎬 [Video] appsink configured and connected")
+
+            # Bus for error/EOS handling
+            bus = pipeline.get_bus()
+            bus.add_signal_watch()
+            def on_bus_message(bus, msg, p=pipeline, media_url=url):
+                # Gst.MessageType is a flags enum — use bitwise AND to check
+                t = msg.type
+                if t & Gst.MessageType.ERROR:
+                    err, debug = msg.parse_error()
+                    print(f"🎬 [Media Codec Error] {media_url}\n  -> {err.message}")
+                elif t & Gst.MessageType.EOS:
+                    print(f"🎬 [Media] EOS — looping {media_url[:50]}...")
+                    p.seek_simple(Gst.Format.TIME, Gst.SeekFlags.FLUSH, 0)
+                elif t & Gst.MessageType.WARNING:
+                    err, debug = msg.parse_warning()
+                    print(f"🎬 [Media Warning] {media_url}\n  -> {err.message}")
+                elif t & Gst.MessageType.STATE_CHANGED:
+                    old, new, pending = msg.parse_state_changed()
+                    if pending == Gst.State.VOID_PENDING:
+                        print(f"🎬 [Media] State changed: {old} → {new}")
+                else:
+                    print(f"🎬 [Media] Bus message: {t}")
+            bus.connect("message", on_bus_message)
+            print("🎬 [Video] Bus watcher connected")
+
+            # Start in paused state
+            pipeline.set_state(Gst.State.PAUSED)
+            print("🎬 [Video] Pipeline set to PAUSED")
+
+            video = picture
+            video._pipeline = pipeline
+            video._appsink = sink
+            video._is_playing = False
+            video._is_muted = True
+            video._original_url = original_url or url
+
+            print("🎬 [Video] Player setup complete — waiting for play")
+
+        except Exception as e:
+            print(f"🎬 [Video] Pipeline failed: {e}")
+            video = None
+
+        if video:
+            with VideoPlayer._lock:
+                VideoPlayer._cache[url] = video
+
+        callback(video)
+
+    @staticmethod
+    def _find_video(video_container):
+        """Find the video widget (Gtk.Picture) in the container."""
+        for child in video_container:
+            if isinstance(child, Gtk.Picture):
+                return child
+        return None
+
+    @staticmethod
+    def toggle_play(video_container):
+        video = VideoPlayer._find_video(video_container)
+        if not video or not hasattr(video, '_pipeline'):
+            print("🎬 [Video] toggle_play: no video or pipeline found")
+            return
+        pipeline = video._pipeline
+        video._is_playing = not video._is_playing
+        print(f"🎬 [Video] toggle_play: {'PLAYING' if video._is_playing else 'PAUSED'}")
+        if video._is_playing:
+            ret = pipeline.set_state(Gst.State.PLAYING)
+            print(f"🎬 [Video] set_state(PLAYING) returned: {ret}")
+        else:
+            ret = pipeline.set_state(Gst.State.PAUSED)
+            print(f"🎬 [Video] set_state(PAUSED) returned: {ret}")
+
+    @staticmethod
+    def toggle_mute(video_container, mute_button):
+        video = VideoPlayer._find_video(video_container)
+        if not video or not hasattr(video, '_pipeline'):
+            print("🎬 [Video] toggle_mute: no video or pipeline found")
+            return
+        pipeline = video._pipeline
+        video._is_muted = not video._is_muted
+        print(f"🎬 [Video] toggle_mute: {'MUTED' if video._is_muted else 'UNMUTED'}")
+        pipeline.set_property("volume", 0.0 if video._is_muted else 1.0)
+        mute_button.set_icon_name(
+            "audio-volume-muted-symbolic" if video._is_muted else "audio-volume-high-symbolic"
+        )
+
+    @staticmethod
+    def set_volume(video_container, volume):
+        video = VideoPlayer._find_video(video_container)
+        if not video or not hasattr(video, '_pipeline'):
+            return
+        pipeline = video._pipeline
+        video._is_muted = (volume == 0.0)
+        pipeline.set_property("volume", volume)
+        if volume > 0:
+            controls = video_container.get_next_sibling()
+            if controls:
+                for child in controls:
+                    if isinstance(child, Gtk.Button):
+                        if child.get_icon_name() == "audio-volume-muted-symbolic":
+                            child.set_icon_name("audio-volume-high-symbolic")
+                            break
