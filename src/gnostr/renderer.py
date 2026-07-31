@@ -61,6 +61,22 @@ class ContentRenderer:
         VideoPlayer.load_and_play(url, video_area, spinner, window_ref, original_url)
         video_box.append(video_area)
         
+        
+        # Position/seek bar
+        position_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        position_row.set_margin_start(6)
+        position_row.set_margin_end(6)
+        position_scale = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL)
+        position_scale.set_range(0, 100)
+        position_scale.set_value(0)
+        position_scale.set_hexpand(True)
+        position_scale.set_draw_value(False)
+        position_scale.set_sensitive(False)
+        position_scale.connect("value-changed", lambda s: VideoPlayer.seek_to(video_area, s.get_value()))
+        position_label = Gtk.Label(label="0:00 / 0:00")
+        position_row.append(position_scale)
+        position_row.append(position_label)
+        video_box.append(position_row)
         controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         controls.set_margin_top(6)
         controls.set_margin_bottom(6)
@@ -659,6 +675,7 @@ class VideoPlayer:
             pipeline.set_state(Gst.State.PAUSED)
             print("🎬 [Video] Pipeline set to PAUSED")
 
+            VideoPlayer._start_position_timer(container, video)
             video = picture
             video._pipeline = pipeline
             video._appsink = sink
@@ -732,3 +749,69 @@ class VideoPlayer:
                         if child.get_icon_name() == "audio-volume-muted-symbolic":
                             child.set_icon_name("audio-volume-high-symbolic")
                             break
+    @staticmethod
+    def seek_to(video_container, percent):
+        video = VideoPlayer._find_video(video_container)
+        if not video or not hasattr(video, '_pipeline'):
+            return
+        pipe = video._pipeline
+        dur = video._duration_ns if hasattr(video, '_duration_ns') and video._duration_ns > 0 else 0
+        if dur > 0:
+            ns = int(dur * percent / 100.0)
+            pipe.seek_simple(Gst.Format.TIME, Gst.SeekFlags.FLUSH, ns)
+
+    @staticmethod
+    def _start_position_timer(video_container, video):
+        """Start a GLib timeout to update position/seek bar every 500ms"""
+        def update():
+            pipe = video._pipeline
+            if not pipe:
+                return True
+            # Find position scale and label
+            video_box = video_container.get_parent()
+            if not video_box:
+                return True
+            position_scale = None
+            position_label = None
+            children = list(video_box)
+            if len(children) >= 3:
+                pos_row = children[1]
+                if isinstance(pos_row, Gtk.Box):
+                    for c in pos_row:
+                        if isinstance(c, Gtk.Scale):
+                            position_scale = c
+                        elif isinstance(c, Gtk.Label):
+                            position_label = c
+            if not position_scale:
+                return True
+
+            state = pipe.get_state(0)
+            if state[1] != Gst.State.PLAYING:
+                return True
+
+            # Query duration
+            dur_result = pipe.query_duration(Gst.Format.TIME)
+            if dur_result[0]:
+                dur_ns = dur_result[1]
+                video._duration_ns = dur_ns
+            else:
+                dur_ns = video._duration_ns if hasattr(video, '_duration_ns') else 0
+
+            # Query position
+            pos_result = pipe.query_position(Gst.Format.TIME)
+            if pos_result[0]:
+                pos_ns = pos_result[1]
+                if dur_ns > 0:
+                    pct = pos_ns * 100.0 / dur_ns
+                    position_scale.set_value(pct)
+                    position_scale.set_sensitive(True)
+                    # Update label
+                    pos_sec = pos_ns // 1000000000
+                    dur_sec = dur_ns // 1000000000
+                    pos_min, pos_s = divmod(pos_sec, 60)
+                    dur_min, dur_s = divmod(dur_sec, 60)
+                    if position_label:
+                        position_label.set_text(f"{pos_min}:{pos_s:02d} / {dur_min}:{dur_s:02d}")
+            return True
+
+        GLib.timeout_add(500, update)
