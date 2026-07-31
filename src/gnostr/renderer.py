@@ -585,6 +585,12 @@ class VideoPlayer:
                             width = structure.get_int("width")[1]
                             height = structure.get_int("height")[1]
                             print(f"🎬 [Video] Frame size: {width}x{height}")
+                            fmt = structure.get_string("format")
+                            if fmt:
+                                print(f"🎬 [Video] Pixel format: {fmt}")
+                            bufsize = buf.get_size()
+                            expected_rgb = width * height * 3
+                            print(f"🎬 [Video] Buffer size: {bufsize}, expected RGB: {expected_rgb}")
 
                             success, map_info = buf.map(Gst.MapFlags.READ)
                             if success:
