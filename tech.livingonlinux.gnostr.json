@@ -19,6 +19,7 @@
         }
     },
     "finish-args": [
+        "--socket=pulseaudio",
         "--share=network",
         "--share=ipc",
         "--socket=fallback-x11",
