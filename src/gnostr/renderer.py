@@ -565,6 +565,7 @@ class VideoPlayer:
                 raise RuntimeError("appsink creation failed")
 
             pipeline.set_property("video-sink", sink)
+            sink.set_property("caps", Gst.Caps.from_string("video/x-raw,format=RGB"))
             print("🎬 [Video] appsink created and set as video-sink OK")
 
             # Create a Gtk.Picture to display frames
