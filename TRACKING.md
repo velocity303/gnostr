@@ -270,7 +270,7 @@ flake8 src/ tests/ --max-line-length=120
 ---
 
 ## Next Steps
-1. ⏳ Test video controls on multiple platforms (Phase 4)
-2. Fix any edge cases discovered during testing
-3. Update documentation with new features
+1. 🔶 Performance optimization: downscale 4K frames before pixbuf conversion, reuse textures
+2. Suppress GStreamer CRITICAL stderr noise for compound WARNING messages
+3. Gate or remove debug 🎬 logging for production
 4. Add unit tests for VideoPlayer controls
