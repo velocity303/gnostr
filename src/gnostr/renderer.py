@@ -1,5 +1,6 @@
 import re
 import html
+from collections import OrderedDict
 import gi
 import urllib.request
 import threading
@@ -429,11 +430,13 @@ def get_youtube_stream(url):
 
 
 class ImageLoader:
-    _executor = concurrent.futures.ThreadPoolExecutor(max_workers=16)
-    _cache = {}
+    _executor = concurrent.futures.ThreadPoolExecutor(max_workers=6)
+    _cache = OrderedDict()  # bounded LRU: evicts oldest beyond _CACHE_MAX
     _cache_lock = threading.Lock()
     _ongoing = {}
     _ongoing_lock = threading.Lock()
+    _CACHE_MAX = 64  # keep texture memory bounded on mobile
+    MAX_WIDHT = 800  # max inline image dimension (main.py detect_display_metrics may override)
 
     @staticmethod
     def load_avatars(url, callback):
@@ -490,10 +493,10 @@ class ImageLoader:
             else:
                 ImageLoader._ongoing[url] = [(callback, size)]
 
-        ImageLoader._executor.submit(ImageLoader._worker_fetch, url)
+        ImageLoader._executor.submit(ImageLoader._worker_fetch, url, size)
 
     @staticmethod
-    def _worker_fetch(url):
+    def _worker_fetch(url, size=None):
         texture = None
         try:
             if url.startswith("http"):
@@ -505,16 +508,33 @@ class ImageLoader:
                 loader.close()
                 pix = loader.get_pixbuf()
                 if pix:
+                    # Downscale before texture creation — never hold full-res
+                    # textures on mobile. size=(w,h) fits within box; None caps to MAX_WIDHT.
+                    nw, nh = ImageLoader._target_size(pix, size)
+                    if nw < pix.get_width() or nh < pix.get_height():
+                        pix = pix.scale_simple(nw, nh, GdkPixbuf.InterpType.BILINEAR)
                     texture = Gdk.Texture.new_for_pixbuf(pix)
         except Exception:
             pass
         GLib.idle_add(ImageLoader._notify_main_thread, url, texture)
 
     @staticmethod
+    def _target_size(pix, size=None):
+        w, h = pix.get_width(), pix.get_height()
+        if size and size[0] and size[1]:
+            scale = min(size[0] / w, size[1] / h, 1.0)
+        else:
+            scale = min(ImageLoader.MAX_WIDHT / w, 1.0)
+        return max(1, int(w * scale)), max(1, int(h * scale))
+
+    @staticmethod
     def _notify_main_thread(url, texture):
         if texture:
             with ImageLoader._cache_lock:
                 ImageLoader._cache[url] = texture
+                ImageLoader._cache.move_to_end(url)
+                while len(ImageLoader._cache) > ImageLoader._CACHE_MAX:
+                    ImageLoader._cache.popitem(last=False)
 
         with ImageLoader._ongoing_lock:
             callbacks = ImageLoader._ongoing.pop(url, [])
@@ -531,8 +551,9 @@ class VideoLoader:
 
 
 class VideoPlayer:
-    _cache = {}
+    _cache = OrderedDict()  # bounded LRU of live players
     _lock = threading.Lock()
+    _CACHE_MAX = 6  # tear down decoders once they scroll far out of view
 
     @staticmethod
     def load_and_play(url, container, spinner, window_ref=None, original_url=None):
@@ -566,6 +587,7 @@ class VideoPlayer:
                 cached_video = VideoPlayer._cache[url]
                 if original_url and hasattr(cached_video, '_original_url'):
                     cached_video._original_url = original_url
+                VideoPlayer._cache.move_to_end(url)  # LRU touch
                 callback(cached_video)
                 return
 
@@ -709,6 +731,17 @@ class VideoPlayer:
         if video:
             with VideoPlayer._lock:
                 VideoPlayer._cache[url] = video
+                VideoPlayer._cache.move_to_end(url)
+                # Tear down oldest players so decoders don't accumulate on mobile.
+                # The evicted widget is scrolled out of view; it will re-create if revisited.
+                while len(VideoPlayer._cache) > VideoPlayer._CACHE_MAX:
+                    old_url, old_video = VideoPlayer._cache.popitem(last=False)
+                    try:
+                        p = getattr(old_video, "_pipeline", None)
+                        if p:
+                            p.set_state(Gst.State.NULL)  # release decoder + buffers
+                    except Exception:
+                        pass
 
         callback(video)
 
