@@ -218,7 +218,7 @@ Successfully implemented enhanced video playback controls with the following fea
 - Updated tests to use GTK4 API correctly
 - Verified test collection works
 
-### 2026-07-23 (Current)
+### 2026-07-23
 - Fixed Flatpak build "Command 'gnostr' not found" error
   - Removed unnecessary PYTHONPATH finish-arg
   - Fixed `src/meson.build` to include `subdir('gnostr')`
@@ -233,6 +233,23 @@ Successfully implemented enhanced video playback controls with the following fea
   - ✅ Phase 2: Added control bar UI with play/pause, mute, volume
   - ✅ Phase 3: Added YouTube link button with original URL preservation
   - ⏳ Phase 4: Testing and edge case verification (ready for user testing)
+
+### 2026-07-31
+- **Video playback verified working end-to-end**
+  - ✅ Video frames render correctly (RGB pixel format via appsink caps fix)
+  - ✅ Audio plays and mutes correctly (added `--socket=pulseaudio`)
+  - ✅ Position/seek bar tracks playback and allows seeking
+  - ✅ Playback confirmed (state transitions to PLAYING)
+- **Key bugs fixed during playback debugging:**
+  - `s.emit("pull-sample")` → `s.pull_sample()` (wrong GI method)
+  - `parse_error()` on WARNING messages → `parse_warning()` + try/except
+  - `new_from_bytes()` missing `has_alpha` arg (takes 7, gave 6)
+  - Appsink not requesting RGB caps → added `video/x-raw,format=RGB`
+  - `_start_position_timer` scope bug (container undefined) + indentation
+- **Optimizations applied:**
+  - ✅ Suppressed GStreamer CRITICAL noise: ERROR/EOS/WARNING checks use exact `==` match, so parse_* only called on pure-typed messages
+  - ✅ Performance: frames >1280px downscaled via `scale_simple` before Gdk.Texture (4K→~1280px, cheaper GPU upload)
+  - ✅ Debug logging: all 35 `🎬` prints gated behind `_DEBUG_VIDEO` flag (default off)
 
 ---
 
