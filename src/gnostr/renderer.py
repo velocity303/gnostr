@@ -546,8 +546,8 @@ class ImageLoader:
 
 class VideoLoader:
     @staticmethod
-    def load_and_play(url, container, spinner, window_ref=None):
-        VideoPlayer.load_and_play(url, container, spinner, window_ref)
+    def load_and_play(url, container, spinner, window_ref=None, autoplay=False):
+        VideoPlayer.load_and_play(url, container, spinner, window_ref, autoplay=autoplay)
 
 
 class VideoPlayer:
@@ -556,7 +556,7 @@ class VideoPlayer:
     _CACHE_MAX = 6  # tear down decoders once they scroll far out of view
 
     @staticmethod
-    def load_and_play(url, container, spinner, window_ref=None, original_url=None):
+    def load_and_play(url, container, spinner, window_ref=None, original_url=None, autoplay=False):
         def on_ready(video):
             if spinner and spinner.get_parent() == container:
                 container.remove(spinner)
@@ -574,14 +574,17 @@ class VideoPlayer:
                     video.get_parent().remove(video)
                 container.append(video)
                 VideoPlayer._start_position_timer(container, video)
+                if autoplay and hasattr(video, "_pipeline"):
+                    video._pipeline.set_state(Gst.State.PLAYING)
+                    video._is_playing = True
 
             else:
                 container.append(Gtk.Image.new_from_icon_name("video-symbolic"))
 
-        VideoPlayer._fetch_player(url, on_ready, original_url=original_url)
+        VideoPlayer._fetch_player(url, on_ready, original_url=original_url, autoplay=autoplay)
 
     @staticmethod
-    def _fetch_player(url, callback, original_url=None):
+    def _fetch_player(url, callback, original_url=None, autoplay=False):
         with VideoPlayer._lock:
             if url in VideoPlayer._cache:
                 cached_video = VideoPlayer._cache[url]
@@ -606,80 +609,25 @@ class VideoPlayer:
 
             _vlog("🎬 [Video] Pipeline created OK")
 
-            # Create appsink separately and set as video-sink property
-            # (pipeline string approach doesn't expose the named element)
-            sink = Gst.ElementFactory.make("appsink", "sink")
+            # Use gtk4paintablesink — GStreamer renders frames to a Gdk.Paintable
+            # natively in C with proper frame-dropping. No per-frame Python
+            # conversion (fixes stutter on non-GIF video).
+            sink = Gst.ElementFactory.make("gtk4paintablesink", "sink")
             if not sink:
-                _vlog("🎬 [Video] FAIL: could not create appsink element")
-                raise RuntimeError("appsink creation failed")
+                _vlog("🎬 [Video] FAIL: could not create gtk4paintablesink element")
+                raise RuntimeError("gtk4paintablesink creation failed")
 
             pipeline.set_property("video-sink", sink)
-            sink.set_property("caps", Gst.Caps.from_string("video/x-raw,format=RGB"))
-            _vlog("🎬 [Video] appsink created and set as video-sink OK")
+            _vlog("🎬 [Video] gtk4paintablesink created and set as video-sink OK")
 
-            # Create a Gtk.Picture to display frames
+            # Create a Gtk.Picture and bind the sink's paintable directly — no
+            # manual frame loop, no per-frame texture churn.
             picture = Gtk.Picture()
             picture.set_can_shrink(True)
-            _vlog("🎬 [Video] Gtk.Picture created")
-
-            def on_sample(s):
-                try:
-                    sample = s.pull_sample()
-                    if sample:
-                        _vlog(f"🎬 [Video] Frame received — pulling sample")
-                        buf = sample.get_buffer()
-                        caps = sample.get_caps()
-                        if caps and buf:
-                            structure = caps.get_structure(0)
-                            width = structure.get_int("width")[1]
-                            height = structure.get_int("height")[1]
-                            _vlog(f"🎬 [Video] Frame size: {width}x{height}")
-                            fmt = structure.get_string("format")
-                            if fmt:
-                                _vlog(f"🎬 [Video] Pixel format: {fmt}")
-                            bufsize = buf.get_size()
-                            expected_rgb = width * height * 3
-                            _vlog(f"🎬 [Video] Buffer size: {bufsize}, expected RGB: {expected_rgb}")
-
-                            success, map_info = buf.map(Gst.MapFlags.READ)
-                            if success:
-                                try:
-                                    raw = bytes(map_info.data)
-                                    pixbuf = GdkPixbuf.Pixbuf.new_from_bytes(
-                                        GLib.Bytes.new(raw),
-                                        GdkPixbuf.Colorspace.RGB, False, 8,
-                                        width, height, width * 3
-                                    )
-                                    if pixbuf:
-                                        # Downscale very large frames for performance
-                                        # (feed videos display ~600px, no need for 4K textures)
-                                        MAX_DIM = 1280
-                                        if width > MAX_DIM or height > MAX_DIM:
-                                            scale = min(MAX_DIM / width, MAX_DIM / height)
-                                            nw, nh = int(width * scale), int(height * scale)
-                                            pixbuf = pixbuf.scale_simple(nw, nh, GdkPixbuf.InterpType.BILINEAR)
-                                        _vlog(f"🎬 [Video] Pixbuf created OK, creating texture")
-                                        texture = Gdk.Texture.new_for_pixbuf(pixbuf)
-                                        GLib.idle_add(picture.set_paintable, texture)
-                                        _vlog(f"🎬 [Video] Texture set on picture via idle_add")
-                                    else:
-                                        _vlog(f"🎬 [Video] FAIL: pixbuf is None")
-                                except Exception as e:
-                                    _vlog(f"🎬 [Video] FAIL in frame conversion: {e}")
-                                buf.unmap(map_info)
-                        else:
-                            _vlog(f"🎬 [Video] Sample has no caps/buf: caps={caps}, buf={buf}")
-                    else:
-                        _vlog(f"🎬 [Video] emit('pull-sample') returned None — no frame available")
-                except Exception as e:
-                    _vlog(f"🎬 [Video] FAIL in on_sample: {e}")
-                return Gst.FlowReturn.OK
-
-            sink.set_property("emit-signals", True)
-            sink.set_property("max-buffers", 1)
-            sink.set_property("drop", True)
-            sink.connect("new-sample", on_sample)
-            _vlog("🎬 [Video] appsink configured and connected")
+            paintable = sink.get_property("paintable")
+            if paintable:
+                picture.set_paintable(paintable)
+            _vlog("🎬 [Video] Gtk.Picture bound to gtk4paintablesink paintable")
 
             # Bus for error/EOS handling
             bus = pipeline.get_bus()
@@ -717,7 +665,7 @@ class VideoPlayer:
 
             video = picture
             video._pipeline = pipeline
-            video._appsink = sink
+            video._sink = sink
             video._is_playing = False
             video._is_muted = True
             video._original_url = original_url or url
