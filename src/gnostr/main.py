@@ -235,7 +235,22 @@ class MainWindow(Adw.ApplicationWindow):
         pass
 
     def on_profile_updated(self, client, pubkey):
-        pass
+        # Profile metadata (kind 0) arrived — refresh avatars/names in existing
+        # post widgets so previously-missing profile pics/names actually appear.
+        prof = self.db.get_profile(pubkey)
+        if not prof:
+            return
+        name = prof.get("display_name") or prof.get("name") or pubkey[:8]
+        pic = prof.get("picture")
+        for w in self.event_widgets.values():
+            if getattr(w, "pubkey", None) != pubkey:
+                continue
+            if name:
+                w.lbl_name.set_label(name)
+            if pic:
+                ImageLoader.load_avatars(
+                    pic, lambda t, w=w: w.avatar.set_custom_image(t)
+                )
 
     def on_metrics_updated(self, client, eid, likes, reposts, replies):
         # Update labels on PostWidgets by event_id
@@ -282,7 +297,9 @@ class MainWindow(Adw.ApplicationWindow):
             w = PostWidget(
                 self, ev["pubkey"], ev["content"], ev["id"], ev.get("tags", [])
             )
-            self.feed_view.posts_box.prepend(w)
+            # cached is newest-first (ORDER BY created_at DESC); append builds
+            # newest→oldest top-to-bottom. prepend here would put oldest at top.
+            self.feed_view.posts_box.append(w)
 
 
 class GnostrApp(Adw.Application):
