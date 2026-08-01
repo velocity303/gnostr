@@ -60,7 +60,7 @@ class ProfileView(Adw.Bin):
             if ContentRenderer.is_video_url(picture_url):
                 # Show video player for animated media
                 self.avatar_container.remove(self.avatar)
-                VideoPlayer.load_and_play(picture_url, self.avatar_container, None)
+                VideoPlayer.load_and_play(picture_url, self.avatar_container, None, autoplay=True)
             else:
                 # Show static image via avatar
                 ImageLoader.load_avatar(
