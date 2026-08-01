@@ -251,6 +251,17 @@ Successfully implemented enhanced video playback controls with the following fea
   - ✅ Performance: frames >1280px downscaled via `scale_simple` before Gdk.Texture (4K→~1280px, cheaper GPU upload)
   - ✅ Debug logging: all 35 `🎬` prints gated behind `_DEBUG_VIDEO` flag (default off)
 
+### 2026-07-31 (mobile memory/perf pass)
+- **Targeted mobile memory + performance (gnostr runs on phones):**
+  - ✅ Bounded `ImageLoader._cache` to 64 entries (LRU, was unbounded plain dict)
+  - ✅ Fixed dead `size` param: `_worker_fetch` now actually downscales to requested size (avatars→64px, inline→MAX_WIDHT=800) before Gdk.Texture — was loading full-res textures into 40px widgets (~50x memory waste)
+  - ✅ Bounded `VideoPlayer._cache` to 6 live players; on eviction tears down the oldest pipeline (`set_state(NULL)`) to release decoders/buffers
+  - ✅ Reduced `ThreadPoolExecutor` 16 → 6 concurrent fetches (battery/data)
+  - ✅ Removed `print` spam in `cache_manager.py` (perf + log flood)
+- **Open / needs decision:**
+  - 🔶 Feed `Clamp(maximum_size=600)` retains all prepended posts during a long scroll session, plus `window.event_widgets` never evicts — biggest remaining leak, needs feed-pruning design
+  - 🔶 Video texture still churns every frame (new Gdk.Texture per frame); could drop MAX_DIM to ~640 for mobile or reuse a texture
+
 ---
 
 ## Notes
