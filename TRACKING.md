@@ -270,7 +270,7 @@ flake8 src/ tests/ --max-line-length=120
 ---
 
 ## Next Steps
-1. 🔶 Performance optimization: downscale 4K frames before pixbuf conversion, reuse textures
-2. Suppress GStreamer CRITICAL stderr noise for compound WARNING messages
-3. Gate or remove debug 🎬 logging for production
-4. Add unit tests for VideoPlayer controls
+1. ✅ Performance optimization: downscale 4K frames to 1280px before texture conversion (done 2026-07-31)
+2. ✅ Suppress GStreamer CRITICAL stderr noise: use `==` type checks instead of bitwise `&` (done 2026-07-31)
+3. ✅ Gate debug 🎬 logging behind `_DEBUG_VIDEO` flag (done 2026-07-31)
+4. 🔶 Add unit tests for VideoPlayer controls
