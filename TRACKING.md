@@ -272,6 +272,18 @@ Successfully implemented enhanced video playback controls with the following fea
   - `gtk4paintablesink` must exist in the Flatpak gstreamer runtime (present in host `libgstgtk4.so`, ships in 24.08 extension). If video goes blank in the sandbox build, fall back to appsink path.
   - Profile-view avatar now autoplays on every profile open — verify it doesn't loop-hot on a long animation.
 
+### 2026-07-31 (feed ordering + profile caching pass)
+- **Fixed "stale DB entries load first" (ordering bug):**
+  - `switch_feed` built the feed with `prepend` while iterating DB rows that are already newest-first (`ORDER BY created_at DESC`) — that put the **oldest at top**. Switched the DB-reload loop to `append`, so cached posts render newest→oldest top-to-bottom. Live events keep `prepend` (newest at top) — correct.
+- **Fixed profile pics/names not loading or refreshing (root cause of animated-pic failure):**
+  - `client.fetch_profile` used a one-shot `requested_profiles` **set** — a profile was requested once and never retried even if the relay returned nothing or data was incomplete. Replaced with a **TTL cache** (re-request after 600s) so failed lookups retry.
+  - `main.on_profile_updated` was a no-op (`pass`) — profile metadata arrived but existing avatars/names were never re-rendered. Now refreshes name label + avatar image on every matching post widget.
+- **DB efficiency:**
+  - Added indexes `events(pubkey, kind, created_at)`, `events(created_at)`, `following(owner_pubkey)` — the feed query was a JOIN + ORDER BY over unindexed columns (full table scan on every load, slower as DB grows).
+- **Open / needs decision:**
+  - 🔶 `switch_feed` still wipes all posts + resubscribes on every refresh/auto-refresh (300ms timer) — jarring. A merge-only refresh (fetch new since last, don't wipe) is the follow-up.
+  - 🔶 Feed avatars remain static first-frame for GIF / initials for WebM — animating all 40px avatars is a battery/CPU trap; visible-only animation is a future opt-in.
+
 ---
 
 ## Notes
