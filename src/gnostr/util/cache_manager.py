@@ -37,7 +37,6 @@ class BoundedCacheManager:
 
         entry = self._cache[key]
         if entry.is_expired():
-            print(f"Cache eviction (TTL): Key '{key}' was found but is expired.")
             self.delete(key)  # Clean up the stale entry immediately
             return None
 
@@ -61,9 +60,6 @@ class BoundedCacheManager:
             evicted_key, _ = self._cache.popitem(
                 last=False
             )  # Pop the absolute oldest (LRU) item
-            print(
-                f"Cache eviction (SIZE LIMIT): Removed least recently used key '{evicted_key}'."
-            )
 
         # 4. Set the new entry and move it to the end (MRU position)
         self._cache[key] = CacheEntry(value, ttl_seconds)
