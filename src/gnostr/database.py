@@ -54,6 +54,21 @@ class Database:
                 )
             """)
 
+            # Indexes for feed queries (JOIN on pubkey + ORDER BY created_at).
+            # Without these, feed loads full-table-scan on a growing DB.
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_events_feed "
+                "ON events(pubkey, kind, created_at)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_events_created "
+                "ON events(created_at)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_following_owner "
+                "ON following(owner_pubkey)"
+            )
+
             self.conn.commit()
             print(f"✅ Database initialized at: {self.db_path}")
         except Exception as e:
