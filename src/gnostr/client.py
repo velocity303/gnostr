@@ -180,7 +180,7 @@ class NostrClient(GObject.Object):
         self.db = db
         self.my_pubkey = None
         self.my_privkey = None
-        self.requested_profiles = set()
+        self.requested_profiles = {}  # pubkey -> last request timestamp (TTL cache)
         self.metrics = {}
         self.config_file = os.path.join(
             GLib.get_user_config_dir(), "gnostr", "config.json"
@@ -445,10 +445,13 @@ class NostrClient(GObject.Object):
                 "sub_contacts", {"kinds": [3], "authors": [self.my_pubkey], "limit": 1}
             )
 
-    def fetch_profile(self, pubkey):
-        if pubkey in self.requested_profiles:
+    def fetch_profile(self, pubkey, ttl=600):
+        # TTL cache: re-request a profile only if not requested recently, so
+        # failed/incomplete lookups get retried (the old one-shot set never retried).
+        now = time.time()
+        if pubkey in self.requested_profiles and (now - self.requested_profiles[pubkey]) < ttl:
             return
-        self.requested_profiles.add(pubkey)
+        self.requested_profiles[pubkey] = now
         for r in self.active_relays.values():
             r.request_once(
                 f"meta_{pubkey[:8]}", {"kinds": [0], "authors": [pubkey], "limit": 1}
