@@ -262,6 +262,16 @@ Successfully implemented enhanced video playback controls with the following fea
   - 🔶 Feed `Clamp(maximum_size=600)` retains all prepended posts during a long scroll session, plus `window.event_widgets` never evicts — biggest remaining leak, needs feed-pruning design
   - 🔶 Video texture still churns every frame (new Gdk.Texture per frame); could drop MAX_DIM to ~640 for mobile or reuse a texture
 
+### 2026-07-31 (stutter + animated profile pics pass)
+- **Fixed non-GIF video stutter (root cause):**
+  - ✅ Replaced appsink + manual per-frame Python conversion (`bytes()` copy → pixbuf → `scale_simple` → `Gdk.Texture` → `idle_add`) with **`gtk4paintablesink`** — GStreamer renders frames to a `Gdk.Paintable` natively in C with proper frame-dropping/sync. Zero Python per-frame work; position/seek/audio unchanged (operate on pipeline). Removed `on_sample`/`pull_sample`/appsink code entirely.
+- **Animated profile pics (GIF/WebM):**
+  - ✅ Added `autoplay` mode to `VideoPlayer`/`VideoLoader` (default off). Profile view now calls `load_and_play(..., autoplay=True)` so the 120px avatar actually plays + loops the animated media (EOS branch already seeks to 0).
+  - 🔶 Feed avatars (40px, dozens per feed) stay **static first frame** for GIF and initials for WebM — animating all would be a battery/CPU trap. Visible-only animation is a future opt-in.
+- **Caveats for testing:**
+  - `gtk4paintablesink` must exist in the Flatpak gstreamer runtime (present in host `libgstgtk4.so`, ships in 24.08 extension). If video goes blank in the sandbox build, fall back to appsink path.
+  - Profile-view avatar now autoplays on every profile open — verify it doesn't loop-hot on a long animation.
+
 ---
 
 ## Notes
