@@ -60,12 +60,29 @@ class ThreadView(Adw.Bin):
         self.load_parent_context(tags)
         # ------------------------------------------
 
-        # Hero Post
+        # Hero Post — truncate long posts so replies stay reachable
+        self._hero_pubkey = pubkey
+        self._hero_content = content
+        self._hero_tags = tags
+        self._hero_truncated = False
+        self._hero_toggle = None
+
+        display_content = content
+        if len(content) > 500:
+            display_content = content[:500] + "…"
+            self._hero_truncated = True
+
         hero = PostWidget(
-            self.main_window, pubkey, content, event_id, tags, is_hero=True
+            self.main_window, pubkey, display_content, event_id, tags, is_hero=True
         )
         self.hero_widget = hero
         self.layout.append(hero)
+
+        if self._hero_truncated:
+            self._hero_toggle = Gtk.Button(label="Show more", css_classes=["flat"])
+            self._hero_toggle.set_halign(Gtk.Align.START)
+            self._hero_toggle.connect("clicked", lambda b: self.toggle_hero())
+            self.layout.append(self._hero_toggle)
 
         # Replies (Simplified: fetch from DB based on event_id in tags)
         # Replies with scrolling - remove clamp to fill width
@@ -175,23 +192,38 @@ class ThreadView(Adw.Bin):
         self.reload_replies()
         self.reload_metrics()
 
-    def _replace_hero(self, ev):
+    def _rebuild_hero(self, pubkey, content, tags):
+        new_hero = PostWidget(
+            self.main_window, pubkey, content, self.event_id, tags, is_hero=True
+        )
         children = self._box_children(self.layout)
         try:
             idx = children.index(self.hero_widget)
         except ValueError:
             return
-        new_hero = PostWidget(
-            self.main_window,
-            ev["pubkey"],
-            ev["content"],
-            ev["id"],
-            ev.get("tags", []),
-            is_hero=True,
-        )
         self.layout.remove(self.hero_widget)
         self.layout.insert(new_hero, idx)
         self.hero_widget = new_hero
+
+    def toggle_hero(self):
+        self._hero_truncated = not self._hero_truncated
+        if self._hero_truncated:
+            self._rebuild_hero(self._hero_pubkey, self._hero_content[:500] + "…", self._hero_tags)
+            self._hero_toggle.set_label("Show more")
+        else:
+            self._rebuild_hero(self._hero_pubkey, self._hero_content, self._hero_tags)
+            self._hero_toggle.set_label("Show less")
+
+    def _replace_hero(self, ev):
+        # Refresh: rebuild from the DB's latest event, keeping the current
+        # collapsed/expanded hero state so replies stay reachable.
+        self._hero_pubkey = ev["pubkey"]
+        self._hero_content = ev["content"]
+        self._hero_tags = ev.get("tags", [])
+        display = ev["content"]
+        if self._hero_truncated:
+            display = ev["content"][:500] + "…"
+        self._rebuild_hero(ev["pubkey"], display, self._hero_tags)
 
     def reload_replies(self):
         for child in self._box_children(self.replies_box):

@@ -290,7 +290,11 @@ Plan: `.hermes/plans/2026-08-02_gnostr-ux-overhaul.md` (10 tasks, 4 phases). Exe
 - ✅ **Task 1 — @ mention inline spacing.** Root cause: `LINK_REGEX = (?:^|\s)(...)` consumed the leading whitespace during `re.split`, so mentions rendered as `text@user`. Changed to a lookbehind `(?<!\w)(...)` so the space stays in the text fragment → `text @user`. Verified across sample content (mention at start, mid, end, with punctuation, and http links — all correct). File: `src/gnostr/renderer.py`.
 - ✅ **Task 2 — Load feed on startup (blank-feed-on-back fix).** Root cause: `MainWindow.__init__` never called `switch_feed`, so the feed root was empty until a sidebar item was clicked — going to Profile first then Back showed a blank feed. Fix: `__init__` now populates the feed from the DB right after login (`switch_feed(active_feed_type)` via idle_add), and `on_status_changed` re-runs `switch_feed` once on the first relay CONNECTED (startup subscribe is a no-op pre-connection, so this establishes the live sub). Guarded by `_feed_live` flag. File: `src/gnostr/main.py`.
 - ✅ **Task 3 — Mobile scroll vs highlight + long-press copy.** Root cause: content labels used `selectable=True`, so touch drags on text grabbed selection instead of feeding the scroller. Fix: removed `selectable=True` from `_add_text`, `_text_label`, `_add_link` in renderer (links still clickable via `activate-link`). Added a `Gtk.GestureLongPress` on PostWidget that copies the whole post to the clipboard + "Copied post" toast; grouped it with the tap-to-open-thread gesture so a long-press doesn't also open the thread. Files: `src/gnostr/renderer.py`, `src/gnostr/ui/post_widget.py`.
-- ⏳ Task 4 — Collapse long hero posts in thread view. Not started.
+- ✅ **Task 4 — Collapse long hero posts in thread view.** Long top posts (>500 chars) now render truncated with a "Show more"/"Show less" toggle so replies stay reachable. Refactored hero rebuild into `_rebuild_hero`; `_replace_hero` (thread refresh) keeps the current collapse state. File: `src/gnostr/ui/thread_view.py`.
+
+### Phase 1 complete — quick wins shipped (Tasks 1-4). Starting Phase 2 (data completeness).
+
+- ⏳ Task 5 — Fetch missing profile/mention/reply-author metadata. Not started.
 
 ---
 
