@@ -212,6 +212,14 @@ class MainWindow(Adw.ApplicationWindow):
             from gnostr.ui.thread_view import ThreadView
         except ImportError:
             from .ui.thread_view import ThreadView
+        # Prefer the DB-cached event so the hero renders accurate post data even
+        # when the feed copy was stale/incomplete (e.g. quote cards opened with
+        # "Loading...").
+        cached = self.db.get_event_by_id(event_id)
+        if cached:
+            pubkey = cached["pubkey"]
+            content = cached["content"]
+            tags = cached.get("tags", [])
         view = ThreadView(self, event_id, pubkey, content, tags)
         page = Adw.NavigationPage(title="Thread", child=view)
         self.content_nav.push(page)

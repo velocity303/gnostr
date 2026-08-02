@@ -34,6 +34,13 @@ class ThreadView(Adw.Bin):
         btn_back.set_tooltip_text("Back")
         btn_back.connect("clicked", lambda b: self.main_window.content_nav.pop())
         back_row.append(btn_back)
+
+        btn_refresh = Gtk.Button(
+            icon_name="view-refresh-symbolic", css_classes=["flat"]
+        )
+        btn_refresh.set_tooltip_text("Refresh Thread")
+        btn_refresh.connect("clicked", lambda b: self.refresh())
+        back_row.append(btn_refresh)
         header.append(back_row)
 
         # Title with event ID
@@ -57,6 +64,7 @@ class ThreadView(Adw.Bin):
         hero = PostWidget(
             self.main_window, pubkey, content, event_id, tags, is_hero=True
         )
+        self.hero_widget = hero
         self.layout.append(hero)
 
         # Replies (Simplified: fetch from DB based on event_id in tags)
@@ -147,3 +155,62 @@ class ThreadView(Adw.Bin):
                 w = PostWidget(self.main_window, pubkey, content, eid, tags)
                 self.replies_box.append(w)
                 break
+
+    @staticmethod
+    def _box_children(box):
+        children = []
+        child = box.get_first_child()
+        while child is not None:
+            children.append(child)
+            child = child.get_next_sibling()
+        return children
+
+    def refresh(self):
+        # Force reload of the thread: re-fetch root/replies/reactions from relays,
+        # then re-render the hero, replies, and metrics from the DB.
+        self.client.fetch_thread(self.event_id)
+        ev = self.main_window.db.get_event_by_id(self.event_id)
+        if ev:
+            self._replace_hero(ev)
+        self.reload_replies()
+        self.reload_metrics()
+
+    def _replace_hero(self, ev):
+        children = self._box_children(self.layout)
+        try:
+            idx = children.index(self.hero_widget)
+        except ValueError:
+            return
+        new_hero = PostWidget(
+            self.main_window,
+            ev["pubkey"],
+            ev["content"],
+            ev["id"],
+            ev.get("tags", []),
+            is_hero=True,
+        )
+        self.layout.remove(self.hero_widget)
+        self.layout.insert(new_hero, idx)
+        self.hero_widget = new_hero
+
+    def reload_replies(self):
+        for child in self._box_children(self.replies_box):
+            self.replies_box.remove(child)
+        replies = self.main_window.db.get_replies(self.event_id)
+        for ev in replies:
+            w = PostWidget(
+                self.main_window,
+                ev["pubkey"],
+                ev["content"],
+                ev["id"],
+                ev.get("tags", []),
+            )
+            self.replies_box.append(w)
+
+    def reload_metrics(self):
+        m = self.client.metrics.get(self.event_id)
+        if not m:
+            return
+        self.hero_widget.lbl_likes.set_label(str(m.get("likes", 0)))
+        self.hero_widget.lbl_reposts.set_label(str(m.get("reposts", 0)))
+        self.hero_widget.lbl_replies.set_label(str(m.get("replies", 0)))

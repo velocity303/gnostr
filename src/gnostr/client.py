@@ -355,6 +355,12 @@ class NostrClient(GObject.Object):
             print(f"❌ ERROR: Malformed Event: {e}")
             return
 
+        # Dedup FIRST so re-subscribed events (e.g. thread refresh) are never
+        # re-counted into metrics or re-saved/re-emitted.
+        if eid in self.seen_events:
+            return
+        self.seen_events.add(eid)
+
         target = self.get_ref_id(tags)
         if target:
             if target not in self.metrics:
@@ -385,10 +391,6 @@ class NostrClient(GObject.Object):
             if eid not in self.metrics:
                 self.metrics[eid] = {"likes": 0, "reposts": 0, "replies": 0}
 
-        if eid in self.seen_events:
-            return
-
-        self.seen_events.add(eid)
         self.db.save_event(ev)
 
         if kind == 0:

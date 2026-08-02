@@ -18,6 +18,8 @@ GTK widget components — all reusable UI elements for displaying Nostr data. Ea
 - Profile @mentions render inline in the text flow (small `@name` Pango links); clicking opens the profile view via `activate-link`
 - Sidebar emits menu signals that MainWindow handles for feed switching
 - ThreadView fetches thread data via client.fetch_thread(), not inline
+- ThreadView has a Refresh Thread button: re-fetches root/replies/reactions, then re-renders the hero, replies_box, and metric labels from the DB / client.metrics
+- client._handle_event dedups by event id FIRST, so thread refreshes never double-count reaction metrics
 
 ## Work Guidance
 - Widgets use Gtk4/Adw patterns — Gtk.Box, Gtk.Label, Adw.Avatar, Gtk.Button, Gtk.Frame
