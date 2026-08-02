@@ -33,7 +33,9 @@ def _vlog(msg):
 
 
 class ContentRenderer:
-    LINK_REGEX = re.compile(r"(?:^|\s)((?:https?://|nostr:)[^\s]+)")
+    # Lookbehind (not (?:^|\s)) so the leading whitespace before a link/mention is
+    # NOT consumed by the split — keeps inline spacing: "text @user", not "text@user".
+    LINK_REGEX = re.compile(r"(?<!\w)((?:https?://|nostr:)[^\s]+)")
     IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
     VIDEO_EXTS = {".mp4", ".mov", ".webm", ".gif"}
 

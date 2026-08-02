@@ -284,6 +284,12 @@ Successfully implemented enhanced video playback controls with the following fea
   - 🔶 `switch_feed` still wipes all posts + resubscribes on every refresh/auto-refresh (300ms timer) — jarring. A merge-only refresh (fetch new since last, don't wipe) is the follow-up.
   - 🔶 Feed avatars remain static first-frame for GIF / initials for WebM — animating all 40px avatars is a battery/CPU trap; visible-only animation is a future opt-in.
 
+### 2026-08-02 (UX overhaul — Phase 1 quick wins)
+Plan: `.hermes/plans/2026-08-02_gnostr-ux-overhaul.md` (10 tasks, 4 phases). Executing phase-by-phase, committing each task, updating this log.
+
+- ✅ **Task 1 — @ mention inline spacing.** Root cause: `LINK_REGEX = (?:^|\s)(...)` consumed the leading whitespace during `re.split`, so mentions rendered as `text@user`. Changed to a lookbehind `(?<!\w)(...)` so the space stays in the text fragment → `text @user`. Verified across sample content (mention at start, mid, end, with punctuation, and http links — all correct). File: `src/gnostr/renderer.py`.
+- ⏳ Task 2 — Load feed on startup (blank-feed-on-back fix). Not started.
+
 ---
 
 ## Notes
