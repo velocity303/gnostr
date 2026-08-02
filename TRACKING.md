@@ -301,7 +301,9 @@ Plan: `.hermes/plans/2026-08-02_gnostr-ux-overhaul.md` (10 tasks, 4 phases). Exe
 
 - ✅ **Task 7 — Simplify video controls.** Removed the volume slider + `set_volume`; videos now play at full volume (`pipeline volume=1.0`, `_is_muted=False`) and users control loudness at the system level. Mute button moved adjacent to the progress bar (in the position row). Clicking the video frame toggles play/pause (`GestureClick` on video_area). Animated GIFs skip the seek bar + mute entirely (they loop, so those don't apply) and keep just play + the video. File: `src/gnostr/renderer.py`.
   - 🔶 Note: `src/gnostr/AGENTS.md` still says VideoPlayer uses appsink — stale since the gtk4paintablesink migration; flag for a later DOX pass.
-- ⏳ Task 8 — Decorative @ mentions + inline avatar. Not started.
+- ✅ **Task 8 — Decorative @ mentions.** Mentions now render as **bold** `@name` links (theme-safe Pango `<span weight="bold">`), clearly distinct from body text. Applied in both `renderer.render()` and `main.on_profile_updated` (name refresh keeps the same styling). Avatar-in-mention flagged as a follow-up — it needs the `render()` → `Gtk.FlowBox` rework, which is the higher-risk Option B from the plan. Files: `src/gnostr/renderer.py`, `src/gnostr/main.py`.
+  - 🔶 Follow-up: inline mention avatars via Gtk.FlowBox (Option B) — defer until after Task 10.
+- ⏳ Task 9 — Follow/unfollow toggle on profile page. Not started.
 
 ---
 

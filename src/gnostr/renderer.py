@@ -169,7 +169,9 @@ class ContentRenderer:
                             hex_pk = ContentRenderer._extract_hex_id(clean_part.split(":", 1)[1] if ":" in clean_part else clean_part)
                             if hex_pk:
                                 name = ContentRenderer._mention_name(hex_pk, window_ref)
-                                text_fragments.append((hex_pk, f'<a href="nostr:{hex_pk}">@{GLib.markup_escape_text(name)}</a>'))
+                                # Decorative inline mention: bold @name link.
+                                disp = f'<span weight="bold">@{GLib.markup_escape_text(name)}</span>'
+                                text_fragments.append((hex_pk, f'<a href="nostr:{hex_pk}">{disp}</a>'))
                                 if trailing:
                                     text_fragments.append((None, GLib.markup_escape_text(trailing)))
                                 continue

@@ -288,7 +288,8 @@ class MainWindow(Adw.ApplicationWindow):
                 for (pk, frag) in lbl.mention_fragments:
                     if pk == pubkey:
                         nm = prof.get("display_name") or prof.get("name") or pk[:8]
-                        new_frags.append((pk, f'<a href="nostr:{pk}">@{GLib.markup_escape_text(nm)}</a>'))
+                        disp = f'<span weight="bold">@{GLib.markup_escape_text(nm)}</span>'
+                        new_frags.append((pk, f'<a href="nostr:{pk}">{disp}</a>'))
                         changed = True
                     else:
                         new_frags.append((pk, frag))
