@@ -43,7 +43,9 @@ class ProfileView(Adw.Bin):
             "clicked", lambda b: self.main_window.refresh_profile(self.pubkey)
         )
         back_row.append(btn_refresh)
-        header.append(back_row)
+        # Toolbar row lives at the top of the layout (upper-left), not inside the
+        # centered header, so back/refresh align with the app header.
+        self.layout.append(back_row)
 
         # Avatar - supports animated GIFs/videos
         prof = self.main_window.db.get_profile(pubkey)
@@ -72,7 +74,7 @@ class ProfileView(Adw.Bin):
                 VideoPlayer.load_and_play(picture_url, self.avatar_container, None, autoplay=True)
             else:
                 # Show static image via avatar
-                ImageLoader.load_avatar(
+                ImageLoader.load_avatars(
                     picture_url, lambda t: self.avatar.set_custom_image(t)
                 )
 
