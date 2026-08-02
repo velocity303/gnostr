@@ -212,7 +212,7 @@ class ContentRenderer:
 
     @staticmethod
     def _add_text(box, text):
-        label = Gtk.Label(label=text, xalign=0, selectable=True)
+        label = Gtk.Label(label=text, xalign=0)
         label.set_use_markup(False)
         label.set_wrap(True)
         label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
@@ -223,7 +223,7 @@ class ContentRenderer:
     def _text_label(markup, window_ref):
         """Inline text label rendered with Pango markup. nostr: links (profile
         mentions) are routed to the profile view via activate-link."""
-        lbl = Gtk.Label(label=markup, xalign=0, selectable=True, use_markup=True)
+        lbl = Gtk.Label(label=markup, xalign=0, use_markup=True)
         lbl.set_wrap(True)
         lbl.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
         lbl.set_max_width_chars(60)
@@ -256,7 +256,7 @@ class ContentRenderer:
         disp = label if label else (url[:47] + "..." if len(url) > 50 else url)
         markup = f'<a href="{GLib.markup_escape_text(url)}">{GLib.markup_escape_text(disp)}</a>'
         lbl = Gtk.Label(
-            label=markup, xalign=0, wrap=True, selectable=True, use_markup=True
+            label=markup, xalign=0, wrap=True, use_markup=True
         )
         lbl.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
         lbl.set_ellipsize(Pango.EllipsizeMode.END)

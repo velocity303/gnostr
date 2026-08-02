@@ -3,7 +3,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, Adw, GLib, Pango
+from gi.repository import Gtk, Adw, GLib, Pango, Gdk
 from ..renderer import ContentRenderer, ImageLoader
 
 
@@ -15,6 +15,7 @@ class PostWidget(Adw.Bin):
         self.main_window = main_window
         self.pubkey = pubkey
         self.event_id = event_id
+        self.content = content
 
         # Resolve the post's timestamp from the DB when the caller didn't provide
         # it (e.g. live event-received posts). Unobtrusive relative-time caption.
@@ -115,6 +116,22 @@ class PostWidget(Adw.Bin):
                 ),
             )
             self.add_controller(ctrl)
+
+            # Long-press copies the whole post; group it with the click gesture so
+            # a long-press doesn't also open the thread on release.
+            lp = Gtk.GestureLongPress()
+            lp.connect("pressed", lambda g, x, y: self._copy_post())
+            ctrl.group(lp)
+            self.add_controller(lp)
+
+    def _copy_post(self):
+        display = Gdk.Display.get_default()
+        clipboard = display.get_clipboard() if display else None
+        if clipboard is None:
+            return
+        provider = Gdk.ContentProvider.new_for_value(self.content)
+        clipboard.set_content(provider)
+        self.main_window.add_toast(Adw.Toast(title="Copied post"))
 
     @staticmethod
     def _format_time(ts):
