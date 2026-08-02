@@ -11,7 +11,7 @@ GTK widget components — all reusable UI elements for displaying Nostr data. Ea
 - `sidebar.py` — Sidebar: navigation menu (global/following/profile/search)
 
 ## Local Contracts
-- All widgets receive data, never fetch it themselves — data flows from client → widget
+- Widgets render data that's already cached; when a needed piece is missing (author profile, reply parent, quote event) they may trigger a fetch via the client — they never decide what to show beyond that
 - FeedView.posts_box is a Gtk.Box that PostWidget instances are prepended to
 - PostWidget stores event_id, pubkey, content, and tracks metrics labels; shows a compact relative-time caption (now/Nm/Nh/Nd/date) at the top-right of the header, resolved from the DB when not passed in
 - PostWidget has `.quote_widgets` for nostr event quote cards and `.inline_mention_labels` for inline @mention text labels
@@ -19,7 +19,8 @@ GTK widget components — all reusable UI elements for displaying Nostr data. Ea
 - Sidebar emits menu signals that MainWindow handles for feed switching
 - ThreadView fetches thread data via client.fetch_thread(), not inline
 - ThreadView has a Refresh Thread button: re-fetches root/replies/reactions, then re-renders the hero, replies_box, and metric labels from the DB / client.metrics
-- client._handle_event dedups by event id FIRST, so thread refreshes never double-count reaction metrics
+- PostWidget fetches missing author/mention profiles via client.fetch_profile (TTL-cached); names/avatars re-render via on_profile_updated on arrival
+- ThreadView fetches missing reply parents via client.request_once and renders them into context_box when they arrive (incl. the grandparent chain)
 
 ## Work Guidance
 - Widgets use Gtk4/Adw patterns — Gtk.Box, Gtk.Label, Adw.Avatar, Gtk.Button, Gtk.Frame

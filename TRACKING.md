@@ -295,7 +295,11 @@ Plan: `.hermes/plans/2026-08-02_gnostr-ux-overhaul.md` (10 tasks, 4 phases). Exe
 ### Phase 1 complete — quick wins shipped (Tasks 1-4). Starting Phase 2 (data completeness).
 
 - ✅ **Task 5 — Fetch missing profile/mention/reply-author metadata.** `renderer._mention_name` now calls `client.fetch_profile(hex_pk)` when a mention's profile isn't cached, and `PostWidget` calls it for unknown post authors (covers feed, thread replies, and quote authors). `fetch_profile` is TTL-cached/deduped, and `on_profile_updated` already re-renders names/avatars + inline mention labels on arrival. Files: `src/gnostr/renderer.py`, `src/gnostr/ui/post_widget.py`.
-- ⏳ Task 6 — Load missing reply parent context. Not started.
+- ✅ **Task 6 — Load missing reply parent context.** `ThreadView.load_parent_context` now fetches a parent via `client.request_once` when it's not cached (previously it silently no-op'd), and `on_event_received` renders it into `context_box` on arrival — including recursive grandparent fetches. Added `_pending_parents` tracking + `_render_arrived_parent`. File: `src/gnostr/ui/thread_view.py`.
+
+### Phase 2 complete — data completeness shipped (Tasks 5-6). Starting Phase 3 (UX simplification).
+
+- ⏳ Task 7 — Simplify video controls (no volume, GIF cleanup, click-toggle). Not started.
 
 ---
 

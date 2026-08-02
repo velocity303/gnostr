@@ -12,6 +12,7 @@ class ThreadView(Adw.Bin):
         self.main_window = main_window
         self.event_id = event_id
         self.client = main_window.client
+        self._pending_parents = []  # parent event ids being fetched for context
 
         self.layout = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL,
@@ -160,18 +161,39 @@ class ThreadView(Adw.Bin):
                 self.context_box.append(
                     Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
                 )
+            else:
+                # Parent not cached — fetch it so the reply context loads once the
+                # event arrives (rendered in on_event_received).
+                if parent_id not in self._pending_parents:
+                    self._pending_parents.append(parent_id)
+                    self.client.request_once(
+                        f"parent_{parent_id[:8]}", {"ids": [parent_id], "limit": 1}
+                    )
 
     def on_event_received(self, client, eid, pubkey, content, tags_json):
-        # Check if this event is a reply to our thread
+        # Check if this event is a reply to our thread, or a pending parent context
         import json
 
         tags = json.loads(tags_json)
+        if eid in self._pending_parents:
+            self._pending_parents.remove(eid)
+            self._render_arrived_parent(eid, pubkey, content, tags)
+            return
         for t in tags:
             if len(t) >= 2 and t[0] == "e" and t[1] == self.event_id:
                 # This is a reply, add it
                 w = PostWidget(self.main_window, pubkey, content, eid, tags)
                 self.replies_box.append(w)
                 break
+
+    def _render_arrived_parent(self, parent_id, pubkey, content, tags):
+        # Recursively load this parent's own parents (fetching any missing ones),
+        # then render it into the context box.
+        self.load_parent_context(tags)
+        w = PostWidget(self.main_window, pubkey, content, parent_id, tags)
+        w.set_opacity(0.7)
+        self.context_box.append(w)
+        self.context_box.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
 
     @staticmethod
     def _box_children(box):
