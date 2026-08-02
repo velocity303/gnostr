@@ -69,58 +69,57 @@ class ContentRenderer:
         spinner.set_valign(Gtk.Align.CENTER)
         spinner.set_vexpand(True)
         video_area.append(spinner)
-        
+
         VideoPlayer.load_and_play(url, video_area, spinner, window_ref, original_url)
         video_box.append(video_area)
-        
-        
-        # Position/seek bar
-        position_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        position_row.set_margin_start(6)
-        position_row.set_margin_end(6)
-        position_scale = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL)
-        position_scale.set_range(0, 100)
-        position_scale.set_value(0)
-        position_scale.set_hexpand(True)
-        position_scale.set_draw_value(False)
-        position_scale.set_sensitive(False)
-        position_scale.connect("value-changed", lambda s: VideoPlayer.seek_to(video_area, s.get_value()))
-        position_label = Gtk.Label(label="0:00 / 0:00")
-        position_row.append(position_scale)
-        position_row.append(position_label)
-        video_box.append(position_row)
+
+        # Clicking the video frame toggles play/pause.
+        click_ctrl = Gtk.GestureClick()
+        click_ctrl.connect("released", lambda c, n, x, y: VideoPlayer.toggle_play(video_area))
+        video_area.add_controller(click_ctrl)
+
+        is_gif = url.lower().endswith(".gif")
+
+        # Animated GIFs loop; the seek bar + mute button don't apply — skip them.
+        if not is_gif:
+            # Position/seek bar with the mute button adjacent to it (no volume UI).
+            position_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            position_row.set_margin_start(6)
+            position_row.set_margin_end(6)
+            position_scale = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL)
+            position_scale.set_range(0, 100)
+            position_scale.set_value(0)
+            position_scale.set_hexpand(True)
+            position_scale.set_draw_value(False)
+            position_scale.set_sensitive(False)
+            position_scale.connect("value-changed", lambda s: VideoPlayer.seek_to(video_area, s.get_value()))
+            position_label = Gtk.Label(label="0:00 / 0:00")
+            mute_btn = Gtk.Button(icon_name="audio-volume-high-symbolic")
+            mute_btn.set_tooltip_text("Mute/Unmute")
+            mute_btn.connect("clicked", lambda b: VideoPlayer.toggle_mute(video_area, mute_btn))
+            position_row.append(position_scale)
+            position_row.append(position_label)
+            position_row.append(mute_btn)
+            video_box.append(position_row)
+
         controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         controls.set_margin_top(6)
         controls.set_margin_bottom(6)
         controls.set_margin_start(6)
         controls.set_margin_end(6)
-        
+
         play_btn = Gtk.Button(icon_name="media-playback-start-symbolic")
         play_btn.set_tooltip_text("Play/Pause")
         play_btn.set_size_request(40, 40)
         play_btn.connect("clicked", lambda b: VideoPlayer.toggle_play(video_area))
         controls.append(play_btn)
-        
-        mute_btn = Gtk.Button(icon_name="audio-volume-muted-symbolic")
-        mute_btn.set_tooltip_text("Mute/Unmute")
-        mute_btn.set_size_request(40, 40)
-        mute_btn.connect("clicked", lambda b: VideoPlayer.toggle_mute(video_area, mute_btn))
-        controls.append(mute_btn)
-        
-        vol_scale = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL)
-        vol_scale.set_range(0, 100)
-        vol_scale.set_value(0)
-        vol_scale.set_size_request(100, -1)
-        vol_scale.set_hexpand(True)
-        vol_scale.connect("value-changed", lambda s: VideoPlayer.set_volume(video_area, s.get_value() / 100))
-        controls.append(vol_scale)
-        
+
         if original_url and ("youtube.com" in original_url or "youtu.be" in original_url):
             yt_link = Gtk.LinkButton(uri=original_url, label="Open in YouTube")
             yt_link.set_halign(Gtk.Align.END)
             yt_link.set_hexpand(True)
             controls.append(yt_link)
-        
+
         video_box.append(controls)
         box.append(video_box)
 
@@ -672,8 +671,11 @@ class VideoPlayer:
             video._pipeline = pipeline
             video._sink = sink
             video._is_playing = False
-            video._is_muted = True
+            video._is_muted = False
             video._original_url = original_url or url
+
+            # Play at full volume; users control loudness at the system level.
+            pipeline.set_property("volume", 1.0)
 
             _vlog("🎬 [Video] Player setup complete — waiting for play")
 
@@ -736,22 +738,6 @@ class VideoPlayer:
             "audio-volume-muted-symbolic" if video._is_muted else "audio-volume-high-symbolic"
         )
 
-    @staticmethod
-    def set_volume(video_container, volume):
-        video = VideoPlayer._find_video(video_container)
-        if not video or not hasattr(video, '_pipeline'):
-            return
-        pipeline = video._pipeline
-        video._is_muted = (volume == 0.0)
-        pipeline.set_property("volume", volume)
-        if volume > 0:
-            controls = video_container.get_next_sibling()
-            if controls:
-                for child in controls:
-                    if isinstance(child, Gtk.Button):
-                        if child.get_icon_name() == "audio-volume-muted-symbolic":
-                            child.set_icon_name("audio-volume-high-symbolic")
-                            break
     @staticmethod
     def seek_to(video_container, percent):
         video = VideoPlayer._find_video(video_container)

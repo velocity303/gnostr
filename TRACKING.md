@@ -299,7 +299,9 @@ Plan: `.hermes/plans/2026-08-02_gnostr-ux-overhaul.md` (10 tasks, 4 phases). Exe
 
 ### Phase 2 complete — data completeness shipped (Tasks 5-6). Starting Phase 3 (UX simplification).
 
-- ⏳ Task 7 — Simplify video controls (no volume, GIF cleanup, click-toggle). Not started.
+- ✅ **Task 7 — Simplify video controls.** Removed the volume slider + `set_volume`; videos now play at full volume (`pipeline volume=1.0`, `_is_muted=False`) and users control loudness at the system level. Mute button moved adjacent to the progress bar (in the position row). Clicking the video frame toggles play/pause (`GestureClick` on video_area). Animated GIFs skip the seek bar + mute entirely (they loop, so those don't apply) and keep just play + the video. File: `src/gnostr/renderer.py`.
+  - 🔶 Note: `src/gnostr/AGENTS.md` still says VideoPlayer uses appsink — stale since the gtk4paintablesink migration; flag for a later DOX pass.
+- ⏳ Task 8 — Decorative @ mentions + inline avatar. Not started.
 
 ---
 
