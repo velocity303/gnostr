@@ -44,7 +44,11 @@ class PostWidget(Adw.Bin):
 
         prof = self.main_window.db.get_profile(pubkey)
         name = pubkey[:8]
-        if prof:
+        if not prof:
+            # Unknown author — fetch their metadata so the name/avatar resolves once
+            # the kind-0 arrives (TTL-cached, deduped). Covers feed, replies, quotes.
+            self.main_window.client.fetch_profile(pubkey)
+        else:
             name = prof.get("display_name") or prof.get("name") or name
 
         self.avatar = Adw.Avatar(

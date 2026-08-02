@@ -247,6 +247,10 @@ class ContentRenderer:
                 prof = window_ref.db.get_profile(hex_pk)
                 if prof:
                     name = prof.get("display_name") or prof.get("name")
+                else:
+                    # Profile not cached yet — fetch it so the mention's name/pic
+                    # resolves once the kind-0 arrives (TTL-cached, deduped).
+                    window_ref.client.fetch_profile(hex_pk)
         except Exception:
             pass
         return name or hex_pk[:8]
