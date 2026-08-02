@@ -288,7 +288,8 @@ Successfully implemented enhanced video playback controls with the following fea
 Plan: `.hermes/plans/2026-08-02_gnostr-ux-overhaul.md` (10 tasks, 4 phases). Executing phase-by-phase, committing each task, updating this log.
 
 - ✅ **Task 1 — @ mention inline spacing.** Root cause: `LINK_REGEX = (?:^|\s)(...)` consumed the leading whitespace during `re.split`, so mentions rendered as `text@user`. Changed to a lookbehind `(?<!\w)(...)` so the space stays in the text fragment → `text @user`. Verified across sample content (mention at start, mid, end, with punctuation, and http links — all correct). File: `src/gnostr/renderer.py`.
-- ⏳ Task 2 — Load feed on startup (blank-feed-on-back fix). Not started.
+- ✅ **Task 2 — Load feed on startup (blank-feed-on-back fix).** Root cause: `MainWindow.__init__` never called `switch_feed`, so the feed root was empty until a sidebar item was clicked — going to Profile first then Back showed a blank feed. Fix: `__init__` now populates the feed from the DB right after login (`switch_feed(active_feed_type)` via idle_add), and `on_status_changed` re-runs `switch_feed` once on the first relay CONNECTED (startup subscribe is a no-op pre-connection, so this establishes the live sub). Guarded by `_feed_live` flag. File: `src/gnostr/main.py`.
+- ⏳ Task 3 — Scroll vs highlight + long-press copy post. Not started.
 
 ---
 

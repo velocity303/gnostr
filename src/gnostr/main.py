@@ -123,6 +123,13 @@ class MainWindow(Adw.ApplicationWindow):
         GLib.idle_add(self.client.connect_all)
         GLib.timeout_add_seconds(300, self.on_auto_refresh)
 
+        # Populate the feed from the DB right away so Back never lands on a blank
+        # feed (the startup subscribe is a no-op until relays connect; on_status_changed
+        # re-runs switch_feed once the first relay is live).
+        self._feed_live = False
+        if saved:
+            GLib.idle_add(lambda: self.switch_feed(self.active_feed_type))
+
     def detect_display_metrics(self):
         try:
             display = Gdk.Display.get_default()
@@ -246,6 +253,12 @@ class MainWindow(Adw.ApplicationWindow):
             status, "⚪"
         )
         self.sidebar.update_status(emoji)
+        # First relay connection -> re-run switch_feed so the feed subscribes live
+        # (the startup switch_feed ran before relays connected, so its subscribe
+        # was a no-op).
+        if status == "CONNECTED" and not self._feed_live:
+            self._feed_live = True
+            GLib.idle_add(lambda: self.switch_feed(self.active_feed_type))
 
     def on_contacts_updated(self, client):
         pass
