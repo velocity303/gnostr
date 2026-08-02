@@ -135,23 +135,58 @@ class ContentRenderer:
         try:
             clean_content = html.unescape(content)
             parts = ContentRenderer.LINK_REGEX.split(clean_content)
-            current_text_buffer = []
+            # Accumulate (pubkey_or_None, pango_markup) fragments for one inline text
+            # label. Profile mentions become small inline @name links; other text is
+            # escaped plain text that flows together with them.
+            text_fragments = []
+
+            def flush_text():
+                if not text_fragments:
+                    return
+                has_mention = any(pk for pk, _ in text_fragments)
+                markup = "".join(frag for _, frag in text_fragments)
+                lbl = ContentRenderer._text_label(markup, window_ref)
+                if has_mention:
+                    lbl.mention_fragments = list(text_fragments)
+                    if post_widget_ref:
+                        if not hasattr(post_widget_ref, "inline_mention_labels"):
+                            post_widget_ref.inline_mention_labels = []
+                        post_widget_ref.inline_mention_labels.append(lbl)
+                text_fragments.clear()
+                box.append(lbl)
 
             for part in parts:
                 if not part:
                     continue
 
                 if ContentRenderer.LINK_REGEX.match(part):
-                    if current_text_buffer:
-                        ContentRenderer._add_text(box, "".join(current_text_buffer))
-                        current_text_buffer = []
-
                     clean_part = part.rstrip(".!,?;']}" )
                     trailing = part[len(clean_part) :]
 
                     if clean_part.startswith("nostr:"):
+                        if "nprofile" in clean_part or "npub" in clean_part:
+                            hex_pk = ContentRenderer._extract_hex_id(clean_part.split(":", 1)[1] if ":" in clean_part else clean_part)
+                            if hex_pk:
+                                name = ContentRenderer._mention_name(hex_pk, window_ref)
+                                text_fragments.append((hex_pk, f'<a href="nostr:{hex_pk}">@{GLib.markup_escape_text(name)}</a>'))
+                                if trailing:
+                                    text_fragments.append((None, GLib.markup_escape_text(trailing)))
+                                continue
+                            # malformed profile uri -> plain link
+                            flush_text()
+                            ContentRenderer._add_link(box, clean_part)
+                            if trailing:
+                                text_fragments.append((None, GLib.markup_escape_text(trailing)))
+                            continue
+                        # nostr event quote -> block card
+                        flush_text()
                         ContentRenderer._add_nostr_card(box, clean_part, window_ref, post_widget_ref)
-                    elif ContentRenderer.is_image_url(clean_part):
+                        if trailing:
+                            text_fragments.append((None, GLib.markup_escape_text(trailing)))
+                        continue
+                    # http(s) link / media -> block widget
+                    flush_text()
+                    if ContentRenderer.is_image_url(clean_part):
                         ContentRenderer._add_image(box, clean_part, window_ref)
                     elif ContentRenderer.is_video_url(clean_part):
                         ContentRenderer._add_video(box, clean_part, window_ref)
@@ -160,14 +195,11 @@ class ContentRenderer:
                         ContentRenderer._add_video(box, raw_stream_url, window_ref, clean_part)
                     else:
                         ContentRenderer._add_link(box, clean_part)
-
                     if trailing:
-                        current_text_buffer.append(trailing)
+                        text_fragments.append((None, GLib.markup_escape_text(trailing)))
                 else:
-                    current_text_buffer.append(part)
-
-            if current_text_buffer:
-                ContentRenderer._add_text(box, "".join(current_text_buffer))
+                    text_fragments.append((None, GLib.markup_escape_text(part)))
+            flush_text()
 
         except Exception as e:
             error_label = Gtk.Label(label=f"[Render error: {str(e)[:50]}]", xalign=0)
@@ -184,6 +216,38 @@ class ContentRenderer:
         label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
         label.set_max_width_chars(60)
         box.append(label)
+
+    @staticmethod
+    def _text_label(markup, window_ref):
+        """Inline text label rendered with Pango markup. nostr: links (profile
+        mentions) are routed to the profile view via activate-link."""
+        lbl = Gtk.Label(label=markup, xalign=0, selectable=True, use_markup=True)
+        lbl.set_wrap(True)
+        lbl.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        lbl.set_max_width_chars(60)
+        lbl.connect("activate-link", lambda l, url: ContentRenderer._on_mention_link(url, window_ref))
+        return lbl
+
+    @staticmethod
+    def _on_mention_link(url, window_ref):
+        if url.startswith("nostr:"):
+            hex_pk = url[len("nostr:"):]
+            if window_ref and len(hex_pk) == 64 and hasattr(window_ref, "show_profile"):
+                window_ref.show_profile(hex_pk)
+                return True
+        return False
+
+    @staticmethod
+    def _mention_name(hex_pk, window_ref):
+        name = None
+        try:
+            if window_ref:
+                prof = window_ref.db.get_profile(hex_pk)
+                if prof:
+                    name = prof.get("display_name") or prof.get("name")
+        except Exception:
+            pass
+        return name or hex_pk[:8]
 
     @staticmethod
     def _add_link(box, url, label=None):
@@ -221,114 +285,49 @@ class ContentRenderer:
                 return
 
             bech32_str = parts[1]
-            is_event = "nevent" in url or "note" in url
-            is_profile = "nprofile" in url or "npub" in url
+            # Only event references render as quote cards here; profile references
+            # are rendered inline as @mentions in render().
+            if "nevent" not in url and "note" not in url:
+                return
 
-            if is_event:
-                hex_id = ContentRenderer._extract_hex_id(bech32_str)
-                if not hex_id:
-                    return
+            hex_id = ContentRenderer._extract_hex_id(bech32_str)
+            if not hex_id:
+                return
 
-                event = window.db.get_event_by_id(hex_id)
+            event = window.db.get_event_by_id(hex_id)
 
-                quote_frame = Gtk.Frame(css_classes=["quote-card"])
-                quote_box = Gtk.Box(
-                    orientation=Gtk.Orientation.VERTICAL,
-                    spacing=6,
-                    margin_top=8,
-                    margin_bottom=8,
-                    margin_start=8,
-                    margin_end=8,
+            quote_frame = Gtk.Frame(css_classes=["quote-card"])
+            quote_box = Gtk.Box(
+                orientation=Gtk.Orientation.VERTICAL,
+                spacing=6,
+                margin_top=8,
+                margin_bottom=8,
+                margin_start=8,
+                margin_end=8,
+            )
+            quote_frame.set_child(quote_box)
+
+            if event:
+                ContentRenderer._build_quote_content(quote_box, event, window)
+            else:
+                lbl = Gtk.Label(label=f"Loading Quoted Event...", css_classes=["dim-label"])
+                quote_box.append(lbl)
+                window.client.request_once(
+                    f"quote_{hex_id[:8]}", {"ids": [hex_id], "limit": 1}
                 )
-                quote_frame.set_child(quote_box)
-
-                if event:
-                    ContentRenderer._build_quote_content(quote_box, event, window)
-                else:
-                    lbl = Gtk.Label(label=f"Loading Quoted Event...", css_classes=["dim-label"])
-                    quote_box.append(lbl)
-                    window.client.request_once(
-                        f"quote_{hex_id[:8]}", {"ids": [hex_id], "limit": 1}
-                    )
-
-                    if post_widget_ref:
-                        if not hasattr(post_widget_ref, "quote_widgets"):
-                            post_widget_ref.quote_widgets = []
-                        post_widget_ref.quote_widgets.append((hex_id, quote_box))
-
-                wrapper_btn = Gtk.Button(css_classes=["flat", "quote-wrapper"])
-                wrapper_btn.set_child(quote_frame)
-                wrapper_btn.connect(
-                    "clicked",
-                    lambda b: window.show_thread(hex_id, "Unknown", "Loading..."),
-                )
-                box.append(wrapper_btn)
-
-            elif is_profile:
-                hex_pk = ContentRenderer._extract_hex_id(bech32_str)
-                if not hex_pk:
-                    return
-
-                prof_frame = Gtk.Frame(css_classes=["profile-card"])
-                prof_box = Gtk.Box(
-                    orientation=Gtk.Orientation.HORIZONTAL,
-                    spacing=10,
-                    margin_top=8,
-                    margin_bottom=8,
-                    margin_start=8,
-                    margin_end=8,
-                )
-                prof_frame.set_child(prof_box)
-
-                av = Adw.Avatar(size=32, show_initials=True, text="?")
-                prof_box.append(av)
-
-                vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-                lbl_name = Gtk.Label(label="User Profile", css_classes=["heading"], xalign=0)
-                lbl_sub = Gtk.Label(
-                    label=hex_pk[:8] + "...",
-                    css_classes=["caption", "dim-label"],
-                    xalign=0,
-                )
-                vbox.append(lbl_name)
-                vbox.append(lbl_sub)
-                prof_box.append(vbox)
-
-                profile = window.db.get_profile(hex_pk)
-                if profile:
-                    name = profile.get("display_name") or profile.get("name")
-                    if name:
-                        lbl_name.set_label(name)
-                        av.set_text(name)
-                    if profile.get("picture"):
-                        picture_url = profile["picture"]
-                        if ContentRenderer.is_video_url(picture_url):
-                            prof_box.remove(av)
-                            av_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-                            av_container.set_size_request(32, 32)
-                            av_container.set_halign(Gtk.Align.CENTER)
-                            VideoLoader.load_and_play(picture_url, av_container, None)
-                            prof_box.append(av_container)
-                        else:
-                            ImageLoader.load_avatars(
-                                profile["picture"], lambda t: av.set_custom_image(t)
-                            )
-                else:
-                    window.client.fetch_profile(hex_pk)
 
                 if post_widget_ref:
-                    if not hasattr(post_widget_ref, "mention_widgets"):
-                        post_widget_ref.mention_widgets = []
-                    post_widget_ref.mention_widgets.append((hex_pk, lbl_name, av))
+                    if not hasattr(post_widget_ref, "quote_widgets"):
+                        post_widget_ref.quote_widgets = []
+                    post_widget_ref.quote_widgets.append((hex_id, quote_box))
 
-                wrapper_btn = Gtk.Button(css_classes=["flat", "quote-wrapper"])
-                wrapper_btn.set_child(prof_frame)
-
-                def on_click_prof(b):
-                    window.show_profile(hex_pk)
-
-                wrapper_btn.connect("clicked", on_click_prof)
-                box.append(wrapper_btn)
+            wrapper_btn = Gtk.Button(css_classes=["flat", "quote-wrapper"])
+            wrapper_btn.set_child(quote_frame)
+            wrapper_btn.connect(
+                "clicked",
+                lambda b: window.show_thread(hex_id, "Unknown", "Loading..."),
+            )
+            box.append(wrapper_btn)
 
         except Exception as e:
             print(f"[Renderer] Card Render Error: {e}")

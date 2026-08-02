@@ -34,6 +34,15 @@ class ProfileView(Adw.Bin):
         btn_back.set_tooltip_text("Back")
         btn_back.connect("clicked", lambda b: self.main_window.content_nav.pop())
         back_row.append(btn_back)
+
+        btn_refresh = Gtk.Button(
+            icon_name="view-refresh-symbolic", css_classes=["flat"]
+        )
+        btn_refresh.set_tooltip_text("Refresh Profile")
+        btn_refresh.connect(
+            "clicked", lambda b: self.main_window.refresh_profile(self.pubkey)
+        )
+        back_row.append(btn_refresh)
         header.append(back_row)
 
         # Avatar - supports animated GIFs/videos

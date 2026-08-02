@@ -199,6 +199,14 @@ class MainWindow(Adw.ApplicationWindow):
         page = Adw.NavigationPage(title=f"Profile {pubkey[:8]}", child=view)
         self.content_nav.push(page)
 
+    def refresh_profile(self, pubkey):
+        # Manual profile refresh: re-fetch metadata, then re-push a fresh
+        # ProfileView so posts reload from the DB.
+        self.client.check_connections()
+        self.client.fetch_profile(pubkey)
+        self.content_nav.pop()
+        self.show_profile(pubkey)
+
     def show_thread(self, event_id, pubkey, content, tags=[]):
         try:
             from gnostr.ui.thread_view import ThreadView
@@ -243,14 +251,29 @@ class MainWindow(Adw.ApplicationWindow):
         name = prof.get("display_name") or prof.get("name") or pubkey[:8]
         pic = prof.get("picture")
         for w in self.event_widgets.values():
-            if getattr(w, "pubkey", None) != pubkey:
-                continue
-            if name:
-                w.lbl_name.set_label(name)
-            if pic:
-                ImageLoader.load_avatars(
-                    pic, lambda t, w=w: w.avatar.set_custom_image(t)
-                )
+            if getattr(w, "pubkey", None) == pubkey:
+                if name:
+                    w.lbl_name.set_label(name)
+                if pic:
+                    ImageLoader.load_avatars(
+                        pic, lambda t, w=w: w.avatar.set_custom_image(t)
+                    )
+            # Update inline @mention labels that reference this pubkey.
+            for lbl in getattr(w, "inline_mention_labels", None) or ():
+                if not hasattr(lbl, "mention_fragments"):
+                    continue
+                new_frags = []
+                changed = False
+                for (pk, frag) in lbl.mention_fragments:
+                    if pk == pubkey:
+                        nm = prof.get("display_name") or prof.get("name") or pk[:8]
+                        new_frags.append((pk, f'<a href="nostr:{pk}">@{GLib.markup_escape_text(nm)}</a>'))
+                        changed = True
+                    else:
+                        new_frags.append((pk, frag))
+                if changed:
+                    lbl.mention_fragments = new_frags
+                    lbl.set_label("".join(frag for _, frag in new_frags))
 
     def on_metrics_updated(self, client, eid, likes, reposts, replies):
         # Update labels on PostWidgets by event_id
