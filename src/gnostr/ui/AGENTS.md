@@ -13,7 +13,7 @@ GTK widget components — all reusable UI elements for displaying Nostr data. Ea
 ## Local Contracts
 - All widgets receive data, never fetch it themselves — data flows from client → widget
 - FeedView.posts_box is a Gtk.Box that PostWidget instances are prepended to
-- PostWidget stores event_id, pubkey, content, and tracks metrics labels
+- PostWidget stores event_id, pubkey, content, and tracks metrics labels; shows a compact relative-time caption (now/Nm/Nh/Nd/date) at the top-right of the header, resolved from the DB when not passed in
 - PostWidget has `.quote_widgets` for nostr event quote cards and `.inline_mention_labels` for inline @mention text labels
 - Profile @mentions render inline in the text flow (small `@name` Pango links); clicking opens the profile view via `activate-link`
 - Sidebar emits menu signals that MainWindow handles for feed switching

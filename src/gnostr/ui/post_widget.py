@@ -8,11 +8,19 @@ from ..renderer import ContentRenderer, ImageLoader
 
 
 class PostWidget(Adw.Bin):
-    def __init__(self, main_window, pubkey, content, event_id, tags=[], is_hero=False):
+    def __init__(
+        self, main_window, pubkey, content, event_id, tags=[], is_hero=False, created_at=None
+    ):
         super().__init__(css_classes=["card"])
         self.main_window = main_window
         self.pubkey = pubkey
         self.event_id = event_id
+
+        # Resolve the post's timestamp from the DB when the caller didn't provide
+        # it (e.g. live event-received posts). Unobtrusive relative-time caption.
+        if created_at is None:
+            ev = main_window.db.get_event_by_id(event_id)
+            created_at = ev.get("created_at") if ev else None
 
         if is_hero:
             self.add_css_class("hero")
@@ -53,6 +61,7 @@ class PostWidget(Adw.Bin):
         hb.append(btn_av)
 
         nb = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        nb.set_hexpand(True)
         self.lbl_name = Gtk.Label(label=name, xalign=0, css_classes=["heading"])
         nb.append(self.lbl_name)
 
@@ -61,6 +70,13 @@ class PostWidget(Adw.Bin):
         )
         nb.append(lbl_npub)
         hb.append(nb)
+
+        # Unobtrusive relative timestamp at the top-right of the header
+        self.lbl_time = Gtk.Label(
+            label=self._format_time(created_at), xalign=1, css_classes=["caption", "dim-label"]
+        )
+        self.lbl_time.set_halign(Gtk.Align.END)
+        hb.append(self.lbl_time)
         self.main_box.append(hb)
 
         # Content
@@ -99,3 +115,29 @@ class PostWidget(Adw.Bin):
                 ),
             )
             self.add_controller(ctrl)
+
+    @staticmethod
+    def _format_time(ts):
+        """Compact, unobtrusive relative timestamp: now / Nm / Nh / Nd, then a date."""
+        if not ts:
+            return ""
+        try:
+            import time as _time
+
+            diff = _time.time() - float(ts)
+            if diff < 60:
+                return "now"
+            mins = int(diff / 60)
+            if mins < 60:
+                return f"{mins}m"
+            hours = int(diff / 3600)
+            if hours < 24:
+                return f"{hours}h"
+            days = int(diff / 86400)
+            if days < 30:
+                return f"{days}d"
+            import datetime as _dt
+
+            return _dt.datetime.fromtimestamp(int(ts), _dt.timezone.utc).strftime("%b %d")
+        except Exception:
+            return ""
