@@ -789,8 +789,14 @@ class VideoPlayer:
         try:
             sink = pipeline.get_property("video-sink")
             if sink:
-                # get_current_caps is a Pad method — query the sink's "sink" pad.
-                pad = sink.get_static_pad("sink")
+                pad = None
+                if hasattr(sink, "get_by_name"):
+                    # video-sink may be the Task 10 capsfilter bin — descend to the
+                    # real gtk4paintablesink (named "sink") for its delivered caps.
+                    real = sink.get_by_name("sink")
+                    pad = real.get_static_pad("sink") if real else None
+                if pad is None:
+                    pad = sink.get_static_pad("sink")
                 caps = pad.get_current_caps() if pad else None
                 caps_str = caps.to_string() if caps else "none"
         except Exception:
