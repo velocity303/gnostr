@@ -682,14 +682,19 @@ class VideoPlayer:
                 else:
                     # Only log message types relevant to playback/perf diagnostics;
                     # the high-volume noise (STREAM_START=32, TAGS=16, EXTENDED=8192)
-                    # flooded the log and is skipped here.
-                    if t & (
-                        Gst.MessageType.QOS
-                        | Gst.MessageType.LATENCY
-                        | Gst.MessageType.SEGMENT_DONE
-                        | Gst.MessageType.PROGRESS
-                        | Gst.MessageType.CLOCK_UPDATE
+                    # flooded the log and is skipped. Bitmask built via getattr so a
+                    # missing enum member in some GStreamer bindings (e.g. CLOCK_UPDATE)
+                    # can't raise AttributeError on every bus message.
+                    _pref_types = 0
+                    for _name in (
+                        "QOS",
+                        "LATENCY",
+                        "SEGMENT_DONE",
+                        "PROGRESS",
+                        "CLOCK_UPDATE",
                     ):
+                        _pref_types |= getattr(Gst.MessageType, _name, 0)
+                    if t & _pref_types:
                         _vlog(f"🎬 [Media] Bus: {t}")
             bus.connect("message", on_bus_message)
             _vlog("🎬 [Video] Bus watcher connected")
@@ -747,7 +752,9 @@ class VideoPlayer:
         try:
             sink = pipeline.get_property("video-sink")
             if sink:
-                caps = sink.get_current_caps()
+                # get_current_caps is a Pad method — query the sink's "sink" pad.
+                pad = sink.get_static_pad("sink")
+                caps = pad.get_current_caps() if pad else None
                 caps_str = caps.to_string() if caps else "none"
         except Exception:
             caps_str = "query-error"
