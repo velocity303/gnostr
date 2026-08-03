@@ -636,6 +636,13 @@ class VideoPlayer:
             # delivery (decode still runs at stream res, but the per-frame copy / GPU
             # upload cost drops). Fall back to a direct sink if the bin can't build so
             # video always works.
+            #
+            # The capsfilter caps carry only a width/height range (no `format`), which
+            # otherwise makes playbin3's autoplug skip inserting videoconvert — the
+            # decoder's raw format (e.g. NV12) then hits gtk4paintablesink (RGBA-only)
+            # and errors with "unsupported pixel format". A videoconvert inside the bin
+            # guarantees format adaptation to the sink's format, so it's deterministic
+            # regardless of autoplug's negotiation.
             video_sink = sink
             if _MAX_VIDEO_WIDTH and _MAX_VIDEO_HEIGHT:
                 try:
@@ -647,16 +654,19 @@ class VideoPlayer:
                             f"height=(int)[1,{_MAX_VIDEO_HEIGHT}]"
                         ),
                     )
+                    conv = Gst.ElementFactory.make("videoconvert", "res_fmt_conv")
                     sink_bin = Gst.Bin.new()
                     sink_bin.add(capfilter)
+                    sink_bin.add(conv)
                     sink_bin.add(sink)
-                    capfilter.link(sink)
+                    capfilter.link(conv)
+                    conv.link(sink)
                     ghost = Gst.GhostPad.new("sink", capfilter.get_static_pad("sink"))
                     sink_bin.add_pad(ghost)
                     video_sink = sink_bin
                     _vlog(
                         f"🎬 [Video] video-sink capped "
-                        f"≤{_MAX_VIDEO_WIDTH}x{_MAX_VIDEO_HEIGHT}"
+                        f"≤{_MAX_VIDEO_WIDTH}x{_MAX_VIDEO_HEIGHT} +fmtconv"
                     )
                 except Exception:
                     video_sink = sink  # keep video working
