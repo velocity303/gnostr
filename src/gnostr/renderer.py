@@ -27,6 +27,13 @@ from . import nostr_utils
 # Set to True to enable verbose 🎬 debug logging
 _DEBUG_VIDEO = False
 
+# Task 10 (measured): videos decode at up to 1080p into a ~600px feed widget.
+# Cap the frame size delivered to the sink so decodebin3 scales to fit this box
+# first — cuts per-frame copy / GPU-upload cost on low-power mobile. decodebin3
+# auto-inserts videoscale to satisfy the sink caps; 0 disables the cap.
+_MAX_VIDEO_WIDTH = 1280
+_MAX_VIDEO_HEIGHT = 720
+
 
 def _vlog(msg):
     if _DEBUG_VIDEO:
@@ -624,7 +631,37 @@ class VideoPlayer:
                 _vlog("🎬 [Video] FAIL: could not create gtk4paintablesink element")
                 raise RuntimeError("gtk4paintablesink creation failed")
 
-            pipeline.set_property("video-sink", sink)
+            # Task 10: cap delivered frame size. Wrap the sink in a capsfilter bin so
+            # decodebin3 scales to at most _MAX_VIDEO_WIDTH x _MAX_VIDEO_HEIGHT before
+            # delivery (decode still runs at stream res, but the per-frame copy / GPU
+            # upload cost drops). Fall back to a direct sink if the bin can't build so
+            # video always works.
+            video_sink = sink
+            if _MAX_VIDEO_WIDTH and _MAX_VIDEO_HEIGHT:
+                try:
+                    capfilter = Gst.ElementFactory.make("capsfilter", "mobile_res_cap")
+                    capfilter.set_property(
+                        "caps",
+                        Gst.Caps.from_string(
+                            f"video/x-raw,width=(int)[1,{_MAX_VIDEO_WIDTH}],"
+                            f"height=(int)[1,{_MAX_VIDEO_HEIGHT}]"
+                        ),
+                    )
+                    sink_bin = Gst.Bin.new()
+                    sink_bin.add(capfilter)
+                    sink_bin.add(sink)
+                    capfilter.link(sink)
+                    ghost = Gst.GhostPad.new("sink", capfilter.get_static_pad("sink"))
+                    sink_bin.add_pad(ghost)
+                    video_sink = sink_bin
+                    _vlog(
+                        f"🎬 [Video] video-sink capped "
+                        f"≤{_MAX_VIDEO_WIDTH}x{_MAX_VIDEO_HEIGHT}"
+                    )
+                except Exception:
+                    video_sink = sink  # keep video working
+
+            pipeline.set_property("video-sink", video_sink)
             _vlog("🎬 [Video] gtk4paintablesink created and set as video-sink OK")
 
             # Create a Gtk.Picture and bind the sink's paintable directly — no
