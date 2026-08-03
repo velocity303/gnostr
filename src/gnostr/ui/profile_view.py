@@ -94,6 +94,21 @@ class ProfileView(Adw.Bin):
         npub_box.append(btn_copy)
 
         header.append(npub_box)
+
+        # Follow/Unfollow toggle — hidden on your own profile
+        my_pubkey = self.main_window.pub_key
+        if my_pubkey and pubkey != my_pubkey:
+            self._following = pubkey in self.main_window.db.get_following_list(
+                my_pubkey
+            )
+            self.btn_follow = Gtk.Button(
+                label="Unfollow" if self._following else "Follow",
+                css_classes=["pill", "suggested-action"],
+            )
+            self.btn_follow.set_halign(Gtk.Align.CENTER)
+            self.btn_follow.connect("clicked", lambda b: self.toggle_follow())
+            header.append(self.btn_follow)
+
         self.layout.append(header)
 
         # Posts List with scrolling
@@ -130,3 +145,14 @@ class ProfileView(Adw.Bin):
         clipboard.set_content(provider)
         toast = Adw.Toast(title="Copied npub")
         self.main_window.toast_overlay.add_toast(toast)
+
+    def toggle_follow(self):
+        self._following = not self._following
+        self.btn_follow.set_label("Unfollow" if self._following else "Follow")
+        self.main_window.db.set_following(
+            self.main_window.pub_key, self.pubkey, self._following
+        )
+        self.main_window.client.publish_contacts()
+        self.main_window.add_toast(
+            Adw.Toast(title="Following" if self._following else "Unfollowed")
+        )

@@ -220,6 +220,27 @@ class Database:
             )
             return [row[0] for row in cursor.fetchall()]
 
+    def set_following(self, owner_pubkey, pubkey, following):
+        """Add or remove a single followed pubkey for an owner (targeted toggle)."""
+        if not self.conn:
+            return
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                if following:
+                    cursor.execute(
+                        "INSERT OR IGNORE INTO following (owner_pubkey, followed_pubkey) VALUES (?, ?)",
+                        (owner_pubkey, pubkey),
+                    )
+                else:
+                    cursor.execute(
+                        "DELETE FROM following WHERE owner_pubkey = ? AND followed_pubkey = ?",
+                        (owner_pubkey, pubkey),
+                    )
+                self.conn.commit()
+            except Exception as e:
+                print(f"⚠️ DB Following Error: {e}")
+
     def get_replies(self, parent_event_id, limit=50):
         """Fetch replies to a specific event (kind 1 events with an 'e' tag referencing parent)."""
         if not self.conn:

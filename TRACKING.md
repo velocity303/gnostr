@@ -303,7 +303,8 @@ Plan: `.hermes/plans/2026-08-02_gnostr-ux-overhaul.md` (10 tasks, 4 phases). Exe
   - 🔶 Note: `src/gnostr/AGENTS.md` still says VideoPlayer uses appsink — stale since the gtk4paintablesink migration; flag for a later DOX pass.
 - ✅ **Task 8 — Decorative @ mentions.** Mentions now render as **bold** `@name` links (theme-safe Pango `<span weight="bold">`), clearly distinct from body text. Applied in both `renderer.render()` and `main.on_profile_updated` (name refresh keeps the same styling). Avatar-in-mention flagged as a follow-up — it needs the `render()` → `Gtk.FlowBox` rework, which is the higher-risk Option B from the plan. Files: `src/gnostr/renderer.py`, `src/gnostr/main.py`.
   - 🔶 Follow-up: inline mention avatars via Gtk.FlowBox (Option B) — defer until after Task 10.
-- ⏳ Task 9 — Follow/unfollow toggle on profile page. Not started.
+- ✅ **Task 9 — Follow/Unfollow toggle.** `ProfileView` now shows a pill Follow/Unfollow button on other users' profiles (hidden on your own), initialized from `get_following_list`. Toggling updates the DB via a new targeted `database.set_following()` and publishes a kind-3 contact list via new `client.publish_contacts()`. Files: `src/gnostr/ui/profile_view.py`, `src/gnostr/database.py`, `src/gnostr/client.py`.
+- ⏳ Task 10 — Video stutter perf investigation + tuning. Not started.
 
 ---
 

@@ -36,4 +36,5 @@ if pytest_prog.found()
   test('test_profile_service', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_profile_service.py'], env: test_env, timeout: 120)
   test('test_profile_metadata', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_profile_metadata_service.py'], env: test_env, timeout: 120)
   test('test_resource_management', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_resource_management.py'], env: test_env, timeout: 120)
-endif
+  test('test_following', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_following.py'], env: test_env, timeout: 120)
+  endif

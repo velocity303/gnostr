@@ -291,6 +291,24 @@ class NostrClient(GObject.Object):
             return True
         return False
 
+    def publish_contacts(self):
+        """Publish the current follow list as a kind-3 contact-list event."""
+        if not self.my_privkey or not self.my_pubkey:
+            return False
+        followed = self.db.get_following_list(self.my_pubkey)
+        event = {
+            "pubkey": self.my_pubkey,
+            "created_at": int(time.time()),
+            "kind": 3,
+            "tags": [["p", pk] for pk in followed],
+            "content": "",
+        }
+        signed = gnostr.nostr_utils.sign_event(event, self.my_privkey)
+        if signed:
+            self.publish(signed)
+            return True
+        return False
+
     def publish_relay_list(self):
 
         event = {

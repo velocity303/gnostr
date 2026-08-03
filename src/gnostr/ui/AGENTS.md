@@ -27,7 +27,7 @@ GTK widget components — all reusable UI elements for displaying Nostr data. Ea
 - CSS classes used: `dim-label`, `heading`, `caption`, `caption-heading`, `quote-card`, `profile-card`, `quote-wrapper`, `flat`
 - PostWidget prepends to posts_box (newest at top) — no sorting logic in widget
 - All labels use `xalign=0` for left alignment, wrap=True for long content
-- ProfileView shows avatar with Adw.Avatar, supports both image and video profile pictures; back/refresh toolbar sits at the top of the layout (upper-left), outside the centered header
+- ProfileView shows avatar with Adw.Avatar, supports both image and video profile pictures; back/refresh toolbar sits at the top of the layout (upper-left), outside the centered header; on other users' profiles it has a Follow/Unfollow toggle (updates the DB via `set_following` + publishes a kind-3 contact list)
 - Do NOT put business logic in widgets — they render data, they don't decide what to show
 
 ## Verification
