@@ -670,8 +670,27 @@ class VideoPlayer:
                         except Exception:
                             _elapsed = ""
                         _vlog(f"🎬 [Media] State changed: {old} → {new} {_elapsed}")
+                        # Task 10: report decoder + negotiated video caps once per
+                        # pipeline at first preroll (caps are valid at PAUSED/PLAYING).
+                        # Tied to the guaranteed state-changed event rather than a
+                        # timer, so the measurement can never silently no-op.
+                        if new in (Gst.State.PAUSED, Gst.State.PLAYING) and not getattr(
+                            p, "_caps_reported", False
+                        ):
+                            p._caps_reported = True
+                            VideoPlayer._inspect_pipeline(p, media_url)
                 else:
-                    _vlog(f"🎬 [Media] Bus message: {t}")
+                    # Only log message types relevant to playback/perf diagnostics;
+                    # the high-volume noise (STREAM_START=32, TAGS=16, EXTENDED=8192)
+                    # flooded the log and is skipped here.
+                    if t & (
+                        Gst.MessageType.QOS
+                        | Gst.MessageType.LATENCY
+                        | Gst.MessageType.SEGMENT_DONE
+                        | Gst.MessageType.PROGRESS
+                        | Gst.MessageType.CLOCK_UPDATE
+                    ):
+                        _vlog(f"🎬 [Media] Bus: {t}")
             bus.connect("message", on_bus_message)
             _vlog("🎬 [Video] Bus watcher connected")
 
@@ -686,14 +705,7 @@ class VideoPlayer:
             video._is_muted = False
             video._original_url = original_url or url
             pipeline._t0 = time.monotonic()  # Task 10 perf: build-start timestamp
-
-            if _DEBUG_VIDEO:
-                # One-shot diagnostic: report decoder + negotiated video caps after
-                # the pipeline prerolls (caps populate only after decode starts).
-                GLib.timeout_add(
-                    1500,
-                    lambda: VideoPlayer._inspect_pipeline(pipeline, url),
-                )
+            pipeline._caps_reported = False  # inspect once at first preroll
 
             # Play at full volume; users control loudness at the system level.
             pipeline.set_property("volume", 1.0)
@@ -727,48 +739,50 @@ class VideoPlayer:
 
     @staticmethod
     def _inspect_pipeline(pipeline, url):
-        """Task 10 perf diagnostic (measure-first). Reports the decoder element(s)
-        and negotiated video caps (resolution / framerate) so we can tell whether
-        software vs hardware decode is in use and what resolution is being decoded.
-        Runs only when _DEBUG_VIDEO is enabled; never touches the production path."""
+        """Task 10 perf diagnostic (measure-first). Reports the negotiated video
+        caps (resolution / framerate) — the key measurement — then the decoder
+        element(s). Caps are queried and printed first so the report survives even
+        if the decoder walk fails; the walk is best-effort and never blocks."""
+        caps_str = "none"
         try:
-            decoders = []
-
-            def _walk(bin_, depth=0):
-                try:
-                    for el in bin_.iterate_elements():
-                        name = el.get_name().lower()
-                        if any(
-                            k in name
-                            for k in (
-                                "decoder",
-                                "v4l2",
-                                "vaapi",
-                                "avdec",
-                                "omx",
-                                "mfx",
-                                "d3d",
-                                "nvdec",
-                            )
-                        ):
-                            decoders.append(el.get_name())
-                        if isinstance(el, Gst.Bin):
-                            _walk(el, depth + 1)
-                except Exception:
-                    pass
-
-            _walk(pipeline)
             sink = pipeline.get_property("video-sink")
-            caps_str = "none"
             if sink:
                 caps = sink.get_current_caps()
                 caps_str = caps.to_string() if caps else "none"
-            print(
-                f"🎬[PERF] {url[:60]} decoders={decoders or ['auto']} "
-                f"video_caps={caps_str}"
-            )
+        except Exception:
+            caps_str = "query-error"
+
+        decoders = []
+        try:
+
+            def _walk(bin_, depth=0):
+                for el in bin_.iterate_elements():
+                    name = el.get_name().lower()
+                    if any(
+                        k in name
+                        for k in (
+                            "decoder",
+                            "v4l2",
+                            "vaapi",
+                            "avdec",
+                            "omx",
+                            "mfx",
+                            "d3d",
+                            "nvdec",
+                        )
+                    ):
+                        decoders.append(el.get_name())
+                    if isinstance(el, Gst.Bin):
+                        _walk(el, depth + 1)
+
+            _walk(pipeline)
         except Exception:
             pass
+
+        print(
+            f"🎬[PERF] {url[:60]} decoders={decoders or ['auto']} "
+            f"video_caps={caps_str}"
+        )
 
     @staticmethod
     def _find_video(video_container):
