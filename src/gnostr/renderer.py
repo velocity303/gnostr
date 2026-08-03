@@ -8,6 +8,7 @@ import concurrent.futures
 from urllib.parse import urlparse
 import traceback
 import subprocess
+import time
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
@@ -659,7 +660,16 @@ class VideoPlayer:
                 elif t & Gst.MessageType.STATE_CHANGED:
                     old, new, pending = msg.parse_state_changed()
                     if pending == Gst.State.VOID_PENDING:
-                        _vlog(f"🎬 [Media] State changed: {old} → {new}")
+                        _elapsed = ""
+                        try:
+                            _elapsed = (
+                                f"{(time.monotonic() - p._t0) * 1000:.0f}ms"
+                                if hasattr(p, "_t0")
+                                else ""
+                            )
+                        except Exception:
+                            _elapsed = ""
+                        _vlog(f"🎬 [Media] State changed: {old} → {new} {_elapsed}")
                 else:
                     _vlog(f"🎬 [Media] Bus message: {t}")
             bus.connect("message", on_bus_message)
@@ -675,6 +685,15 @@ class VideoPlayer:
             video._is_playing = False
             video._is_muted = False
             video._original_url = original_url or url
+            pipeline._t0 = time.monotonic()  # Task 10 perf: build-start timestamp
+
+            if _DEBUG_VIDEO:
+                # One-shot diagnostic: report decoder + negotiated video caps after
+                # the pipeline prerolls (caps populate only after decode starts).
+                GLib.timeout_add(
+                    1500,
+                    lambda: VideoPlayer._inspect_pipeline(pipeline, url),
+                )
 
             # Play at full volume; users control loudness at the system level.
             pipeline.set_property("volume", 1.0)
@@ -693,6 +712,10 @@ class VideoPlayer:
                 # The evicted widget is scrolled out of view; it will re-create if revisited.
                 while len(VideoPlayer._cache) > VideoPlayer._CACHE_MAX:
                     old_url, old_video = VideoPlayer._cache.popitem(last=False)
+                    _vlog(
+                        f"🎬[PERF] evicting player: {old_url[:60]} "
+                        f"(cache={len(VideoPlayer._cache)}/{VideoPlayer._CACHE_MAX})"
+                    )
                     try:
                         p = getattr(old_video, "_pipeline", None)
                         if p:
@@ -701,6 +724,51 @@ class VideoPlayer:
                         pass
 
         callback(video)
+
+    @staticmethod
+    def _inspect_pipeline(pipeline, url):
+        """Task 10 perf diagnostic (measure-first). Reports the decoder element(s)
+        and negotiated video caps (resolution / framerate) so we can tell whether
+        software vs hardware decode is in use and what resolution is being decoded.
+        Runs only when _DEBUG_VIDEO is enabled; never touches the production path."""
+        try:
+            decoders = []
+
+            def _walk(bin_, depth=0):
+                try:
+                    for el in bin_.iterate_elements():
+                        name = el.get_name().lower()
+                        if any(
+                            k in name
+                            for k in (
+                                "decoder",
+                                "v4l2",
+                                "vaapi",
+                                "avdec",
+                                "omx",
+                                "mfx",
+                                "d3d",
+                                "nvdec",
+                            )
+                        ):
+                            decoders.append(el.get_name())
+                        if isinstance(el, Gst.Bin):
+                            _walk(el, depth + 1)
+                except Exception:
+                    pass
+
+            _walk(pipeline)
+            sink = pipeline.get_property("video-sink")
+            caps_str = "none"
+            if sink:
+                caps = sink.get_current_caps()
+                caps_str = caps.to_string() if caps else "none"
+            print(
+                f"🎬[PERF] {url[:60]} decoders={decoders or ['auto']} "
+                f"video_caps={caps_str}"
+            )
+        except Exception:
+            pass
 
     @staticmethod
     def _find_video(video_container):
