@@ -125,8 +125,11 @@ class PostWidget(Adw.Bin):
             # a long-press doesn't also open the thread on release.
             lp = Gtk.GestureLongPress()
             lp.connect("pressed", lambda g, x, y: self._copy_post())
-            ctrl.group(lp)
+            # Attach to the same widget BEFORE grouping — gtk_gesture_group()
+            # asserts both gestures share a widget (gtk_gesture.c:1587), and
+            # lp's widget is only set once it's added to a controller host.
             self.add_controller(lp)
+            ctrl.group(lp)
 
     def _copy_post(self):
         display = Gdk.Display.get_default()
