@@ -716,7 +716,10 @@ class VideoPlayer:
                             )
                         except Exception:
                             _elapsed = ""
-                        _vlog(f"🎬 [Media] State changed: {old} → {new} {_elapsed}")
+                        _vlog(
+                            f"🎬 [Media] State changed: {old} → {new} "
+                            f"{_elapsed} {media_url[:40]}"
+                        )
                         # Task 10: report decoder + negotiated video caps once per
                         # pipeline at first preroll (caps are valid at PAUSED/PLAYING).
                         # Tied to the guaranteed state-changed event rather than a
@@ -742,7 +745,24 @@ class VideoPlayer:
                     ):
                         _pref_types |= getattr(Gst.MessageType, _name, 0)
                     if t & _pref_types:
-                        _vlog(f"🎬 [Media] Bus: {t}")
+                        # QOS is the stutter signal: gtk4paintablesink reports when it
+                        # drops / late-processes frames. Aggregate per-pipeline so we
+                        # can attribute stutter to a specific URL (and correlate with
+                        # its measured caps at eviction). parse_qos is best-effort.
+                        if t & getattr(Gst.MessageType, "QOS", 0):
+                            try:
+                                _q = msg.parse_qos()
+                                _prop = float(_q[5]) if len(_q) > 5 else 1.0
+                                _drops = int(_q[7]) if len(_q) > 7 else 0
+                            except Exception:
+                                _prop, _drops = 1.0, 0
+                            p._qos_events = getattr(p, "_qos_events", 0) + 1
+                            p._qos_dropped = getattr(p, "_qos_dropped", 0) + _drops
+                            p._qos_prop_min = min(
+                                getattr(p, "_qos_prop_min", 1.0), _prop
+                            )
+                        else:
+                            _vlog(f"🎬 [Media] Bus: {t} {media_url[:40]}")
             bus.connect("message", on_bus_message)
             _vlog("🎬 [Video] Bus watcher connected")
 
@@ -783,6 +803,19 @@ class VideoPlayer:
                     try:
                         p = getattr(old_video, "_pipeline", None)
                         if p:
+                            # Task 10: per-pipeline QOS summary before teardown.
+                            # qos_events = dropped-frame reports; qos_dropped = sum of
+                            # buffers dropped-late; qos_prop_min = worst 1.0→0 quality
+                            # ratio (1.0 = perfect, lower = worse stutter).
+                            _ev = getattr(p, "_qos_events", 0)
+                            _dp = getattr(p, "_qos_dropped", 0)
+                            _pm = getattr(p, "_qos_prop_min", 1.0)
+                            _caps = getattr(p, "_measured_caps", "n/a")
+                            _vlog(
+                                f"🎬[PERF-QOS] {old_url[:55]} events={_ev} "
+                                f"dropped_late={_dp} worst_prop={_pm:.2f} "
+                                f"caps={_caps[:40]}"
+                            )
                             p.set_state(Gst.State.NULL)  # release decoder + buffers
                     except Exception:
                         pass
@@ -811,6 +844,13 @@ class VideoPlayer:
                 caps_str = caps.to_string() if caps else "none"
         except Exception:
             caps_str = "query-error"
+
+        # Stash for the eviction QOS summary — correlate measured resolution with
+        # the stutter this pipeline accumulated.
+        try:
+            pipeline._measured_caps = caps_str
+        except Exception:
+            pass
 
         decoders = []
         try:
