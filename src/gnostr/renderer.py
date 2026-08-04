@@ -71,22 +71,47 @@ class ContentRenderer:
         video_area.set_hexpand(True)
         video_area.set_size_request(-1, 200)
 
-        spinner = Gtk.Spinner()
-        spinner.start()
-        spinner.set_halign(Gtk.Align.CENTER)
-        spinner.set_valign(Gtk.Align.CENTER)
-        spinner.set_vexpand(True)
-        video_area.append(spinner)
+        is_gif = url.lower().endswith(".gif")
 
-        VideoPlayer.load_and_play(url, video_area, spinner, window_ref, original_url)
+        if is_gif:
+            # GIFs are small animated images; keep the existing preroll+loop UX.
+            spinner = Gtk.Spinner()
+            spinner.start()
+            spinner.set_halign(Gtk.Align.CENTER)
+            spinner.set_valign(Gtk.Align.CENTER)
+            spinner.set_vexpand(True)
+            video_area.append(spinner)
+            VideoPlayer.load_and_play(url, video_area, spinner, window_ref, original_url)
+        else:
+            # Real videos: lazy-load. Don't build a playbin3 pipeline (and pull
+            # the stream) until the user actually taps play — prerolling every
+            # video in a feed builds 6+ concurrent pipelines and costs seconds of
+            # preroll (measured, Task 10). Show a placeholder "playable video"
+            # graphic instead; the pipeline builds on first play.
+            placeholder = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            placeholder.set_halign(Gtk.Align.CENTER)
+            placeholder.set_valign(Gtk.Align.CENTER)
+            ph_icon = Gtk.Image.new_from_icon_name("media-playback-start-symbolic")
+            ph_icon.set_pixel_size(56)
+            ph_icon.set_opacity(0.9)
+            ph_label = Gtk.Label(label="Play video")
+            ph_label.add_css_class("dim-label")
+            placeholder.append(ph_icon)
+            placeholder.append(ph_label)
+            video_area._placeholder = placeholder
+            video_area.append(placeholder)
+
         video_box.append(video_area)
 
-        # Clicking the video frame toggles play/pause.
+        # Clicking the video frame toggles play/pause (or lazily starts playback).
         click_ctrl = Gtk.GestureClick()
-        click_ctrl.connect("released", lambda c, n, x, y: VideoPlayer.toggle_play(video_area))
+        click_ctrl.connect(
+            "released",
+            lambda c, n, x, y: ContentRenderer._start_playback(
+                video_area, url, window_ref, original_url, is_gif
+            ),
+        )
         video_area.add_controller(click_ctrl)
-
-        is_gif = url.lower().endswith(".gif")
 
         # Animated GIFs loop; the seek bar + mute button don't apply — skip them.
         if not is_gif:
@@ -119,7 +144,12 @@ class ContentRenderer:
         play_btn = Gtk.Button(icon_name="media-playback-start-symbolic")
         play_btn.set_tooltip_text("Play/Pause")
         play_btn.set_size_request(40, 40)
-        play_btn.connect("clicked", lambda b: VideoPlayer.toggle_play(video_area))
+        play_btn.connect(
+            "clicked",
+            lambda b: ContentRenderer._start_playback(
+                video_area, url, window_ref, original_url, is_gif
+            ),
+        )
         controls.append(play_btn)
 
         if original_url and ("youtube.com" in original_url or "youtu.be" in original_url):
@@ -130,6 +160,35 @@ class ContentRenderer:
 
         video_box.append(controls)
         box.append(video_box)
+
+    @staticmethod
+    def _start_playback(video_area, url, window_ref, original_url, is_gif=False):
+        """Lazy playback bootstrap. If the pipeline is already built, just
+        toggle; otherwise remove the placeholder, show a spinner, and build the
+        pipeline with autoplay. Keeps preroll cost to videos the user actually
+        plays (Task 10 contention fix)."""
+        video = VideoPlayer._find_video(video_area)
+        if video and hasattr(video, "_pipeline"):
+            VideoPlayer.toggle_play(video_area)
+            return
+        # First play tap — remove the placeholder if present, swap in a spinner,
+        # then build + autoplay.
+        ph = getattr(video_area, "_placeholder", None)
+        if ph is not None and ph.get_parent() == video_area:
+            video_area.remove(ph)
+            try:
+                delattr(video_area, "_placeholder")
+            except Exception:
+                pass
+        spinner = Gtk.Spinner()
+        spinner.start()
+        spinner.set_halign(Gtk.Align.CENTER)
+        spinner.set_valign(Gtk.Align.CENTER)
+        spinner.set_vexpand(True)
+        video_area.append(spinner)
+        VideoPlayer.load_and_play(
+            url, video_area, spinner, window_ref, original_url, autoplay=True
+        )
 
     @staticmethod
     def render(content, window_ref, post_widget_ref=None):
