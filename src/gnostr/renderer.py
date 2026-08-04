@@ -730,39 +730,30 @@ class VideoPlayer:
                             p._caps_reported = True
                             VideoPlayer._inspect_pipeline(p, media_url)
                 else:
-                    # Only log message types relevant to playback/perf diagnostics;
-                    # the high-volume noise (STREAM_START=32, TAGS=16, EXTENDED=8192)
-                    # flooded the log and is skipped. Bitmask built via getattr so a
-                    # missing enum member in some GStreamer bindings (e.g. CLOCK_UPDATE)
-                    # can't raise AttributeError on every bus message.
-                    _pref_types = 0
-                    for _name in (
-                        "QOS",
-                        "LATENCY",
-                        "SEGMENT_DONE",
-                        "PROGRESS",
-                        "CLOCK_UPDATE",
-                    ):
-                        _pref_types |= getattr(Gst.MessageType, _name, 0)
-                    if t & _pref_types:
-                        # QOS is the stutter signal: gtk4paintablesink reports when it
-                        # drops / late-processes frames. Aggregate per-pipeline so we
-                        # can attribute stutter to a specific URL (and correlate with
-                        # its measured caps at eviction). parse_qos is best-effort.
-                        if t & getattr(Gst.MessageType, "QOS", 0):
-                            try:
-                                _q = msg.parse_qos()
-                                _prop = float(_q[5]) if len(_q) > 5 else 1.0
-                                _drops = int(_q[7]) if len(_q) > 7 else 0
-                            except Exception:
-                                _prop, _drops = 1.0, 0
-                            p._qos_events = getattr(p, "_qos_events", 0) + 1
-                            p._qos_dropped = getattr(p, "_qos_dropped", 0) + _drops
-                            p._qos_prop_min = min(
-                                getattr(p, "_qos_prop_min", 1.0), _prop
-                            )
-                        else:
-                            _vlog(f"🎬 [Media] Bus: {t} {media_url[:40]}")
+                    # Only surface the real dropped-frame signal (QOS, (1<<24)).
+                    # LATENCY (1<<19), SEGMENT_DONE, PROGRESS, CLOCK_UPDATE are benign
+                    # pipeline noise that flooded the log (hundreds of lines) and
+                    # masked the QOS signal. Use numeric bitmasks — enum names like
+                    # QOS/LATENCY/CLOCK_UPDATE are inconsistently present across
+                    # Flatpak GStreamer bindings, so getattr() can silently return 0.
+                    _qos_bit = 1 << 24  # GST_MESSAGE_QOS
+                    if t & _qos_bit:
+                        # QOS is the real dropped-frame signal: gtk4paintablesink
+                        # reports when it drops / late-processes frames. Aggregate
+                        # per-pipeline so we can attribute stutter to a specific URL
+                        # (correlate with measured caps at eviction). parse_qos is
+                        # best-effort; never let it break the bus handler.
+                        try:
+                            _q = msg.parse_qos()
+                            _prop = float(_q[5]) if len(_q) > 5 else 1.0
+                            _drops = int(_q[7]) if len(_q) > 7 else 0
+                        except Exception:
+                            _prop, _drops = 1.0, 0
+                        p._qos_events = getattr(p, "_qos_events", 0) + 1
+                        p._qos_dropped = getattr(p, "_qos_dropped", 0) + _drops
+                        p._qos_prop_min = min(
+                            getattr(p, "_qos_prop_min", 1.0), _prop
+                        )
             bus.connect("message", on_bus_message)
             _vlog("🎬 [Video] Bus watcher connected")
 
