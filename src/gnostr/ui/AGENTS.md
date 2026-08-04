@@ -19,6 +19,7 @@ GTK widget components — all reusable UI elements for displaying Nostr data. Ea
 - Sidebar emits menu signals that MainWindow handles for feed switching
 - ThreadView fetches thread data via client.fetch_thread(), not inline
 - ThreadView has a Refresh Thread button: re-fetches root/replies/reactions, then re-renders the hero, replies_box, and metric labels from the DB / client.metrics
+- ThreadView renders the WHOLE thread (hero + context + toggle + replies) in a single `Gtk.ScrolledWindow` so long posts stay navigable; the hero PostWidget and its Show more/less toggle live in a dedicated `hero_section` sub-container and `_rebuild_hero` only touches that section (no index math against the shared layout)
 - PostWidget fetches missing author/mention profiles via client.fetch_profile (TTL-cached); names/avatars re-render via on_profile_updated on arrival
 - ThreadView fetches missing reply parents via client.request_once and renders them into context_box when they arrive (incl. the grandparent chain)
 

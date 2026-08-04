@@ -141,16 +141,8 @@ class ContentRenderer:
         controls.set_margin_start(6)
         controls.set_margin_end(6)
 
-        play_btn = Gtk.Button(icon_name="media-playback-start-symbolic")
-        play_btn.set_tooltip_text("Play/Pause")
-        play_btn.set_size_request(40, 40)
-        play_btn.connect(
-            "clicked",
-            lambda b: ContentRenderer._start_playback(
-                video_area, url, window_ref, original_url, is_gif
-            ),
-        )
-        controls.append(play_btn)
+        # No dedicated play button — the video frame is the play/pause control
+        # (lazy-start on first tap, toggle on later taps).
 
         if original_url and ("youtube.com" in original_url or "youtu.be" in original_url):
             yt_link = Gtk.LinkButton(uri=original_url, label="Open in YouTube")
@@ -168,7 +160,7 @@ class ContentRenderer:
         pipeline with autoplay. Keeps preroll cost to videos the user actually
         plays (Task 10 contention fix)."""
         video = VideoPlayer._find_video(video_area)
-        if video and hasattr(video, "_pipeline"):
+        if video and getattr(video, "_pipeline", None) is not None:
             VideoPlayer.toggle_play(video_area)
             return
         # First play tap — remove the placeholder if present, swap in a spinner,
@@ -180,6 +172,10 @@ class ContentRenderer:
                 delattr(video_area, "_placeholder")
             except Exception:
                 pass
+        # If a dead video widget (evicted pipeline, _pipeline=None) is still in
+        # the container, remove it so the spinner + fresh build replace it.
+        if video is not None and video.get_parent() == video_area:
+            video_area.remove(video)
         spinner = Gtk.Spinner()
         spinner.start()
         spinner.set_halign(Gtk.Align.CENTER)
@@ -661,11 +657,18 @@ class VideoPlayer:
         with VideoPlayer._lock:
             if url in VideoPlayer._cache:
                 cached_video = VideoPlayer._cache[url]
-                if original_url and hasattr(cached_video, '_original_url'):
-                    cached_video._original_url = original_url
-                VideoPlayer._cache.move_to_end(url)  # LRU touch
-                callback(cached_video)
-                return
+                # If the cached pipeline was evicted (set NULL, _pipeline=None),
+                # the widget is dead/blank — treat it as a miss so a fresh
+                # pipeline + widget are built (fixes blank video after navigating
+                # away and back). Drop the dead entry and fall through to rebuild.
+                if getattr(cached_video, "_pipeline", None) is None:
+                    del VideoPlayer._cache[url]
+                else:
+                    if original_url and hasattr(cached_video, "_original_url"):
+                        cached_video._original_url = original_url
+                    VideoPlayer._cache.move_to_end(url)  # LRU touch
+                    callback(cached_video)
+                    return
 
         video = None
         try:
@@ -848,7 +851,7 @@ class VideoPlayer:
                     old_url, old_video = VideoPlayer._cache.popitem(last=False)
                     _vlog(
                         f"🎬[PERF] evicting player: {old_url[:60]} "
-                        f"(cache={len(VideoPlayer._cache)}/{VideoPlayer._CACHE_MAX})"
+                        f"(cache={len(VideoPlayer._cache)}/{VideoPlayer._CACHE_MAX})\n"
                     )
                     try:
                         p = getattr(old_video, "_pipeline", None)
@@ -867,6 +870,11 @@ class VideoPlayer:
                                 f"caps={_caps[:40]}"
                             )
                             p.set_state(Gst.State.NULL)  # release decoder + buffers
+                        # Mark the widget dead so a later cache-hit/start rebuilds
+                        # fresh instead of toggling a NULL'd pipeline (blank video
+                        # after navigating away and back). The cache entry is popped
+                        # below, but the widget may still be in a feed.
+                        old_video._pipeline = None
                     except Exception:
                         pass
 
@@ -945,8 +953,8 @@ class VideoPlayer:
     @staticmethod
     def toggle_play(video_container):
         video = VideoPlayer._find_video(video_container)
-        if not video or not hasattr(video, '_pipeline'):
-            _vlog("🎬 [Video] toggle_play: no video or pipeline found")
+        if not video or getattr(video, "_pipeline", None) is None:
+            _vlog("🎬 [Video] toggle_play: no live pipeline found")
             return
         pipeline = video._pipeline
         video._is_playing = not video._is_playing

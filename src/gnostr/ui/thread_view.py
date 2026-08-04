@@ -22,7 +22,16 @@ class ThreadView(Adw.Bin):
             margin_start=12,
             margin_end=12,
         )
-        self.set_child(self.layout)
+        # Make the WHOLE thread scrollable (hero + context + toggle + replies),
+        # not just the replies — a long hero used to fill the screen with no way
+        # to scroll down to the toggle or replies (bugs: collapse vanished the
+        # post, long threads were unnavigable).
+        self.scroll = Gtk.ScrolledWindow()
+        self.scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self.scroll.set_hexpand(True)
+        self.scroll.set_vexpand(True)
+        self.scroll.set_child(self.layout)
+        self.set_child(self.scroll)
         self.layout.set_vexpand(True)
 
         # Header with back button and title
@@ -77,31 +86,27 @@ class ThreadView(Adw.Bin):
             self.main_window, pubkey, display_content, event_id, tags, is_hero=True
         )
         self.hero_widget = hero
-        self.layout.append(hero)
+        # Hero + toggle live in a dedicated sub-container so rebuilds only touch
+        # this box — no fragile index math against the shared layout (which also
+        # holds header, context_box, replies_box). This fixes the collapse bug
+        # where the post vanished and couldn't be restored.
+        self.hero_section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        self.hero_section.append(hero)
+        self.layout.append(self.hero_section)
 
         if self._hero_truncated:
             self._hero_toggle = Gtk.Button(label="Show more", css_classes=["flat"])
             self._hero_toggle.set_halign(Gtk.Align.START)
             self._hero_toggle.connect("clicked", lambda b: self.toggle_hero())
-            self.layout.append(self._hero_toggle)
+            self.hero_section.append(self._hero_toggle)
 
-        # Replies (Simplified: fetch from DB based on event_id in tags)
-        # Replies with scrolling - remove clamp to fill width
-        scroll = Gtk.ScrolledWindow()
-        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        # --- ADD THESE LINES TO FILL THE SCREEN ---
-        scroll.set_hexpand(True)
-        scroll.set_vexpand(True)
-        # ------------------------------------------
-
-        # Use a box directly to fill available width
+        # Replies (fetch from DB based on event_id in tags). Now that the whole
+        # thread is one ScrolledWindow, the replies box goes directly into the
+        # layout — no nested scrolled window (ScrolledWindow-in-ScrolledWindow
+        # breaks scrolling).
         self.replies_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        # Ensure the box inside expands horizontally too
         self.replies_box.set_hexpand(True)
-
-        scroll.set_child(self.replies_box)
-        scroll.set_halign(Gtk.Align.FILL)
-        self.layout.append(scroll)
+        self.layout.append(self.replies_box)
 
         # We'll rely on the DB having the replies indexed
         replies = self.main_window.db.get_replies(event_id)
@@ -218,13 +223,20 @@ class ThreadView(Adw.Bin):
         new_hero = PostWidget(
             self.main_window, pubkey, content, self.event_id, tags, is_hero=True
         )
-        children = self._box_children(self.layout)
+        # Rebuild within the dedicated hero_section. The toggle button (if any)
+        # stays as the last child, so replacing just the hero widget keeps the
+        # section stable — no index math against the shared layout.
+        children = self._box_children(self.hero_section)
         try:
             idx = children.index(self.hero_widget)
         except ValueError:
+            # hero_widget not found in the section (already replaced) — just
+            # swap the reference so a subsequent toggle still works.
+            self.hero_section.append(new_hero)
+            self.hero_widget = new_hero
             return
-        self.layout.remove(self.hero_widget)
-        self.layout.insert(new_hero, idx)
+        self.hero_section.remove(self.hero_widget)
+        self.hero_section.insert(new_hero, idx)
         self.hero_widget = new_hero
 
     def toggle_hero(self):
