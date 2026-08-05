@@ -189,11 +189,18 @@ class ThreadView(Adw.Bin):
             return
         for t in tags:
             if len(t) >= 2 and t[0] == "e" and t[1] == self.event_id:
-                # This is a reply, add it in time order (newest-at-top) so
-                # backfilled replies slot correctly instead of appending bottom.
-                w = PostWidget(self.main_window, pubkey, content, eid, tags)
-                PostWidget.insert_time_sorted(self.replies_box, w)
-                break
+                # This is a reply to the thread — re-render the full reply tree so
+                # it lands beneath its direct parent (a reply to a reply nests
+                # under that reply, even if newer). Reloading from the DB also
+                # dedups against anything already rendered.
+                self.reload_replies()
+                # Ask the relay for this reply's own replies so deeper nesting
+                # fills in live (fetch_thread only requests #e:[root]).
+                self.client.request_once(
+                    f"thread_replies_{eid[:8]}",
+                    {"kinds": [1], "#e": [eid], "limit": 50},
+                )
+                return
 
     def _render_arrived_parent(self, parent_id, pubkey, content, tags):
         # Recursively load this parent's own parents (fetching any missing ones),
@@ -255,7 +262,30 @@ class ThreadView(Adw.Bin):
         for child in self._box_children(self.replies_box):
             self.replies_box.remove(child)
         replies = self.main_window.db.get_replies(self.event_id)
+        # Build a parent->children reply tree and render depth-first, so a reply
+        # to a reply sits beneath the post it directly responds to (even if it's
+        # newer), instead of a flat time-order list.
+        children = {}
         for ev in replies:
+            parent = self._direct_parent(ev.get("tags", []))
+            children.setdefault(parent, []).append(ev)
+        for pid in children:
+            # Newest-first within each sibling group for coherent reading.
+            children[pid].sort(key=lambda e: e.get("created_at") or 0, reverse=True)
+        self._append_replies_dfs(self.event_id, children, depth=0)
+
+    def _direct_parent(self, tags):
+        """The event this post directly replies to. NIP-01: for a reply to a
+        reply the tags carry [root, direct_parent] with the direct parent LAST;
+        fall back to the thread root when no e-tag is present."""
+        parent = self.event_id
+        for t in tags:
+            if len(t) >= 2 and t[0] == "e":
+                parent = t[1]
+        return parent
+
+    def _append_replies_dfs(self, parent_id, children, depth):
+        for ev in children.get(parent_id, []):
             w = PostWidget(
                 self.main_window,
                 ev["pubkey"],
@@ -264,9 +294,11 @@ class ThreadView(Adw.Bin):
                 ev.get("tags", []),
                 created_at=ev.get("created_at"),
             )
-            # get_replies is newest-first (ORDER BY created_at DESC); append
-            # builds newest→oldest top-to-bottom.
+            if depth:
+                # Indent nested replies so the parent-child structure reads.
+                w.set_margin_start(depth * 24)
             self.replies_box.append(w)
+            self._append_replies_dfs(ev["id"], children, depth + 1)
 
     def reload_metrics(self):
         m = self.client.metrics.get(self.event_id)

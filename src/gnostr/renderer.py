@@ -105,6 +105,15 @@ class ContentRenderer:
 
         # Clicking the video frame toggles play/pause (or lazily starts playback).
         click_ctrl = Gtk.GestureClick()
+        # CLAIM the click sequence on press so the enclosing PostWidget's
+        # open-thread gesture is DENIED for this same event — clicking the video
+        # must play/pause only, never navigate into the post. GTK4 lets a
+        # descendant gesture claim a sequence to stop parent gestures firing
+        # (cooperative sequence-state check documented in GtkGesture).
+        click_ctrl.connect(
+            "pressed",
+            lambda g, n, x, y: g.set_state(Gtk.EventSequenceState.CLAIMED),
+        )
         click_ctrl.connect(
             "released",
             lambda c, n, x, y: ContentRenderer._start_playback(

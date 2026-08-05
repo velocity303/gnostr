@@ -243,8 +243,15 @@ class MainWindow(Adw.ApplicationWindow):
 
         # If we are on the feed and this post belongs here, add it
         if self.content_nav.get_visible_page() == self.feed_view:
-            # Simple heuristic: only add to feed if it's a Kind 1 event
-            # (Usually the signal already filtered this, but just in case)
+            # Dedup against posts already rendered: switch_feed loads the DB cache,
+            # then the live subscription re-delivers the same events (they
+            # persisted from a prior session, so they're not in seen_events and
+            # would otherwise render twice).
+            child = self.feed_view.posts_box.get_first_child()
+            while child is not None:
+                if getattr(child, "event_id", None) == eid:
+                    return
+                child = child.get_next_sibling()
             w = PostWidget(self, pubkey, content, eid, tags)
             # Slot into the correct time position (newest-at-top), not a blind
             # prepend — backfilled/older posts keep the feed in time order.

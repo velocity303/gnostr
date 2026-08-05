@@ -125,6 +125,10 @@ class PostWidget(Adw.Bin):
             # Long-press copies the whole post; group it with the click gesture so
             # a long-press doesn't also open the thread on release.
             lp = Gtk.GestureLongPress()
+            # Lengthen the long-press timeout a bit: delay-factor multiplies the
+            # gtk-long-press-time setting (~500ms default -> ~750ms), so a casual
+            # tap doesn't trigger a copy.
+            lp.set_delay_factor(1.5)
             lp.connect("pressed", lambda g, x, y: self._copy_post())
             # Attach to the same widget BEFORE grouping — gtk_gesture_group()
             # asserts both gestures share a widget (gtk_gesture.c:1587), and
