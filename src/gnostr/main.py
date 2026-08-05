@@ -345,11 +345,9 @@ class MainWindow(Adw.ApplicationWindow):
                 self, ev["pubkey"], ev["content"], ev["id"], ev.get("tags", []),
                 created_at=ev.get("created_at"),
             )
-            # Slot into time order (newest-at-top) — consistent with live inserts,
-            # so a refresh that returns out-of-order/backfilled events still lands
-            # in the correct position. (cached is newest-first, so this appends
-            # newest→oldest top-to-bottom.)
-            PostWidget.insert_time_sorted(self.feed_view.posts_box, w)
+            # cached is newest-first (ORDER BY created_at DESC) — append builds
+            # newest→oldest top-to-bottom. No per-item sorted rebuild needed.
+            self.feed_view.posts_box.append(w)
 
 
 class GnostrApp(Adw.Application):

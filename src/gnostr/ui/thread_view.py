@@ -119,7 +119,9 @@ class ThreadView(Adw.Bin):
                 ev.get("tags", []),
                 created_at=ev.get("created_at"),
             )
-            PostWidget.insert_time_sorted(self.replies_box, w)
+            # get_replies is newest-first (ORDER BY created_at DESC); append
+            # builds newest→oldest top-to-bottom.
+            self.replies_box.append(w)
 
         # Listen for new events to update replies
         self.client.connect("event-received", self.on_event_received)
@@ -262,7 +264,9 @@ class ThreadView(Adw.Bin):
                 ev.get("tags", []),
                 created_at=ev.get("created_at"),
             )
-            PostWidget.insert_time_sorted(self.replies_box, w)
+            # get_replies is newest-first (ORDER BY created_at DESC); append
+            # builds newest→oldest top-to-bottom.
+            self.replies_box.append(w)
 
     def reload_metrics(self):
         m = self.client.metrics.get(self.event_id)

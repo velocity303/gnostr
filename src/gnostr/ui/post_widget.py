@@ -162,27 +162,40 @@ class PostWidget(Adw.Bin):
     @staticmethod
     def insert_time_sorted(box, widget):
         """Insert `widget` into `box` keeping newest-at-top order (descending
-        created_at). Children must be PostWidgets. Used by both the feed and
-        thread views so that live/backfilled posts slot into the correct time
-        position instead of blindly prepending/appending."""
+        created_at). Children must be PostWidgets. Used for LIVE insertions so
+        a new/backfilled post slots into the correct time position instead of
+        blindly appending.
+
+        GTK4 Gtk.Box exposes no index-based insert (Gtk3's gtk_box_insert and
+        gtk_box_reorder_child don't exist here), so this rebuilds the box using
+        only the guaranteed append/remove primitives: collect current children,
+        splice the new widget at the right index, then re-append in order.
+        """
         created_at = getattr(widget, "created_at", None)
-        if created_at is None:
-            box.append(widget)
-            return
-        idx = 0
+        # Collect current children in display order (newest-at-top).
+        ordered = []
         child = box.get_first_child()
         while child is not None:
-            ca = getattr(child, "created_at", None)
-            if ca is not None and ca < created_at:
-                # Current child is older — insert the new (newer) post before it.
-                break
-            idx += 1
+            ordered.append(child)
             child = child.get_next_sibling()
-        # GTK4 Gtk.Box has no insert() — append then reorder_child to the index.
-        # reorder_child(widget, position) moves an already-appended child to the
-        # given index (0-based), so a backfilled/older post lands in its slot.
-        box.append(widget)
-        box.reorder_child(widget, idx)
+
+        if created_at is not None:
+            # Find the first child older than the new post — insert before it.
+            insert_idx = len(ordered)
+            for i, c in enumerate(ordered):
+                ca = getattr(c, "created_at", None)
+                if ca is not None and ca < created_at:
+                    insert_idx = i
+                    break
+            ordered.insert(insert_idx, widget)
+        else:
+            ordered.append(widget)
+
+        # Remove all, then re-append in the new sorted order.
+        for c in ordered:
+            box.remove(c)
+        for c in ordered:
+            box.append(c)
 
     @staticmethod
     def _format_time(ts):
