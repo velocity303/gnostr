@@ -22,6 +22,7 @@ class PostWidget(Adw.Bin):
         if created_at is None:
             ev = main_window.db.get_event_by_id(event_id)
             created_at = ev.get("created_at") if ev else None
+        self.created_at = created_at
 
         if is_hero:
             self.add_css_class("hero")
@@ -139,6 +140,46 @@ class PostWidget(Adw.Bin):
         provider = Gdk.ContentProvider.new_for_value(self.content)
         clipboard.set_content(provider)
         self.main_window.add_toast(Adw.Toast(title="Copied post"))
+
+    def set_content(self, content):
+        """Swap just the rendered content box (child 1, between header and
+        footer). Unlike rebuilding the whole PostWidget, this keeps the same
+        widget identity and avoids re-running the async render chain (image
+        loads, video pipelines, profile/avatar fetch) — which is what made
+        rapid Show-more/less toggles glitchy and orphan mid-load widgets."""
+        self.content = content
+        children = self.main_box.get_first_child()
+        # Walk to child index 1 (header=0, content=1, footer=2)
+        cur = children.get_next_sibling() if children else None
+        if cur is not None:
+            self.main_box.remove(cur)
+        try:
+            rendered = ContentRenderer.render(content, self.main_window, self)
+        except Exception:
+            rendered = Gtk.Label(label="[Content Error]")
+        self.main_box.insert(rendered, 1)
+
+    @staticmethod
+    def insert_time_sorted(box, widget):
+        """Insert `widget` into `box` keeping newest-at-top order (descending
+        created_at). Children must be PostWidgets. Used by both the feed and
+        thread views so that live/backfilled posts slot into the correct time
+        position instead of blindly prepending/appending."""
+        created_at = getattr(widget, "created_at", None)
+        if created_at is None:
+            box.append(widget)
+            return
+        idx = 0
+        child = box.get_first_child()
+        while child is not None:
+            ca = getattr(child, "created_at", None)
+            if ca is not None and ca < created_at:
+                # Current child is older — insert the new (newer) post before it.
+                box.insert(widget, idx)
+                return
+            idx += 1
+            child = child.get_next_sibling()
+        box.append(widget)
 
     @staticmethod
     def _format_time(ts):

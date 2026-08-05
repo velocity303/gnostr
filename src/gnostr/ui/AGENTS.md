@@ -19,14 +19,17 @@ GTK widget components — all reusable UI elements for displaying Nostr data. Ea
 - Sidebar emits menu signals that MainWindow handles for feed switching
 - ThreadView fetches thread data via client.fetch_thread(), not inline
 - ThreadView has a Refresh Thread button: re-fetches root/replies/reactions, then re-renders the hero, replies_box, and metric labels from the DB / client.metrics
-- ThreadView renders the WHOLE thread (hero + context + toggle + replies) in a single `Gtk.ScrolledWindow` so long posts stay navigable; the hero PostWidget and its Show more/less toggle live in a dedicated `hero_section` sub-container and `_rebuild_hero` only touches that section (no index math against the shared layout)
+- ThreadView renders the WHOLE thread (hero + context + toggle + replies) in a single `Gtk.ScrolledWindow` so long posts stay navigable; the hero PostWidget and its Show more/less toggle live in a dedicated `hero_section` sub-container. The toggle calls `PostWidget.set_content` to swap only the hero's content box — it NEVER rebuilds the PostWidget (rebuilding re-ran the async render chain and orphaned mid-load widgets, causing posts to vanish/glitch)
+- PostWidget.set_content(content) swaps just the rendered content box (child index 1, between header and footer) on an existing widget — keeps widget identity, avoids re-running image loads/video pipelines/profile fetch
+- PostWidget.insert_time_sorted(box, widget) inserts a post into a box keeping newest-at-top (descending created_at); used by BOTH the feed and thread so live/backfilled posts slot into the correct time position instead of blind prepend/append
+- PostWidget carries `.created_at` (resolved from the DB when not passed) so sorted insertion works for live events too
 - PostWidget fetches missing author/mention profiles via client.fetch_profile (TTL-cached); names/avatars re-render via on_profile_updated on arrival
 - ThreadView fetches missing reply parents via client.request_once and renders them into context_box when they arrive (incl. the grandparent chain)
 
 ## Work Guidance
 - Widgets use Gtk4/Adw patterns — Gtk.Box, Gtk.Label, Adw.Avatar, Gtk.Button, Gtk.Frame
 - CSS classes used: `dim-label`, `heading`, `caption`, `caption-heading`, `quote-card`, `profile-card`, `quote-wrapper`, `flat`
-- PostWidget prepends to posts_box (newest at top) — no sorting logic in widget
+- Posts are kept in time order via `PostWidget.insert_time_sorted` (newest at top) in both feed and thread views — widgets never decide ordering themselves, the insert helper does
 - All labels use `xalign=0` for left alignment, wrap=True for long content
 - ProfileView shows avatar with Adw.Avatar, supports both image and video profile pictures; back/refresh toolbar sits at the top of the layout (upper-left), outside the centered header; on other users' profiles it has a Follow/Unfollow toggle (updates the DB via `set_following` + publishes a kind-3 contact list)
 - Do NOT put business logic in widgets — they render data, they don't decide what to show

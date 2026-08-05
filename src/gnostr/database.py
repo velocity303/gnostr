@@ -247,13 +247,20 @@ class Database:
             return []
         with self.lock:
             cursor = self.conn.cursor()
+            # Filter by the parent BEFORE applying LIMIT — the old code applied
+            # LIMIT to the newest 50 events globally then filtered, so old
+            # replies to a thread were silently dropped (thread looked incomplete).
+            # tags is stored as JSON text; the parent event id appears verbatim
+            # as a JSON string value, so a LIKE match narrows candidates first.
             cursor.execute(
-                "SELECT * FROM events WHERE kind = 1 ORDER BY created_at DESC LIMIT ?",
-                (limit,),
+                "SELECT * FROM events "
+                "WHERE kind = 1 AND tags LIKE ? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (f"%{parent_event_id}%", limit),
             )
             rows = cursor.fetchall()
             events = self._rows_to_events(rows)
-            # Filter in Python for events that have an 'e' tag referencing parent_event_id
+            # Filter precisely for an 'e' tag referencing parent_event_id.
             replies = []
             for ev in events:
                 tags = ev.get("tags", [])

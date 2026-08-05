@@ -117,8 +117,9 @@ class ThreadView(Adw.Bin):
                 ev["content"],
                 ev["id"],
                 ev.get("tags", []),
+                created_at=ev.get("created_at"),
             )
-            self.replies_box.append(w)
+            PostWidget.insert_time_sorted(self.replies_box, w)
 
         # Listen for new events to update replies
         self.client.connect("event-received", self.on_event_received)
@@ -186,9 +187,10 @@ class ThreadView(Adw.Bin):
             return
         for t in tags:
             if len(t) >= 2 and t[0] == "e" and t[1] == self.event_id:
-                # This is a reply, add it
+                # This is a reply, add it in time order (newest-at-top) so
+                # backfilled replies slot correctly instead of appending bottom.
                 w = PostWidget(self.main_window, pubkey, content, eid, tags)
-                self.replies_box.append(w)
+                PostWidget.insert_time_sorted(self.replies_box, w)
                 break
 
     def _render_arrived_parent(self, parent_id, pubkey, content, tags):
@@ -220,24 +222,12 @@ class ThreadView(Adw.Bin):
         self.reload_metrics()
 
     def _rebuild_hero(self, pubkey, content, tags):
-        new_hero = PostWidget(
-            self.main_window, pubkey, content, self.event_id, tags, is_hero=True
-        )
-        # Rebuild within the dedicated hero_section. The toggle button (if any)
-        # stays as the last child, so replacing just the hero widget keeps the
-        # section stable — no index math against the shared layout.
-        children = self._box_children(self.hero_section)
-        try:
-            idx = children.index(self.hero_widget)
-        except ValueError:
-            # hero_widget not found in the section (already replaced) — just
-            # swap the reference so a subsequent toggle still works.
-            self.hero_section.append(new_hero)
-            self.hero_widget = new_hero
-            return
-        self.hero_section.remove(self.hero_widget)
-        self.hero_section.insert(new_hero, idx)
-        self.hero_widget = new_hero
+        # Swap only the hero's content box via PostWidget.set_content — the same
+        # widget identity is kept, so no async render chain is re-run and no
+        # widget is removed/re-inserted. This fixes the toggle glitchiness and
+        # the "post disappears" orphaning (the old code rebuilt a whole new
+        # PostWidget every toggle, racing image/video loads).
+        self.hero_widget.set_content(content)
 
     def toggle_hero(self):
         self._hero_truncated = not self._hero_truncated
@@ -270,8 +260,9 @@ class ThreadView(Adw.Bin):
                 ev["content"],
                 ev["id"],
                 ev.get("tags", []),
+                created_at=ev.get("created_at"),
             )
-            self.replies_box.append(w)
+            PostWidget.insert_time_sorted(self.replies_box, w)
 
     def reload_metrics(self):
         m = self.client.metrics.get(self.event_id)

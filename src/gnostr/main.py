@@ -246,7 +246,9 @@ class MainWindow(Adw.ApplicationWindow):
             # Simple heuristic: only add to feed if it's a Kind 1 event
             # (Usually the signal already filtered this, but just in case)
             w = PostWidget(self, pubkey, content, eid, tags)
-            self.feed_view.posts_box.prepend(w)
+            # Slot into the correct time position (newest-at-top), not a blind
+            # prepend — backfilled/older posts keep the feed in time order.
+            PostWidget.insert_time_sorted(self.feed_view.posts_box, w)
 
     def on_status_changed(self, client, status):
         emoji = {"CONNECTED": "🟢", "WARNING": "🟡", "DISCONNECTED": "🔴"}.get(
@@ -340,11 +342,14 @@ class MainWindow(Adw.ApplicationWindow):
 
         for ev in cached:
             w = PostWidget(
-                self, ev["pubkey"], ev["content"], ev["id"], ev.get("tags", [])
+                self, ev["pubkey"], ev["content"], ev["id"], ev.get("tags", []),
+                created_at=ev.get("created_at"),
             )
-            # cached is newest-first (ORDER BY created_at DESC); append builds
-            # newest→oldest top-to-bottom. prepend here would put oldest at top.
-            self.feed_view.posts_box.append(w)
+            # Slot into time order (newest-at-top) — consistent with live inserts,
+            # so a refresh that returns out-of-order/backfilled events still lands
+            # in the correct position. (cached is newest-first, so this appends
+            # newest→oldest top-to-bottom.)
+            PostWidget.insert_time_sorted(self.feed_view.posts_box, w)
 
 
 class GnostrApp(Adw.Application):
