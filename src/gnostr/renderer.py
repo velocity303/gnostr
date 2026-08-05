@@ -783,14 +783,22 @@ class VideoPlayer:
                             f"{_elapsed} {media_url[:40]}"
                         )
                         # Task 10: report decoder + negotiated video caps once per
-                        # pipeline at first preroll (caps are valid at PAUSED/PLAYING).
-                        # Tied to the guaranteed state-changed event rather than a
-                        # timer, so the measurement can never silently no-op.
+                        # pipeline. Deferred ~600ms after the first PAUSED/PLAYING
+                        # so caps have time to negotiate — with lazy-load autoplay
+                        # the state-change races ahead of negotiation, so querying
+                        # inline returned caps=None for most videos (measurement
+                        # regression). The timeout keeps the measurement non-blocking.
                         if new in (Gst.State.PAUSED, Gst.State.PLAYING) and not getattr(
                             p, "_caps_reported", False
                         ):
                             p._caps_reported = True
-                            VideoPlayer._inspect_pipeline(p, media_url)
+                            GLib.timeout_add(
+                                600,
+                                lambda pp=p, u=media_url: (
+                                    VideoPlayer._inspect_pipeline(pp, u)
+                                    or False
+                                ),
+                            )
                 else:
                     # Only surface the real dropped-frame signal (QOS, (1<<24)).
                     # LATENCY (1<<19), SEGMENT_DONE, PROGRESS, CLOCK_UPDATE are benign
