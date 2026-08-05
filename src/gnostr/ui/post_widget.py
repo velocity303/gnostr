@@ -175,11 +175,14 @@ class PostWidget(Adw.Bin):
             ca = getattr(child, "created_at", None)
             if ca is not None and ca < created_at:
                 # Current child is older — insert the new (newer) post before it.
-                box.insert(widget, idx)
-                return
+                break
             idx += 1
             child = child.get_next_sibling()
+        # GTK4 Gtk.Box has no insert() — append then reorder_child to the index.
+        # reorder_child(widget, position) moves an already-appended child to the
+        # given index (0-based), so a backfilled/older post lands in its slot.
         box.append(widget)
+        box.reorder_child(widget, idx)
 
     @staticmethod
     def _format_time(ts):
