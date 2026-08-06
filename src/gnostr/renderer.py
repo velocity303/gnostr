@@ -23,7 +23,6 @@ from gi.repository import Gtk, Adw, GLib, Gdk, GdkPixbuf, Pango, Gst, GstApp, Gi
 
 from . import nostr_utils
 
-
 # Set to True to enable verbose 🎬 debug logging
 _DEBUG_VIDEO = False
 
@@ -75,13 +74,18 @@ class ContentRenderer:
 
         if is_gif:
             # GIFs are small animated images; keep the existing preroll+loop UX.
+            # autoplay=True so GIFs actually reach PLAYING — omitting it (a
+            # lazy-load regression) built the pipeline to PAUSED and left the
+            # spinner spinning forever with no playback.
             spinner = Gtk.Spinner()
             spinner.start()
             spinner.set_halign(Gtk.Align.CENTER)
             spinner.set_valign(Gtk.Align.CENTER)
             spinner.set_vexpand(True)
             video_area.append(spinner)
-            VideoPlayer.load_and_play(url, video_area, spinner, window_ref, original_url)
+            VideoPlayer.load_and_play(
+                url, video_area, spinner, window_ref, original_url, autoplay=True
+            )
         else:
             # Real videos: lazy-load. Don't build a playbin3 pipeline (and pull
             # the stream) until the user actually taps play — prerolling every
@@ -141,11 +145,16 @@ class ContentRenderer:
             position_scale.set_hexpand(True)
             position_scale.set_draw_value(False)
             position_scale.set_sensitive(False)
-            position_scale.connect("value-changed", lambda s: VideoPlayer.seek_to(video_area, s.get_value()))
+            position_scale.connect(
+                "value-changed",
+                lambda s: VideoPlayer.seek_to(video_area, s.get_value()),
+            )
             position_label = Gtk.Label(label="0:00 / 0:00")
             mute_btn = Gtk.Button(icon_name="audio-volume-high-symbolic")
             mute_btn.set_tooltip_text("Mute/Unmute")
-            mute_btn.connect("clicked", lambda b: VideoPlayer.toggle_mute(video_area, mute_btn))
+            mute_btn.connect(
+                "clicked", lambda b: VideoPlayer.toggle_mute(video_area, mute_btn)
+            )
             position_row.append(position_scale)
             position_row.append(position_label)
             position_row.append(mute_btn)
@@ -160,7 +169,9 @@ class ContentRenderer:
         # No dedicated play button — the video frame is the play/pause control
         # (lazy-start on first tap, toggle on later taps).
 
-        if original_url and ("youtube.com" in original_url or "youtu.be" in original_url):
+        if original_url and (
+            "youtube.com" in original_url or "youtu.be" in original_url
+        ):
             yt_link = Gtk.LinkButton(uri=original_url, label="Open in YouTube")
             yt_link.set_halign(Gtk.Align.END)
             yt_link.set_hexpand(True)
@@ -205,7 +216,7 @@ class ContentRenderer:
     @staticmethod
     def render(content, window_ref, post_widget_ref=None):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        
+
         if not content:
             error_label = Gtk.Label(label="[No content to display]", xalign=0)
             error_label.add_css_class("dim-label")
@@ -240,31 +251,45 @@ class ContentRenderer:
                     continue
 
                 if ContentRenderer.LINK_REGEX.match(part):
-                    clean_part = part.rstrip(".!,?;']}" )
+                    clean_part = part.rstrip(".!,?;']}")
                     trailing = part[len(clean_part) :]
 
                     if clean_part.startswith("nostr:"):
                         if "nprofile" in clean_part or "npub" in clean_part:
-                            hex_pk = ContentRenderer._extract_hex_id(clean_part.split(":", 1)[1] if ":" in clean_part else clean_part)
+                            hex_pk = ContentRenderer._extract_hex_id(
+                                clean_part.split(":", 1)[1]
+                                if ":" in clean_part
+                                else clean_part
+                            )
                             if hex_pk:
                                 name = ContentRenderer._mention_name(hex_pk, window_ref)
                                 # Decorative inline mention: bold @name link.
                                 disp = f'<span weight="bold">@{GLib.markup_escape_text(name)}</span>'
-                                text_fragments.append((hex_pk, f'<a href="nostr:{hex_pk}">{disp}</a>'))
+                                text_fragments.append(
+                                    (hex_pk, f'<a href="nostr:{hex_pk}">{disp}</a>')
+                                )
                                 if trailing:
-                                    text_fragments.append((None, GLib.markup_escape_text(trailing)))
+                                    text_fragments.append(
+                                        (None, GLib.markup_escape_text(trailing))
+                                    )
                                 continue
                             # malformed profile uri -> plain link
                             flush_text()
                             ContentRenderer._add_link(box, clean_part)
                             if trailing:
-                                text_fragments.append((None, GLib.markup_escape_text(trailing)))
+                                text_fragments.append(
+                                    (None, GLib.markup_escape_text(trailing))
+                                )
                             continue
                         # nostr event quote -> block card
                         flush_text()
-                        ContentRenderer._add_nostr_card(box, clean_part, window_ref, post_widget_ref)
+                        ContentRenderer._add_nostr_card(
+                            box, clean_part, window_ref, post_widget_ref
+                        )
                         if trailing:
-                            text_fragments.append((None, GLib.markup_escape_text(trailing)))
+                            text_fragments.append(
+                                (None, GLib.markup_escape_text(trailing))
+                            )
                         continue
                     # http(s) link / media -> block widget
                     flush_text()
@@ -274,7 +299,9 @@ class ContentRenderer:
                         ContentRenderer._add_video(box, clean_part, window_ref)
                     elif "youtube.com/watch" in clean_part or "youtu.be/" in clean_part:
                         raw_stream_url = get_youtube_stream(clean_part)
-                        ContentRenderer._add_video(box, raw_stream_url, window_ref, clean_part)
+                        ContentRenderer._add_video(
+                            box, raw_stream_url, window_ref, clean_part
+                        )
                     else:
                         ContentRenderer._add_link(box, clean_part)
                     if trailing:
@@ -307,13 +334,16 @@ class ContentRenderer:
         lbl.set_wrap(True)
         lbl.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
         lbl.set_max_width_chars(60)
-        lbl.connect("activate-link", lambda l, url: ContentRenderer._on_mention_link(url, window_ref))
+        lbl.connect(
+            "activate-link",
+            lambda l, url: ContentRenderer._on_mention_link(url, window_ref),
+        )
         return lbl
 
     @staticmethod
     def _on_mention_link(url, window_ref):
         if url.startswith("nostr:"):
-            hex_pk = url[len("nostr:"):]
+            hex_pk = url[len("nostr:") :]
             if window_ref and len(hex_pk) == 64 and hasattr(window_ref, "show_profile"):
                 window_ref.show_profile(hex_pk)
                 return True
@@ -339,9 +369,7 @@ class ContentRenderer:
     def _add_link(box, url, label=None):
         disp = label if label else (url[:47] + "..." if len(url) > 50 else url)
         markup = f'<a href="{GLib.markup_escape_text(url)}">{GLib.markup_escape_text(disp)}</a>'
-        lbl = Gtk.Label(
-            label=markup, xalign=0, wrap=True, use_markup=True
-        )
+        lbl = Gtk.Label(label=markup, xalign=0, wrap=True, use_markup=True)
         lbl.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
         lbl.set_ellipsize(Pango.EllipsizeMode.END)
         box.append(lbl)
@@ -396,7 +424,9 @@ class ContentRenderer:
             if event:
                 ContentRenderer._build_quote_content(quote_box, event, window)
             else:
-                lbl = Gtk.Label(label=f"Loading Quoted Event...", css_classes=["dim-label"])
+                lbl = Gtk.Label(
+                    label=f"Loading Quoted Event...", css_classes=["dim-label"]
+                )
                 quote_box.append(lbl)
                 window.client.request_once(
                     f"quote_{hex_id[:8]}", {"ids": [hex_id], "limit": 1}
@@ -506,7 +536,9 @@ def get_youtube_stream(url):
     try:
         result = subprocess.run(
             ["yt-dlp", "-g", "-f", "best[ext=mp4]", url],
-            capture_output=True, text=True, check=True
+            capture_output=True,
+            text=True,
+            check=True,
         )
         return result.stdout.strip()
     except subprocess.CalledProcessError as e:
@@ -521,7 +553,9 @@ class ImageLoader:
     _ongoing = {}
     _ongoing_lock = threading.Lock()
     _CACHE_MAX = 64  # keep texture memory bounded on mobile
-    MAX_WIDHT = 800  # max inline image dimension (main.py detect_display_metrics may override)
+    MAX_WIDHT = (
+        800  # max inline image dimension (main.py detect_display_metrics may override)
+    )
 
     @staticmethod
     def load_avatars(url, callback):
@@ -632,7 +666,9 @@ class ImageLoader:
 class VideoLoader:
     @staticmethod
     def load_and_play(url, container, spinner, window_ref=None, autoplay=False):
-        VideoPlayer.load_and_play(url, container, spinner, window_ref, autoplay=autoplay)
+        VideoPlayer.load_and_play(
+            url, container, spinner, window_ref, autoplay=autoplay
+        )
 
 
 class VideoPlayer:
@@ -641,7 +677,9 @@ class VideoPlayer:
     _CACHE_MAX = 6  # tear down decoders once they scroll far out of view
 
     @staticmethod
-    def load_and_play(url, container, spinner, window_ref=None, original_url=None, autoplay=False):
+    def load_and_play(
+        url, container, spinner, window_ref=None, original_url=None, autoplay=False
+    ):
         def on_ready(video):
             if spinner and spinner.get_parent() == container:
                 container.remove(spinner)
@@ -666,7 +704,9 @@ class VideoPlayer:
             else:
                 container.append(Gtk.Image.new_from_icon_name("video-symbolic"))
 
-        VideoPlayer._fetch_player(url, on_ready, original_url=original_url, autoplay=autoplay)
+        VideoPlayer._fetch_player(
+            url, on_ready, original_url=original_url, autoplay=autoplay
+        )
 
     @staticmethod
     def _fetch_player(url, callback, original_url=None, autoplay=False):
@@ -691,9 +731,7 @@ class VideoPlayer:
             _vlog(f"🎬 [Video] Building pipeline for: {url[:80]}...")
 
             # Create playbin3 with just the URI — it handles all formats internally
-            pipeline = Gst.parse_launch(
-                f"playbin3 uri={url}"
-            )
+            pipeline = Gst.parse_launch(f"playbin3 uri={url}")
 
             if not pipeline:
                 _vlog("🎬 [Video] FAIL: Gst.parse_launch returned None")
@@ -709,15 +747,13 @@ class VideoPlayer:
                 _vlog("🎬 [Video] FAIL: could not create gtk4paintablesink element")
                 raise RuntimeError("gtk4paintablesink creation failed")
 
-            # The stutterers don't drop frames (QOS=0) — the felt "hang" is
-            # pipeline-readiness latency: playbin prerolls in PAUSED, then blocks
-            # on the pipeline clock until enough data is buffered before showing
-            # the first frame ("everything prepares to play together"). Render
-            # frames as soon as they arrive (no clock sync, no preroll wait) so
-            # the first frame appears immediately; the clock just sets a floor on
-            # display rate, it doesn't gate the first frame.
-            sink.set_property("sync", False)
-            sink.set_property("async", False)
+            # NOTE: sink runs with the DEFAULT sync/async (True). A previous
+            # speculative sync=False/async=False made video play at high speed —
+            # removing the clock lets the sink render frames as fast as the
+            # decoder produces them, instead of pacing to real time. Reverted.
+            # The felt "freeze/resume" is NOT frame drops (QOS=0, 0 evictions,
+            # 0 EOS, 0 codec errors in the capture) — do not disable clock sync
+            # to chase it; measure the real stall source first.
 
             # Task 10: cap delivered frame size. Wrap the sink in a capsfilter bin so
             # decodebin3 scales to at most _MAX_VIDEO_WIDTH x _MAX_VIDEO_HEIGHT before
@@ -774,6 +810,7 @@ class VideoPlayer:
             # Bus for error/EOS handling
             bus = pipeline.get_bus()
             bus.add_signal_watch()
+
             def on_bus_message(bus, msg, p=pipeline, media_url=url):
                 # Gst.MessageType is a flags enum — use bitwise AND to check
                 t = msg.type
@@ -821,8 +858,7 @@ class VideoPlayer:
                             GLib.timeout_add(
                                 600,
                                 lambda pp=p, u=media_url: (
-                                    VideoPlayer._inspect_pipeline(pp, u)
-                                    or False
+                                    VideoPlayer._inspect_pipeline(pp, u) or False
                                 ),
                             )
                 else:
@@ -847,9 +883,8 @@ class VideoPlayer:
                             _prop, _drops = 1.0, 0
                         p._qos_events = getattr(p, "_qos_events", 0) + 1
                         p._qos_dropped = getattr(p, "_qos_dropped", 0) + _drops
-                        p._qos_prop_min = min(
-                            getattr(p, "_qos_prop_min", 1.0), _prop
-                        )
+                        p._qos_prop_min = min(getattr(p, "_qos_prop_min", 1.0), _prop)
+
             bus.connect("message", on_bus_message)
             _vlog("🎬 [Video] Bus watcher connected")
 
@@ -1003,7 +1038,7 @@ class VideoPlayer:
     @staticmethod
     def toggle_mute(video_container, mute_button):
         video = VideoPlayer._find_video(video_container)
-        if not video or not hasattr(video, '_pipeline'):
+        if not video or not hasattr(video, "_pipeline"):
             _vlog("🎬 [Video] toggle_mute: no video or pipeline found")
             return
         pipeline = video._pipeline
@@ -1011,16 +1046,22 @@ class VideoPlayer:
         _vlog(f"🎬 [Video] toggle_mute: {'MUTED' if video._is_muted else 'UNMUTED'}")
         pipeline.set_property("volume", 0.0 if video._is_muted else 1.0)
         mute_button.set_icon_name(
-            "audio-volume-muted-symbolic" if video._is_muted else "audio-volume-high-symbolic"
+            "audio-volume-muted-symbolic"
+            if video._is_muted
+            else "audio-volume-high-symbolic"
         )
 
     @staticmethod
     def seek_to(video_container, percent):
         video = VideoPlayer._find_video(video_container)
-        if not video or not hasattr(video, '_pipeline'):
+        if not video or not hasattr(video, "_pipeline"):
             return
         pipe = video._pipeline
-        dur = video._duration_ns if hasattr(video, '_duration_ns') and video._duration_ns > 0 else 0
+        dur = (
+            video._duration_ns
+            if hasattr(video, "_duration_ns") and video._duration_ns > 0
+            else 0
+        )
         if dur > 0:
             ns = int(dur * percent / 100.0)
             pipe.seek_simple(Gst.Format.TIME, Gst.SeekFlags.FLUSH, ns)
@@ -1028,6 +1069,7 @@ class VideoPlayer:
     @staticmethod
     def _start_position_timer(video_container, video):
         """Start a GLib timeout to update position/seek bar every 500ms"""
+
         def update():
             pipe = video._pipeline
             if not pipe:
@@ -1060,7 +1102,7 @@ class VideoPlayer:
                 dur_ns = dur_result[1]
                 video._duration_ns = dur_ns
             else:
-                dur_ns = video._duration_ns if hasattr(video, '_duration_ns') else 0
+                dur_ns = video._duration_ns if hasattr(video, "_duration_ns") else 0
 
             # Query position
             pos_result = pipe.query_position(Gst.Format.TIME)
@@ -1076,7 +1118,9 @@ class VideoPlayer:
                     pos_min, pos_s = divmod(pos_sec, 60)
                     dur_min, dur_s = divmod(dur_sec, 60)
                     if position_label:
-                        position_label.set_text(f"{pos_min}:{pos_s:02d} / {dur_min}:{dur_s:02d}")
+                        position_label.set_text(
+                            f"{pos_min}:{pos_s:02d} / {dur_min}:{dur_s:02d}"
+                        )
             return True
 
         GLib.timeout_add(500, update)
