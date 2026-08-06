@@ -88,16 +88,23 @@ class ContentRenderer:
             # video in a feed builds 6+ concurrent pipelines and costs seconds of
             # preroll (measured, Task 10). Show a placeholder "playable video"
             # graphic instead; the pipeline builds on first play.
-            placeholder = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-            placeholder.set_halign(Gtk.Align.CENTER)
-            placeholder.set_valign(Gtk.Align.CENTER)
+            placeholder = Gtk.Overlay()
+            # Base surface so the overlay has an allocation to center against.
+            base = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            base.set_vexpand(True)
+            placeholder.set_child(base)
             ph_icon = Gtk.Image.new_from_icon_name("media-playback-start-symbolic")
             ph_icon.set_pixel_size(56)
             ph_icon.set_opacity(0.9)
+            ph_icon.set_halign(Gtk.Align.CENTER)
+            ph_icon.set_valign(Gtk.Align.CENTER)
+            placeholder.add_overlay(ph_icon)
             ph_label = Gtk.Label(label="Play video")
             ph_label.add_css_class("dim-label")
-            placeholder.append(ph_icon)
-            placeholder.append(ph_label)
+            ph_label.set_halign(Gtk.Align.CENTER)
+            ph_label.set_valign(Gtk.Align.END)
+            ph_label.set_margin_bottom(12)
+            placeholder.add_overlay(ph_label)
             video_area._placeholder = placeholder
             video_area.append(placeholder)
 
@@ -701,6 +708,16 @@ class VideoPlayer:
             if not sink:
                 _vlog("🎬 [Video] FAIL: could not create gtk4paintablesink element")
                 raise RuntimeError("gtk4paintablesink creation failed")
+
+            # The stutterers don't drop frames (QOS=0) — the felt "hang" is
+            # pipeline-readiness latency: playbin prerolls in PAUSED, then blocks
+            # on the pipeline clock until enough data is buffered before showing
+            # the first frame ("everything prepares to play together"). Render
+            # frames as soon as they arrive (no clock sync, no preroll wait) so
+            # the first frame appears immediately; the clock just sets a floor on
+            # display rate, it doesn't gate the first frame.
+            sink.set_property("sync", False)
+            sink.set_property("async", False)
 
             # Task 10: cap delivered frame size. Wrap the sink in a capsfilter bin so
             # decodebin3 scales to at most _MAX_VIDEO_WIDTH x _MAX_VIDEO_HEIGHT before

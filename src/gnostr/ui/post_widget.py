@@ -150,18 +150,30 @@ class PostWidget(Adw.Bin):
         footer). Unlike rebuilding the whole PostWidget, this keeps the same
         widget identity and avoids re-running the async render chain (image
         loads, video pipelines, profile/avatar fetch) — which is what made
-        rapid Show-more/less toggles glitchy and orphan mid-load widgets."""
+        rapid Show-more/less toggles glitchy and orphan mid-load widgets.
+
+        Gtk.Box has no index-based insert() in these bindings, so the content
+        box is replaced by removing ALL children and re-appending them in
+        order with the new rendered box in slot 1. Header/footer are re-appended
+        as the SAME widget objects (no re-render); only the content box is new.
+        """
         self.content = content
-        children = self.main_box.get_first_child()
-        # Walk to child index 1 (header=0, content=1, footer=2)
-        cur = children.get_next_sibling() if children else None
-        if cur is not None:
-            self.main_box.remove(cur)
+        children = []
+        child = self.main_box.get_first_child()
+        while child is not None:
+            children.append(child)
+            child = child.get_next_sibling()
+        for c in children:
+            self.main_box.remove(c)
         try:
             rendered = ContentRenderer.render(content, self.main_window, self)
         except Exception:
             rendered = Gtk.Label(label="[Content Error]")
-        self.main_box.insert(rendered, 1)
+        # Rebuild in order: header(0), rendered content(1), footer(2+).
+        self.main_box.append(children[0])
+        self.main_box.append(rendered)
+        for c in children[2:]:
+            self.main_box.append(c)
 
     @staticmethod
     def insert_time_sorted(box, widget):
@@ -195,9 +207,12 @@ class PostWidget(Adw.Bin):
         else:
             ordered.append(widget)
 
-        # Remove all, then re-append in the new sorted order.
+        # Remove all (only actual children — the new widget isn't a child yet,
+        # and removing a non-child raises gtk_box_remove's parent assertion),
+        # then re-append in the new sorted order.
         for c in ordered:
-            box.remove(c)
+            if c.get_parent() is box:
+                box.remove(c)
         for c in ordered:
             box.append(c)
 
