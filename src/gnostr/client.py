@@ -273,18 +273,64 @@ class NostrClient(GObject.Object):
         for r in self.active_relays.values():
             r.publish(event)
 
-    def publish_post(self, content):
-        if not self.my_privkey:
+    def _build_and_publish(self, kind, content, tags):
+        """Shared build → sign → publish for any event kind. Returns True on
+        success. All social-action publishes route through here (DRY)."""
+        if not self.my_privkey or not self.my_pubkey:
             print("❌ No private key loaded")
             return False
+        event = gnostr.nostr_utils.build_event(
+            self.my_pubkey, kind, content, tags
+        )
+        signed = gnostr.nostr_utils.sign_event(event, self.my_privkey)
+        if signed:
+            self.publish(signed)
+            return True
+        return False
 
-        event = {
-            "pubkey": self.my_pubkey,
-            "created_at": int(time.time()),
-            "kind": 1,
-            "tags": [],
-            "content": content,
-        }
+    def publish_post(self, content, reply_to=None):
+        """kind-1 text post. `reply_to` = dict(root, parent, root_pk, parent_pk)
+        to thread a reply per NIP-01 (root e-tag first, direct parent last)."""
+        if reply_to:
+            tags = [
+                ["e", reply_to["root"]],
+                ["e", reply_to["parent"]],
+                ["p", reply_to["root_pk"]],
+                ["p", reply_to["parent_pk"]],
+            ]
+        else:
+            tags = []
+        return self._build_and_publish(1, content, tags)
+
+    def publish_reaction(self, target_event_id, target_pubkey, content="+"):
+        """NIP-25: kind-7 reaction. content '+' adds, '-' removes/undo."""
+        if not self.my_privkey or not self.my_pubkey:
+            print("❌ No private key loaded")
+            return False
+        event = gnostr.nostr_utils.build_reaction_event(
+            self.my_pubkey, target_event_id, target_pubkey, content
+        )
+        signed = gnostr.nostr_utils.sign_event(event, self.my_privkey)
+        if signed:
+            self.publish(signed)
+            return True
+        return False
+
+    def publish_repost(self, target_event_id, target_pubkey,
+                       target_kind=1, original_event=None):
+        """NIP-18: kind-6 generic repost. content = original event JSON.
+        `original_event` is the DB row; falls back to fetching it."""
+        if not self.my_privkey or not self.my_pubkey:
+            print("❌ No private key loaded")
+            return False
+        ev = original_event or self.db.get_event_by_id(target_event_id)
+        if not ev:
+            print("❌ Could not load original event for repost")
+            return False
+        event = gnostr.nostr_utils.build_repost_event(
+            self.my_pubkey, target_event_id, target_pubkey,
+            ev.get("kind", target_kind), ev,
+        )
         signed = gnostr.nostr_utils.sign_event(event, self.my_privkey)
         if signed:
             self.publish(signed)

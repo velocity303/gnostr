@@ -1,5 +1,6 @@
 import hashlib
 import json
+import time
 
 import ecdsa
 
@@ -250,6 +251,61 @@ def sign_event(event, priv_key_hex):
     except Exception as e:
         print(f"Signing Error: {e}")
         return None
+
+
+# --- Event builders (protocol layer) -----------------------------------------
+# These are pure functions that assemble the UNSIGNED event dict with the tag
+# layout each NIP mandates. They live here (not in client.py) so the tag
+# structure is unit-testable without GTK, and so the protocol contract is
+# centralized — refactors touch one place. client.py calls these, then signs
+# via sign_event() and publishes.
+
+def build_event(pubkey, kind, content, tags, created_at=None):
+    """Assemble an unsigned Nostr event. `tags` is a list of tag lists already
+    in NIP order. Returns the dict ready for sign_event()."""
+    return {
+        "pubkey": pubkey,
+        "created_at": created_at if created_at is not None else int(time.time()),
+        "kind": kind,
+        "tags": tags,
+        "content": content,
+    }
+
+
+def build_reaction_event(pubkey, target_event_id, target_pubkey,
+                         content="+", created_at=None):
+    """NIP-25: kind-7 reaction. content is a single char/emoji — '+' adds,
+    '-' removes/undo. Tags MUST be [["e", target_id], ["p", target_pubkey]]."""
+    tags = [["e", target_event_id], ["p", target_pubkey]]
+    return build_event(pubkey, 7, content, tags, created_at)
+
+
+def build_repost_event(pubkey, target_event_id, target_pubkey,
+                       target_kind, original_event, created_at=None):
+    """NIP-18: kind-6 generic repost. content = raw JSON of the original
+    event; tags MUST be [["k", str(kind)], ["e", id], ["p", pubkey]]."""
+    content = json.dumps(original_event, separators=(",", ":"))
+    tags = [
+        ["k", str(target_kind)],
+        ["e", target_event_id],
+        ["p", target_pubkey],
+    ]
+    return build_event(pubkey, 6, content, tags, created_at)
+
+
+def build_reply_event(pubkey, content, root_id, root_pubkey,
+                      parent_id, parent_pubkey, created_at=None):
+    """NIP-01: kind-1 threaded reply. First `e` tag = thread ROOT, last `e`
+    tag = DIRECT parent (the app resolves replies by the last e-tag); `p` tags
+    name the root + parent authors. Order matters for both metrics (first e-tag)
+    and the reply tree (last e-tag)."""
+    tags = [
+        ["e", root_id],
+        ["e", parent_id],
+        ["p", root_pubkey],
+        ["p", parent_pubkey],
+    ]
+    return build_event(pubkey, 1, content, tags, created_at)
 
 
 def is_nostr_reference(text):
