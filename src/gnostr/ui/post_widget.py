@@ -9,13 +9,24 @@ from ..renderer import ContentRenderer, ImageLoader
 
 class PostWidget(Adw.Bin):
     def __init__(
-        self, main_window, pubkey, content, event_id, tags=[], is_hero=False, created_at=None
+        self,
+        main_window,
+        pubkey,
+        content,
+        event_id,
+        tags=[],
+        is_hero=False,
+        created_at=None,
+        root_id=None,
+        root_pk=None,
     ):
         super().__init__(css_classes=["card"])
         self.main_window = main_window
         self.pubkey = pubkey
         self.event_id = event_id
         self.content = content
+        self._root_id = root_id or event_id  # thread root (self if root post)
+        self._root_pk = root_pk or pubkey  # thread root author
 
         # Resolve the post's timestamp from the DB when the caller didn't provide
         # it (e.g. live event-received posts). Unobtrusive relative-time caption.
@@ -79,7 +90,9 @@ class PostWidget(Adw.Bin):
 
         # Unobtrusive relative timestamp at the top-right of the header
         self.lbl_time = Gtk.Label(
-            label=self._format_time(created_at), xalign=1, css_classes=["caption", "dim-label"]
+            label=self._format_time(created_at),
+            xalign=1,
+            css_classes=["caption", "dim-label"],
         )
         self.lbl_time.set_halign(Gtk.Align.END)
         hb.append(self.lbl_time)
@@ -92,25 +105,58 @@ class PostWidget(Adw.Bin):
         except Exception:
             self.main_box.append(Gtk.Label(label="[Content Error]"))
 
-        # Footer: Metrics
+        # Footer: Metrics + social actions (like/repost/reply).
+        # Each is a Gtk.Button holding an icon + count label. The card-wide
+        # open-thread GestureClick must NOT fire when a footer button is tapped,
+        # so each button gets its own GestureClick that CLAIMS the sequence on
+        # press (same pattern as the video frame) — GTK4's cooperative
+        # sequence-state check then DENIES the card's gesture for that press.
         footer = Gtk.Box(spacing=20, margin_top=8)
 
         def mk_met(icon, label):
+            btn = Gtk.Button()
             b = Gtk.Box(spacing=6)
             b.append(Gtk.Image.new_from_icon_name(icon))
             l = Gtk.Label(label=label, css_classes=["caption", "dim-label"])
             b.append(l)
-            return l, b  # return label first
+            btn.set_child(b)
+            btn.set_css_classes(["flat"])
+            # Consume the press so the card's open-thread gesture is denied.
+            claim = Gtk.GestureClick()
+            claim.connect(
+                "pressed",
+                lambda g, n, x, y: g.set_state(Gtk.EventSequenceState.CLAIMED),
+            )
+            btn.add_controller(claim)
+            return l, btn
 
-        self.lbl_replies, r_box = mk_met("chat-bubble-symbolic", "0")
-        self.lbl_reposts, rt_box = mk_met("media-playlist-repeat-symbolic", "0")
-        self.lbl_likes, l_box = mk_met("starred-symbolic", "0")
+        self.lbl_replies, self.btn_reply = mk_met("chat-bubble-symbolic", "0")
+        self.lbl_reposts, self.btn_repost = mk_met(
+            "media-playlist-repeat-symbolic", "0"
+        )
+        self.lbl_likes, self.btn_like = mk_met("starred-symbolic", "0")
 
-        footer.append(r_box)
-        footer.append(rt_box)
-        footer.append(l_box)
+        footer.append(self.btn_reply)
+        footer.append(self.btn_repost)
+        footer.append(self.btn_like)
 
         self.main_box.append(footer)
+
+        # Wire the social actions (only when logged in, and never on the hero
+        # card in a thread — the thread view owns its own hero controls).
+        if not is_hero:
+            my_pk = getattr(self.main_window, "pub_key", None)
+            if my_pk:
+                self._liked = bool(self.main_window.db.user_reaction(event_id, my_pk))
+                self._update_like_icon()
+                self.btn_like.connect("clicked", self._on_like)
+                self.btn_repost.connect("clicked", self._on_repost)
+                self.btn_reply.connect("clicked", self._on_reply)
+            else:
+                # not logged in: disable actions
+                for b in (self.btn_like, self.btn_repost, self.btn_reply):
+                    b.set_sensitive(False)
+
         # Interaction
         if not is_hero:
             ctrl = Gtk.GestureClick()
@@ -135,6 +181,60 @@ class PostWidget(Adw.Bin):
             # lp's widget is only set once it's added to a controller host.
             self.add_controller(lp)
             ctrl.group(lp)
+
+    def _update_like_icon(self):
+        self._liked = bool(getattr(self, "_liked", False))
+        icon = "starred-symbolic" if self._liked else "star-symbolic"
+        self.btn_like.get_child().get_first_child().set_icon_name(icon)
+
+    def _on_like(self, btn):
+        client = self.main_window.client
+        my_pk = self.main_window.pub_key
+        if not my_pk:
+            return
+        # NIP-25: publish '+' to like, '-' to undo; flip state optimistically.
+        action = "-" if self._liked else "+"
+        ok = client.publish_reaction(self.event_id, self.pubkey, action)
+        if not ok:
+            self.main_window.add_toast(Adw.Toast(title="Failed to react"))
+            return
+        self._liked = not self._liked
+        self._update_like_icon()
+        cur = int(self.lbl_likes.get_label() or 0)
+        self.lbl_likes.set_label(str(cur + (1 if self._liked else -1)))
+
+    def _on_repost(self, btn):
+        client = self.main_window.client
+        if client.publish_repost(
+            self.event_id, self.pubkey, target_kind=1, original_event=None
+        ):
+            self.main_window.add_toast(Adw.Toast(title="Reposted"))
+        else:
+            self.main_window.add_toast(Adw.Toast(title="Failed to repost"))
+
+    def _on_reply(self, btn):
+        from gnostr.dialogs import ComposeWindow
+
+        def handle_post(text):
+            # Reply to this post: root = thread root, parent = this post.
+            root = self._root_id or self.event_id
+            root_pk = self._root_pk or self.pubkey
+            ok = self.main_window.client.publish_post(
+                text,
+                reply_to={
+                    "root": root,
+                    "root_pk": root_pk,
+                    "parent": self.event_id,
+                    "parent_pk": self.pubkey,
+                },
+            )
+            if ok:
+                self.main_window.add_toast(Adw.Toast(title="Reply Published"))
+            else:
+                self.main_window.add_toast(Adw.Toast(title="Failed to Publish Reply"))
+
+        win = ComposeWindow(self.main_window, handle_post)
+        win.present()
 
     def _copy_post(self):
         display = Gdk.Display.get_default()
@@ -238,6 +338,8 @@ class PostWidget(Adw.Bin):
                 return f"{days}d"
             import datetime as _dt
 
-            return _dt.datetime.fromtimestamp(int(ts), _dt.timezone.utc).strftime("%b %d")
+            return _dt.datetime.fromtimestamp(int(ts), _dt.timezone.utc).strftime(
+                "%b %d"
+            )
         except Exception:
             return ""

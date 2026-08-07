@@ -118,6 +118,8 @@ class ThreadView(Adw.Bin):
                 ev["id"],
                 ev.get("tags", []),
                 created_at=ev.get("created_at"),
+                root_id=event_id,
+                root_pk=pubkey,
             )
             # get_replies is newest-first (ORDER BY created_at DESC); append
             # builds newest→oldest top-to-bottom.
@@ -241,7 +243,9 @@ class ThreadView(Adw.Bin):
     def toggle_hero(self):
         self._hero_truncated = not self._hero_truncated
         if self._hero_truncated:
-            self._rebuild_hero(self._hero_pubkey, self._hero_content[:500] + "…", self._hero_tags)
+            self._rebuild_hero(
+                self._hero_pubkey, self._hero_content[:500] + "…", self._hero_tags
+            )
             self._hero_toggle.set_label("Show more")
         else:
             self._rebuild_hero(self._hero_pubkey, self._hero_content, self._hero_tags)
