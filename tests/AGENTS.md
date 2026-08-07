@@ -10,6 +10,8 @@ Test suite for gnostr — pytest-based with xvfb for GTK rendering. Covers servi
 - `test_profile_metadata_service.py` — profile metadata service tests
 - `test_resource_management.py` — cache manager and resource tests
 - `test_codec_support.py` — codec/format support tests
+- `test_nip_builders.py` — protocol-layer NIP tag structure (reaction/repost/reply) — imports real `nostr_utils` (GTK-free) and asserts exact tag layout
+- `test_following.py` — follow/unfollow DB persistence + `user_reaction` like-toggle query
 - `test_simple.py` — basic import/smoke tests
 
 ## Local Contracts
