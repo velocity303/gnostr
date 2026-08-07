@@ -11,3 +11,4 @@ opencode.json
 .INTERNAL_WORKFLOW_REFERENCE.md
 .pytest_cache
 __pycache__
+.hermes/
