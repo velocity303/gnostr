@@ -185,7 +185,8 @@ class PostWidget(Adw.Bin):
     def _update_like_icon(self):
         self._liked = bool(getattr(self, "_liked", False))
         icon = "starred-symbolic" if self._liked else "star-symbolic"
-        self.btn_like.get_child().get_first_child().set_icon_name(icon)
+        # Gtk.Image has no set_icon_name — the setter is set_from_icon_name().
+        self.btn_like.get_child().get_first_child().set_from_icon_name(icon)
 
     def _on_like(self, btn):
         client = self.main_window.client
