@@ -61,8 +61,7 @@ class Database:
                 "ON events(pubkey, kind, created_at)"
             )
             cursor.execute(
-                "CREATE INDEX IF NOT EXISTS idx_events_created "
-                "ON events(created_at)"
+                "CREATE INDEX IF NOT EXISTS idx_events_created " "ON events(created_at)"
             )
             cursor.execute(
                 "CREATE INDEX IF NOT EXISTS idx_following_owner "
@@ -288,3 +287,22 @@ class Database:
             except Exception:
                 pass
         return events
+
+    def user_reaction(self, target_event_id, pubkey):
+        """Return the content ('+'/'-') of `pubkey`'s most recent kind-7
+        reaction on `target_event_id`, or None if they haven't reacted. Powers
+        the like-toggle: knowing the current user's reaction lets the button
+        render filled vs. empty and publish '+' vs '-' to undo."""
+        if not self.conn:
+            return None
+        with self.lock:
+            cursor = self.conn.cursor()
+            # Narrow with a LIKE on the JSON tag text, then confirm precisely.
+            cursor.execute(
+                "SELECT content FROM events "
+                "WHERE kind = 7 AND pubkey = ? AND tags LIKE ? "
+                "ORDER BY created_at DESC LIMIT 1",
+                (pubkey, f"%{target_event_id}%"),
+            )
+            row = cursor.fetchone()
+            return row[0] if row else None

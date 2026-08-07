@@ -40,3 +40,52 @@ def test_set_following_and_get_following_list_roundtrip(tmp_path, monkeypatch):
     assert db.get_following_list("owner1") == ["pk_b"]
     db.set_following("owner1", "pk_missing", False)
     assert db.get_following_list("owner1") == ["pk_b"]
+
+
+def test_user_reaction_returns_most_recent_content(tmp_path, monkeypatch):
+    """db.user_reaction powers the like-toggle: returns the current user's
+    kind-7 content ('+'/'-') for a target event, or None if never reacted."""
+    _patch_glib_dirs(monkeypatch, tmp_path)
+    from gnostr.database import Database
+
+    db = Database()
+    db.save_event(
+        {
+            "id": "r1",
+            "pubkey": "me",
+            "kind": 7,
+            "content": "+",
+            "tags": [["e", "post1"], ["p", "author"]],
+            "created_at": 1,
+            "sig": "s",
+        }
+    )
+    db.save_event(
+        {
+            "id": "r2",
+            "pubkey": "me",
+            "kind": 7,
+            "content": "-",
+            "tags": [["e", "post2"], ["p", "author2"]],
+            "created_at": 2,
+            "sig": "s",
+        }
+    )
+    db.save_event(
+        {
+            "id": "r3",
+            "pubkey": "other",
+            "kind": 7,
+            "content": "+",
+            "tags": [["e", "post1"], ["p", "author"]],
+            "created_at": 3,
+            "sig": "s",
+        }
+    )
+
+    assert db.user_reaction("post1", "me") == "+"
+    assert db.user_reaction("post2", "me") == "-"
+    # never reacted to this target
+    assert db.user_reaction("post3", "me") is None
+    # another user's reaction does not count as mine
+    assert db.user_reaction("post1", "other") == "+"
