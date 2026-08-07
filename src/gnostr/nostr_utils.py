@@ -260,6 +260,7 @@ def sign_event(event, priv_key_hex):
 # centralized — refactors touch one place. client.py calls these, then signs
 # via sign_event() and publishes.
 
+
 def build_event(pubkey, kind, content, tags, created_at=None):
     """Assemble an unsigned Nostr event. `tags` is a list of tag lists already
     in NIP order. Returns the dict ready for sign_event()."""
@@ -272,16 +273,18 @@ def build_event(pubkey, kind, content, tags, created_at=None):
     }
 
 
-def build_reaction_event(pubkey, target_event_id, target_pubkey,
-                         content="+", created_at=None):
+def build_reaction_event(
+    pubkey, target_event_id, target_pubkey, content="+", created_at=None
+):
     """NIP-25: kind-7 reaction. content is a single char/emoji — '+' adds,
     '-' removes/undo. Tags MUST be [["e", target_id], ["p", target_pubkey]]."""
     tags = [["e", target_event_id], ["p", target_pubkey]]
     return build_event(pubkey, 7, content, tags, created_at)
 
 
-def build_repost_event(pubkey, target_event_id, target_pubkey,
-                       target_kind, original_event, created_at=None):
+def build_repost_event(
+    pubkey, target_event_id, target_pubkey, target_kind, original_event, created_at=None
+):
     """NIP-18: kind-6 generic repost. content = raw JSON of the original
     event; tags MUST be [["k", str(kind)], ["e", id], ["p", pubkey]]."""
     content = json.dumps(original_event, separators=(",", ":"))
@@ -293,8 +296,9 @@ def build_repost_event(pubkey, target_event_id, target_pubkey,
     return build_event(pubkey, 6, content, tags, created_at)
 
 
-def build_reply_event(pubkey, content, root_id, root_pubkey,
-                      parent_id, parent_pubkey, created_at=None):
+def build_reply_event(
+    pubkey, content, root_id, root_pubkey, parent_id, parent_pubkey, created_at=None
+):
     """NIP-01: kind-1 threaded reply. First `e` tag = thread ROOT, last `e`
     tag = DIRECT parent (the app resolves replies by the last e-tag); `p` tags
     name the root + parent authors. Order matters for both metrics (first e-tag)

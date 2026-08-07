@@ -294,10 +294,12 @@ class MainWindow(Adw.ApplicationWindow):
                     continue
                 new_frags = []
                 changed = False
-                for (pk, frag) in lbl.mention_fragments:
+                for pk, frag in lbl.mention_fragments:
                     if pk == pubkey:
                         nm = prof.get("display_name") or prof.get("name") or pk[:8]
-                        disp = f'<span weight="bold">@{GLib.markup_escape_text(nm)}</span>'
+                        disp = (
+                            f'<span weight="bold">@{GLib.markup_escape_text(nm)}</span>'
+                        )
                         new_frags.append((pk, f'<a href="nostr:{pk}">{disp}</a>'))
                         changed = True
                     else:
@@ -349,7 +351,11 @@ class MainWindow(Adw.ApplicationWindow):
 
         for ev in cached:
             w = PostWidget(
-                self, ev["pubkey"], ev["content"], ev["id"], ev.get("tags", []),
+                self,
+                ev["pubkey"],
+                ev["content"],
+                ev["id"],
+                ev.get("tags", []),
                 created_at=ev.get("created_at"),
             )
             # cached is newest-first (ORDER BY created_at DESC) — append builds

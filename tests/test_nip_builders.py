@@ -25,8 +25,15 @@ def test_build_reaction_undo_uses_minus():
 
 
 def test_build_repost_event_nip18():
-    original = {"id": "o1", "kind": 1, "content": "hi", "tags": [],
-                "pubkey": "apk", "created_at": 1, "sig": "s"}
+    original = {
+        "id": "o1",
+        "kind": 1,
+        "content": "hi",
+        "tags": [],
+        "pubkey": "apk",
+        "created_at": 1,
+        "sig": "s",
+    }
     ev = nostr_utils.build_repost_event("pk", "o1", "apk", 1, original)
     assert ev["kind"] == 6
     assert ev["tags"] == [["k", "1"], ["e", "o1"], ["p", "apk"]]
@@ -35,8 +42,7 @@ def test_build_repost_event_nip18():
 
 
 def test_build_reply_event_nip01_root_first_parent_last():
-    ev = nostr_utils.build_reply_event("pk", "my reply",
-                                       "R1", "rp", "P1", "pp")
+    ev = nostr_utils.build_reply_event("pk", "my reply", "R1", "rp", "P1", "pp")
     assert ev["kind"] == 1
     etags = [t for t in ev["tags"] if t[0] == "e"]
     ptags = [t for t in ev["tags"] if t[0] == "p"]

@@ -279,9 +279,7 @@ class NostrClient(GObject.Object):
         if not self.my_privkey or not self.my_pubkey:
             print("❌ No private key loaded")
             return False
-        event = gnostr.nostr_utils.build_event(
-            self.my_pubkey, kind, content, tags
-        )
+        event = gnostr.nostr_utils.build_event(self.my_pubkey, kind, content, tags)
         signed = gnostr.nostr_utils.sign_event(event, self.my_privkey)
         if signed:
             self.publish(signed)
@@ -316,8 +314,9 @@ class NostrClient(GObject.Object):
             return True
         return False
 
-    def publish_repost(self, target_event_id, target_pubkey,
-                       target_kind=1, original_event=None):
+    def publish_repost(
+        self, target_event_id, target_pubkey, target_kind=1, original_event=None
+    ):
         """NIP-18: kind-6 generic repost. content = original event JSON.
         `original_event` is the DB row; falls back to fetching it."""
         if not self.my_privkey or not self.my_pubkey:
@@ -328,8 +327,11 @@ class NostrClient(GObject.Object):
             print("❌ Could not load original event for repost")
             return False
         event = gnostr.nostr_utils.build_repost_event(
-            self.my_pubkey, target_event_id, target_pubkey,
-            ev.get("kind", target_kind), ev,
+            self.my_pubkey,
+            target_event_id,
+            target_pubkey,
+            ev.get("kind", target_kind),
+            ev,
         )
         signed = gnostr.nostr_utils.sign_event(event, self.my_privkey)
         if signed:
@@ -515,7 +517,10 @@ class NostrClient(GObject.Object):
         # TTL cache: re-request a profile only if not requested recently, so
         # failed/incomplete lookups get retried (the old one-shot set never retried).
         now = time.time()
-        if pubkey in self.requested_profiles and (now - self.requested_profiles[pubkey]) < ttl:
+        if (
+            pubkey in self.requested_profiles
+            and (now - self.requested_profiles[pubkey]) < ttl
+        ):
             return
         self.requested_profiles[pubkey] = now
         for r in self.active_relays.values():
