@@ -41,6 +41,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.client.connect("profile-updated", self.on_profile_updated)
         self.client.connect("metrics-updated", self.on_metrics_updated)
         self.client.connect("publish-result", self.on_publish_result)
+        self.client.connect("relay-log-updated", self.on_relay_log_updated)
 
         self.priv_key = None
         self.pub_key = None
@@ -330,6 +331,10 @@ class MainWindow(Adw.ApplicationWindow):
             self.add_toast(Adw.Toast(title=f"{label} ✓"))
         else:
             self.add_toast(Adw.Toast(title=f"{label} failed: {message}"))
+
+    def on_relay_log_updated(self, client, line):
+        # Append to the sidebar Relay Activity pane.
+        self.sidebar.append_relay_log(line)
 
     def perform_login(self, priv_hex):
         self.priv_key = priv_hex

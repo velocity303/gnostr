@@ -42,6 +42,23 @@ class Sidebar(Gtk.Box):
         self.append(self.menu_list)
         self.append(Gtk.Box(vexpand=True))
 
+        # Relay Activity — collapsible log of publish/OK/connect activity so
+        # follows/likes/reposts are verifiable against relays, not just the DB.
+        self.relay_expander = Adw.ExpanderRow(title="Relay Activity")
+        self.relay_log_label = Gtk.Label(
+            label="No relay activity yet",
+            css_classes=["monospace", "dim-label"],
+            halign=Gtk.Align.START,
+            wrap=False,
+        )
+        self.relay_log_label.set_selectable(True)
+        sw = Gtk.ScrolledWindow()
+        sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        sw.set_max_content_height(180)
+        sw.set_child(self.relay_log_label)
+        self.relay_expander.add_row(sw)
+        self.append(self.relay_expander)
+
         # Logout Button
         lb = Gtk.Button(label="Logout", css_classes=["flat"])
         lb.connect("clicked", self.on_logout_clicked)
@@ -50,6 +67,13 @@ class Sidebar(Gtk.Box):
         # Status Label
         self.status_label = Gtk.Label(label="🔴", css_classes=["dim-label"])
         self.append(self.status_label)
+
+    def append_relay_log(self, line):
+        """Append a relay-activity line, newest at top (prepend)."""
+        cur = self.relay_log_label.get_text()
+        if cur == "No relay activity yet":
+            cur = ""
+        self.relay_log_label.set_text(f"{line}\n{cur}")
 
     def on_settings_clicked(self, b):
         self.main_window.on_settings_clicked()
