@@ -125,13 +125,6 @@ class PostWidget(Adw.Bin):
             # Keep the icon image reference on the button so _update_like_icon
             # can call set_from_icon_name directly (no fragile child-walk).
             btn.icon_img = img
-            # Consume the press so the card's open-thread gesture is denied.
-            claim = Gtk.GestureClick()
-            claim.connect(
-                "pressed",
-                lambda g, n, x, y: g.set_state(Gtk.EventSequenceState.CLAIMED),
-            )
-            btn.add_controller(claim)
             return l, btn
 
         self.lbl_replies, self.btn_reply = mk_met("chat-bubble-symbolic", "0")
@@ -169,8 +162,8 @@ class PostWidget(Adw.Bin):
             ctrl = Gtk.GestureClick()
             ctrl.connect(
                 "released",
-                lambda c, n, x, y: self.main_window.show_thread(
-                    event_id, pubkey, content, tags
+                lambda c, n, x, y: self._on_card_clicked(
+                    event_id, pubkey, content, tags, x, y
                 ),
             )
             self.add_controller(ctrl)
@@ -188,6 +181,27 @@ class PostWidget(Adw.Bin):
             # lp's widget is only set once it's added to a controller host.
             self.add_controller(lp)
             ctrl.group(lp)
+
+    def _on_card_clicked(self, event_id, pubkey, content, tags, x, y):
+        # Open the thread on a normal click, UNLESS the click landed on one of
+        # the footer action buttons (like/repost/reply). Those buttons have
+        # their own clicked handlers; opening the thread too would be wrong.
+        # The old code added a CLAIM gesture to each action button to deny the
+        # card's gesture, but that also blocked the button's own clicked signal
+        # (Gtk.Button's internal click gesture lost the sequence) — so the like
+        # button never fired. Checking the click target here is the fix.
+        try:
+            target = self.get_widget_at_coords(x, y)
+        except Exception:
+            target = None
+        if target is not None:
+            # Walk up from the target to see if it's inside an action button.
+            w = target
+            while w is not None:
+                if w in (self.btn_like, self.btn_repost, self.btn_reply):
+                    return
+                w = w.get_parent()
+        self.main_window.show_thread(event_id, pubkey, content, tags)
 
     @staticmethod
     def _resolve_icon_name(name):
