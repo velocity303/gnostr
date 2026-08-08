@@ -2,6 +2,7 @@ import json
 import threading
 import time
 import os
+import collections
 from gi.repository import GObject, GLib
 import traceback
 import gnostr
@@ -182,6 +183,8 @@ class NostrClient(GObject.Object):
             None,
             (str, bool, str, str, str),
         ),
+        # relay-log-updated: (line:str) — a new relay-activity log line
+        "relay-log-updated": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
     }
 
     def __init__(self, db):
@@ -192,6 +195,8 @@ class NostrClient(GObject.Object):
         self.db = db
         # event_id -> {"label": str, "expires": float} for OK-ack resolution
         self.pending_publishes = {}
+        # Bounded relay-activity log (newest last); surfaced via relay-log-updated
+        self.relay_log = collections.deque(maxlen=200)
         self.my_pubkey = None
         self.my_privkey = None
         self.requested_profiles = {}  # pubkey -> last request timestamp (TTL cache)
@@ -311,6 +316,15 @@ class NostrClient(GObject.Object):
             "label": label,
             "expires": time.time() + 30,
         }
+        self._log_relay(f"{label} sent → {len(self.active_relays)} relay(s)")
+
+    def _log_relay(self, line):
+        """Append a relay-activity line to the bounded log and emit the
+        relay-log-updated signal so the UI can show it live."""
+        ts = time.strftime("%H:%M:%S")
+        full = f"[{ts}] {line}"
+        self.relay_log.append(full)
+        GLib.idle_add(self.emit, "relay-log-updated", full)
 
     def _handle_ok(self, event_id, accepted, message, relay_url):
         """NIP-01 OK ack: [\"OK\", event_id, accepted, message]. Resolves the
@@ -318,6 +332,10 @@ class NostrClient(GObject.Object):
         pending = self.pending_publishes.pop(event_id, None)
         if not pending:
             return
+        self._log_relay(
+            f"{pending['label']} {'OK' if accepted else 'REJECTED'} {relay_url}"
+            + (f" ({message})" if message else "")
+        )
         GLib.idle_add(
             self.emit,
             "publish-result",
@@ -335,6 +353,7 @@ class NostrClient(GObject.Object):
         for eid, p in list(self.pending_publishes.items()):
             if now > p["expires"]:
                 self.pending_publishes.pop(eid, None)
+                self._log_relay(f"{p['label']} NOT CONFIRMED (no relay ack in 30s)")
                 GLib.idle_add(
                     self.emit,
                     "publish-result",
@@ -566,6 +585,8 @@ class NostrClient(GObject.Object):
             GLib.idle_add(self.emit, "relay-list-updated")
 
     def _handle_status(self, url, status):
+        # Log relay connect/disconnect so the activity pane shows connectivity.
+        self._log_relay(f"{url} {status.status}")
         self.emit("status-changed", status.status)
 
     def fetch_contacts(self):
