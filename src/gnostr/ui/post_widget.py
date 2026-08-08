@@ -146,20 +146,23 @@ class PostWidget(Adw.Bin):
 
         self.main_box.append(footer)
 
-        # Wire the social actions (only when logged in, and never on the hero
-        # card in a thread — the thread view owns its own hero controls).
-        if not is_hero:
-            my_pk = getattr(self.main_window, "pub_key", None)
-            if my_pk:
-                self._liked = bool(self.main_window.db.user_reaction(event_id, my_pk))
-                self._update_like_icon()
-                self.btn_like.connect("clicked", self._on_like)
+        # Wire the social actions (only when logged in). The hero card in a
+        # thread gets its like button wired + state applied too — the thread
+        # view's hero is a PostWidget(is_hero=True) and previously never
+        # reflected liked state nor had a working like button. Repost/reply
+        # stay off the hero (the thread view owns those controls).
+        my_pk = getattr(self.main_window, "pub_key", None)
+        if my_pk:
+            self._liked = bool(self.main_window.db.user_reaction(event_id, my_pk))
+            self._update_like_icon()
+            self.btn_like.connect("clicked", self._on_like)
+            if not is_hero:
                 self.btn_repost.connect("clicked", self._on_repost)
                 self.btn_reply.connect("clicked", self._on_reply)
-            else:
-                # not logged in: disable actions
-                for b in (self.btn_like, self.btn_repost, self.btn_reply):
-                    b.set_sensitive(False)
+        else:
+            # not logged in: disable actions
+            for b in (self.btn_like, self.btn_repost, self.btn_reply):
+                b.set_sensitive(False)
 
         # Interaction
         if not is_hero:
