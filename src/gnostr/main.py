@@ -334,6 +334,10 @@ class MainWindow(Adw.ApplicationWindow):
     def perform_login(self, priv_hex):
         self.priv_key = priv_hex
         self.pub_key = gnostr.nostr_utils.get_public_key(priv_hex)
+        # Push keys to the client — the fresh-login dialog path also calls
+        # set_keys, so the saved-key startup path must too or publish_* (like,
+        # repost, reply, follow) silently no-ops with "No private key loaded".
+        self.client.set_keys(self.pub_key, self.priv_key)
         self.main_stack.set_visible_child_name("app")
         self.sidebar.update_status("🟢")
         self.fab_post.set_visible(True)
