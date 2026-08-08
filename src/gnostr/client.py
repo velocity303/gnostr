@@ -43,6 +43,7 @@ class NostrRelay(GObject.Object):
         self.ws = None
         self.is_connected = False
         self.sub_id = None
+        self.active_sub_ids = set()  # sub_ids actually opened on THIS relay
         self.request_queue = []
         self.is_processing_queue = False
         self.snapshot_ids = set()  # Track subscriptions that should close on EOSE
@@ -105,13 +106,17 @@ class NostrRelay(GObject.Object):
         if not self.is_connected:
             return
 
-        # Close previous subscription before opening a new one
-        # This prevents "too many concurrent REQs" from relays
+        # Close the previous subscription before opening a new one, but only if
+        # it's actually open on THIS relay. The old code used a single shared
+        # self.sub_id and sent CLOSE for IDs the relay didn't recognize, which
+        # produced "bad close: invalid subscription id length" NOTICEs and
+        # "too many concurrent REQs" — degrading relay communication.
         if self.sub_id and self.sub_id != sub_id:
             try:
                 self.ws.send(json.dumps(["CLOSE", self.sub_id]))
             except Exception:
                 pass
+            self.active_sub_ids.discard(self.sub_id)
 
         if snapshot:
             self.snapshot_ids.add(sub_id)
@@ -119,6 +124,7 @@ class NostrRelay(GObject.Object):
             self.snapshot_ids.remove(sub_id)
 
         self.sub_id = sub_id
+        self.active_sub_ids.add(sub_id)
         try:
             self.ws.send(
                 json.dumps(
@@ -158,11 +164,15 @@ class NostrRelay(GObject.Object):
 
     def publish(self, event_json):
         if not self.is_connected:
-            return
+            # Relay not connected — surface it so the like flow is observable.
+            print(f"❌ [{self.url}] publish skipped: relay not connected")
+            return False
         try:
             self.ws.send(json.dumps(["EVENT", event_json]))
-        except Exception:
-            pass
+            return True
+        except Exception as e:
+            print(f"❌ [{self.url}] publish send failed: {e}")
+            return False
 
     def close(self):
         if self.ws:
@@ -291,8 +301,15 @@ class NostrClient(GObject.Object):
             r.subscribe(sub_id, filters, snapshot=snapshot)
 
     def publish(self, event):
+        sent = 0
         for r in self.active_relays.values():
-            r.publish(event)
+            if r.publish(event):
+                sent += 1
+        # Surface how many relays actually received the EVENT — the like flow
+        # must be observable, not silently swallowed.
+        self._log_relay(
+            f"EVENT {event['id'][:8]} sent to {sent}/{len(self.active_relays)} relay(s)"
+        )
 
     def _build_and_publish(self, kind, content, tags, label="Event"):
         """Shared build → sign → publish for any event kind. Returns True on
@@ -316,7 +333,6 @@ class NostrClient(GObject.Object):
             "label": label,
             "expires": time.time() + 30,
         }
-        self._log_relay(f"{label} sent → {len(self.active_relays)} relay(s)")
 
     def _log_relay(self, line):
         """Append a relay-activity line to the bounded log and emit the
