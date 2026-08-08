@@ -33,11 +33,12 @@ DEFAULT_RELAYS = ["wss://relay.nostr.band", "wss://nos.lol", "wss://relay.primal
 
 
 class NostrRelay(GObject.Object):
-    def __init__(self, url, on_event, on_status):
+    def __init__(self, url, on_event, on_status, on_ok=None):
         super().__init__()
         self.url = url
         self.on_event = on_event
         self.on_status = on_status
+        self.on_ok = on_ok or (lambda *a: None)
         self.ws = None
         self.is_connected = False
         self.sub_id = None
@@ -51,6 +52,11 @@ class NostrRelay(GObject.Object):
                 d = json.loads(m)
                 if d[0] == "EVENT":
                     self.on_event(d[2])
+                elif d[0] == "OK":
+                    # NIP-01: ["OK", <event_id>, <true|false>, <message>]
+                    # Relay ack for an EVENT publish — resolve pending publish.
+                    if len(d) >= 3:
+                        self.on_ok(d[1], d[2], d[3] if len(d) > 3 else "", self.url)
                 elif d[0] == "EOSE":
                     sub_id = d[1]
                     if sub_id in self.snapshot_ids:
@@ -170,6 +176,8 @@ class NostrClient(GObject.Object):
         "status-changed": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         "relay-list-updated": (GObject.SignalFlags.RUN_FIRST, None, ()),
         "metrics-updated": (GObject.SignalFlags.RUN_FIRST, None, (str, int, int, int)),
+        # publish-result: (event_id, accepted:bool, message:str, relay_url:str)
+        "publish-result": (GObject.SignalFlags.RUN_FIRST, None, (str, bool, str, str)),
     }
 
     def __init__(self, db):
@@ -178,6 +186,8 @@ class NostrClient(GObject.Object):
         self.relay_urls = set(DEFAULT_RELAYS)
         self.seen_events = set()
         self.db = db
+        # event_id -> {"label": str, "expires": float} for OK-ack resolution
+        self.pending_publishes = {}
         self.my_pubkey = None
         self.my_privkey = None
         self.requested_profiles = {}  # pubkey -> last request timestamp (TTL cache)
@@ -224,7 +234,9 @@ class NostrClient(GObject.Object):
             # If exists but disconnected, consider restarting?
             # Handled by check_connections
             return
-        r = NostrRelay(url, self._handle_event, self._handle_status)
+        r = NostrRelay(
+            url, self._handle_event, self._handle_status, on_ok=self._handle_ok
+        )
         r.start()
         self.active_relays[url] = r
 
@@ -273,7 +285,7 @@ class NostrClient(GObject.Object):
         for r in self.active_relays.values():
             r.publish(event)
 
-    def _build_and_publish(self, kind, content, tags):
+    def _build_and_publish(self, kind, content, tags, label="Event"):
         """Shared build → sign → publish for any event kind. Returns True on
         success. All social-action publishes route through here (DRY)."""
         if not self.my_privkey or not self.my_pubkey:
@@ -283,8 +295,44 @@ class NostrClient(GObject.Object):
         signed = gnostr.nostr_utils.sign_event(event, self.my_privkey)
         if signed:
             self.publish(signed)
+            self._track_publish(signed, label)
             return True
         return False
+
+    def _track_publish(self, event, label):
+        """Register a just-published event for OK-ack resolution. The entry
+        carries a 30s expiry; handle_ok resolves it, the timeout sweep emits a
+        'not confirmed' result for dead relays."""
+        self.pending_publishes[event["id"]] = {
+            "label": label,
+            "expires": time.time() + 30,
+        }
+
+    def _handle_ok(self, event_id, accepted, message, relay_url):
+        """NIP-01 OK ack: [\"OK\", event_id, accepted, message]. Resolves the
+        pending publish for this event_id (if tracked) and emits publish-result."""
+        pending = self.pending_publishes.pop(event_id, None)
+        if not pending:
+            return
+        GLib.idle_add(
+            self.emit, "publish-result", event_id, accepted, message, relay_url
+        )
+
+    def sweep_pending_publishes(self):
+        """Emit a not-confirmed result for publishes that never got an OK.
+        Call periodically (e.g. on a timer); idempotent."""
+        now = time.time()
+        for eid, p in list(self.pending_publishes.items()):
+            if now > p["expires"]:
+                self.pending_publishes.pop(eid, None)
+                GLib.idle_add(
+                    self.emit,
+                    "publish-result",
+                    eid,
+                    False,
+                    "no relay acknowledged within 30s",
+                    "",
+                )
 
     def publish_post(self, content, reply_to=None):
         """kind-1 text post. `reply_to` = dict(root, parent, root_pk, parent_pk)
@@ -298,7 +346,7 @@ class NostrClient(GObject.Object):
             ]
         else:
             tags = []
-        return self._build_and_publish(1, content, tags)
+        return self._build_and_publish(1, content, tags, label="Post")
 
     def publish_reaction(self, target_event_id, target_pubkey, content="+"):
         """NIP-25: kind-7 reaction. content '+' adds, '-' removes/undo."""
@@ -311,6 +359,7 @@ class NostrClient(GObject.Object):
         signed = gnostr.nostr_utils.sign_event(event, self.my_privkey)
         if signed:
             self.publish(signed)
+            self._track_publish(signed, "Like" if content == "+" else "Unlike")
             return True
         return False
 
