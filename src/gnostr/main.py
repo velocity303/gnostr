@@ -383,6 +383,14 @@ class GnostrApp(Adw.Application):
             Gst.init(None)
         except Exception as e:
             print(f"GStreamer init failed: {e}")
+        # Register the liked-state accent rule (idempotent per provider load).
+        css = Gtk.CssProvider()
+        css.load_from_string(
+            ".liked { color: @accent_color; }" ".liked image { color: @accent_color; }"
+        )
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
 
 
 def main(version):

@@ -116,11 +116,15 @@ class PostWidget(Adw.Bin):
         def mk_met(icon, label):
             btn = Gtk.Button()
             b = Gtk.Box(spacing=6)
-            b.append(Gtk.Image.new_from_icon_name(icon))
+            img = Gtk.Image.new_from_icon_name(icon)
+            b.append(img)
             l = Gtk.Label(label=label, css_classes=["caption", "dim-label"])
             b.append(l)
             btn.set_child(b)
             btn.set_css_classes(["flat"])
+            # Keep the icon image reference on the button so _update_like_icon
+            # can call set_from_icon_name directly (no fragile child-walk).
+            btn.icon_img = img
             # Consume the press so the card's open-thread gesture is denied.
             claim = Gtk.GestureClick()
             claim.connect(
@@ -134,7 +138,7 @@ class PostWidget(Adw.Bin):
         self.lbl_reposts, self.btn_repost = mk_met(
             "media-playlist-repeat-symbolic", "0"
         )
-        self.lbl_likes, self.btn_like = mk_met("starred-symbolic", "0")
+        self.lbl_likes, self.btn_like = mk_met("star-symbolic", "0")
 
         footer.append(self.btn_reply)
         footer.append(self.btn_repost)
@@ -182,11 +186,34 @@ class PostWidget(Adw.Bin):
             self.add_controller(lp)
             ctrl.group(lp)
 
+    @staticmethod
+    def _resolve_icon_name(name):
+        """Confirm an icon resolves in the active icon theme; if not, walk a
+        known-good fallback list so the like button never renders blank."""
+        theme = (
+            Gtk.IconTheme.get_for_display(Gdk.Display.get_default())
+            if Gdk.Display.get_default()
+            else None
+        )
+        if theme is None:
+            return name
+        if theme.has_icon_pixbuf(name) or theme.has_icon(name):
+            return name
+        for alt in ("emblem-favorite-symbolic", "starred-symbolic", "star-symbolic"):
+            if theme.has_icon_pixbuf(alt) or theme.has_icon(alt):
+                return alt
+        return name
+
     def _update_like_icon(self):
         self._liked = bool(getattr(self, "_liked", False))
-        icon = "starred-symbolic" if self._liked else "star-symbolic"
-        # Gtk.Image has no set_icon_name — the setter is set_from_icon_name().
-        self.btn_like.get_child().get_first_child().set_from_icon_name(icon)
+        icon = self._resolve_icon_name(
+            "starred-symbolic" if self._liked else "star-symbolic"
+        )
+        self.btn_like.icon_img.set_from_icon_name(icon)
+        # Clear accent class toggles (no-op if class not present).
+        self.btn_like.remove_css_class("liked")
+        if self._liked:
+            self.btn_like.add_css_class("liked")
 
     def _on_like(self, btn):
         client = self.main_window.client
