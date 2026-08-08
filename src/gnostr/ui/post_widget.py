@@ -189,7 +189,8 @@ class PostWidget(Adw.Bin):
     @staticmethod
     def _resolve_icon_name(name):
         """Confirm an icon resolves in the active icon theme; if not, walk a
-        known-good fallback list so the like button never renders blank."""
+        known-good fallback list so the like button never renders blank.
+        GTK4 Gtk.IconTheme exposes has_icon(); has_icon_pixbuf is GTK2/3."""
         theme = (
             Gtk.IconTheme.get_for_display(Gdk.Display.get_default())
             if Gdk.Display.get_default()
@@ -197,10 +198,10 @@ class PostWidget(Adw.Bin):
         )
         if theme is None:
             return name
-        if theme.has_icon_pixbuf(name) or theme.has_icon(name):
+        if theme.has_icon(name):
             return name
         for alt in ("emblem-favorite-symbolic", "starred-symbolic", "star-symbolic"):
-            if theme.has_icon_pixbuf(alt) or theme.has_icon(alt):
+            if theme.has_icon(alt):
                 return alt
         return name
 
