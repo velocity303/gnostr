@@ -321,3 +321,14 @@ def extract_id_from_nostr_uri(uri):
     if uri.startswith("nostr:"):
         return uri.split(":")[1]
     return uri
+
+
+def parse_ok_message(msg):
+    """Parse a NIP-01 relay OK message: ['OK', <event_id>, <true|false>, <msg>].
+    Returns (event_id, accepted:bool, message:str) or None if not an OK."""
+    if not isinstance(msg, list) or len(msg) < 3 or msg[0] != "OK":
+        return None
+    event_id = msg[1]
+    accepted = bool(msg[2]) if isinstance(msg[2], bool) else str(msg[2]) == "true"
+    message = msg[3] if len(msg) > 3 else ""
+    return (event_id, accepted, message)

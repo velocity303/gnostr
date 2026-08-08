@@ -40,6 +40,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.client.connect("contacts-updated", self.on_contacts_updated)
         self.client.connect("profile-updated", self.on_profile_updated)
         self.client.connect("metrics-updated", self.on_metrics_updated)
+        self.client.connect("publish-result", self.on_publish_result)
 
         self.priv_key = None
         self.pub_key = None
@@ -122,6 +123,8 @@ class MainWindow(Adw.ApplicationWindow):
 
         GLib.idle_add(self.client.connect_all)
         GLib.timeout_add_seconds(300, self.on_auto_refresh)
+        # Surface publishes that never got a relay OK (~30s expiry, sweep every 15s).
+        GLib.timeout_add_seconds(15, self._sweep_publishes)
 
         # Populate the feed from the DB right away so Back never lands on a blank
         # feed (the startup subscribe is a no-op until relays connect; on_status_changed
@@ -315,6 +318,18 @@ class MainWindow(Adw.ApplicationWindow):
             widget.lbl_likes.set_label(str(likes))
             widget.lbl_reposts.set_label(str(reposts))
             widget.lbl_replies.set_label(str(replies))
+
+    def _sweep_publishes(self):
+        # Callback for GLib.timeout_add_seconds — returns True to keep repeating.
+        self.client.sweep_pending_publishes()
+        return True
+
+    def on_publish_result(self, client, event_id, accepted, message, relay_url, label):
+        # Feedback for whether likes/follows/reposts/replies reached a relay.
+        if accepted:
+            self.add_toast(Adw.Toast(title=f"{label} ✓"))
+        else:
+            self.add_toast(Adw.Toast(title=f"{label} failed: {message}"))
 
     def perform_login(self, priv_hex):
         self.priv_key = priv_hex

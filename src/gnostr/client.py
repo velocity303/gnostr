@@ -54,9 +54,9 @@ class NostrRelay(GObject.Object):
                     self.on_event(d[2])
                 elif d[0] == "OK":
                     # NIP-01: ["OK", <event_id>, <true|false>, <message>]
-                    # Relay ack for an EVENT publish — resolve pending publish.
-                    if len(d) >= 3:
-                        self.on_ok(d[1], d[2], d[3] if len(d) > 3 else "", self.url)
+                    ok = gnostr.nostr_utils.parse_ok_message(d)
+                    if ok:
+                        self.on_ok(ok[0], ok[1], ok[2], self.url)
                 elif d[0] == "EOSE":
                     sub_id = d[1]
                     if sub_id in self.snapshot_ids:
@@ -176,8 +176,12 @@ class NostrClient(GObject.Object):
         "status-changed": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         "relay-list-updated": (GObject.SignalFlags.RUN_FIRST, None, ()),
         "metrics-updated": (GObject.SignalFlags.RUN_FIRST, None, (str, int, int, int)),
-        # publish-result: (event_id, accepted:bool, message:str, relay_url:str)
-        "publish-result": (GObject.SignalFlags.RUN_FIRST, None, (str, bool, str, str)),
+        # publish-result: (event_id, accepted:bool, message:str, relay_url:str, label:str)
+        "publish-result": (
+            GObject.SignalFlags.RUN_FIRST,
+            None,
+            (str, bool, str, str, str),
+        ),
     }
 
     def __init__(self, db):
@@ -315,7 +319,13 @@ class NostrClient(GObject.Object):
         if not pending:
             return
         GLib.idle_add(
-            self.emit, "publish-result", event_id, accepted, message, relay_url
+            self.emit,
+            "publish-result",
+            event_id,
+            accepted,
+            message,
+            relay_url,
+            pending["label"],
         )
 
     def sweep_pending_publishes(self):
@@ -332,6 +342,7 @@ class NostrClient(GObject.Object):
                     False,
                     "no relay acknowledged within 30s",
                     "",
+                    p["label"],
                 )
 
     def publish_post(self, content, reply_to=None):
@@ -426,7 +437,7 @@ class NostrClient(GObject.Object):
         if target_pubkey in following:
             return
         following.append(target_pubkey)
-        self._publish_contact_list(following)
+        self._publish_contact_list(following, label="Follow")
         print(f"✅ Followed {target_pubkey[:8]}...")
 
     def unfollow_user(self, target_pubkey):
@@ -436,10 +447,10 @@ class NostrClient(GObject.Object):
         if target_pubkey not in following:
             return
         following.remove(target_pubkey)
-        self._publish_contact_list(following)
+        self._publish_contact_list(following, label="Unfollow")
         print(f"✅ Unfollowed {target_pubkey[:8]}...")
 
-    def _publish_contact_list(self, following):
+    def _publish_contact_list(self, following, label="Follow"):
         tags = [["p", pk] for pk in following]
         event = {
             "pubkey": self.my_pubkey,
@@ -451,6 +462,7 @@ class NostrClient(GObject.Object):
         signed = gnostr.nostr_utils.sign_event(event, self.my_privkey)
         if signed:
             self.publish(signed)
+            self._track_publish(signed, label)
             self.db.save_contacts(self.my_pubkey, following)
             GLib.idle_add(self.emit, "contacts-updated")
 
