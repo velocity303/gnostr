@@ -4,7 +4,46 @@ This document tracks all bugs, issues, and problems that need fixing.
 
 ## Current Workstream
 
-### 1. CI Pipeline Implementation (FIXING NOW)
+### 1. Like Button + Relay Feedback (RESOLVED 2026-08-08)
+**Status:** ✅ COMPLETE — verified working on-device
+
+**Description:** The like button appeared to do nothing, the thread-view hero showed the wrong icon, and there was no feedback on whether likes/follows reached relays. Root-caused and fixed across 14 commits.
+
+**Resolved items:**
+- ✅ **Like button click never fired** — a `Gtk.GestureClick` CLAIM gesture on each action button competed with `Gtk.Button`'s internal click gesture and won on press, so `clicked` never fired and `_on_like` never ran. Removed the CLAIM gesture; the card's open-thread handler now checks the click target (`_on_card_clicked`) and skips opening the thread when the click is on an action button. Commit `a131851`.
+- ✅ **Like/repost/reply/follow no-op on saved-key startup** — `perform_login` never called `client.set_keys`, so the client's keys stayed None and every `publish_*` returned False. Now pushes keys to the client. Commit `8096ab0`.
+- ✅ **Feed crash — `IconTheme.has_icon_pixbuf`** — GTK2/3-era method that doesn't exist on GTK4; every PostWidget raised AttributeError. Switched to `has_icon()`. Commit `0afe54c`.
+- ✅ **Thread hero wrong icon + no working like button** — hero PostWidget (`is_hero=True`) never applied liked state nor wired `_on_like`. Now applies outline/filled + `.liked` class and wires the like button. Commit `8cb46fe`.
+- ✅ **No relay submission feedback** — added NIP-01 OK ack parsing (`parse_ok_message`), `publish-result` signal, `pending_publishes` tracking with 30s expiry, and `Adw.Toast` feedback. Commits `148ae03`, `affb1da`.
+- ✅ **Relay activity log** — bounded `relay_log` deque + `relay-log-updated` signal feeding a sidebar "Relay Activity" pane. Commits `9da60e7`, `f9fb395`.
+- ✅ **Publish observability** — `relay.publish()` returns True/False and logs when a relay isn't connected or the send fails; `NostrClient.publish()` logs `EVENT <id> sent to N/M relay(s)`. Commit `700f7bf`.
+- ✅ **Relay subscription spam** — `bad close: invalid subscription id length` + `too many concurrent REQs` NOTICEs fixed by tracking `active_sub_ids` per relay and only CLOSing IDs actually opened. Commit `700f7bf`.
+- ✅ **Like visual** — icon resolves against active icon theme with fallbacks; `.liked` accent CSS class toggles with state. Commit `93bf0ad`.
+
+**Remaining (still open):**
+- 🔶 **Relay connection verification** — the latest output.txt showed zero relay-activity lines, which was traced to the CLAIM-gesture bug (like never published). After the fix, the relays should connect and log. **Verify on-device that relays connect and OK acks appear in the Relay Activity pane.** If relays still don't connect, investigate the WebSocket connection layer (`connect_all` → `add_relay_connection` → `NostrRelay.start`).
+
+---
+
+### 2. Follower Sync: DB ↔ Relays (NEW FEATURE)
+**Status:** Pending — design documented, not yet implemented
+
+**Description:** The user suspects recent follows only hit the local DB and never reached relays. The kind-3 contact-list publish is registered in `pending_publishes` (Follow/Unfollow label) and its OK ack appears in the Relay Activity pane, but there is no explicit reconciliation between the DB `following` table and the relays' view of your contact list.
+
+**Design:**
+- **Pull (relay → DB):** `fetch_contacts()` already subscribes for kind-3 events authored by `my_pubkey` (`sub_contacts`, limit 1). When a kind-3 event arrives, parse its `p`-tags and reconcile the DB `following` table — add any followed pubkeys present in the relay event but missing locally, and (optionally) remove local follows absent from the relay event. This makes the DB match what relays actually have.
+- **Push (DB → relay):** `_publish_contact_list(following, label)` already publishes the full kind-3 contact list on every follow/unfollow. Add a manual "Sync Followers" action that re-publishes the current DB `following` list to all relays (idempotent — relays replace the contact list on kind-3), so a stale relay copy is corrected.
+- **Verification:** the OK ack for the kind-3 publish appears in the Relay Activity pane as `Follow OK <relay>` — confirming the sync reached relays, not just the DB.
+
+**Tasks (each a commit):**
+1. `fetch_contacts` → on kind-3 arrival, reconcile DB `following` from the event's `p`-tags (add missing; optionally prune absent).
+2. Add a "Sync Followers" action (sidebar or profile) that re-publishes the DB `following` list via `_publish_contact_list`.
+3. Wire the sync result into the Relay Activity pane + toast.
+4. DOX pass + tests (`test_follow_sync.py` — mock kind-3 event, assert DB reconcile).
+
+---
+
+### 3. CI Pipeline Implementation (FIXING NOW)
 **Status:** In Progress - Fixing test import issues
 
 **Description:** Based on the established code, work with opencode to draft more wholesome unit tests that are tested in a way compatible with the ci.yaml that is described below. Implement this ci.yaml and make sure you can test the pipeline completely.
@@ -23,7 +62,7 @@ This document tracks all bugs, issues, and problems that need fixing.
 
 ---
 
-### 2. Test Import Fix (CRITICAL)
+### 4. Test Import Fix (CRITICAL)
 **Status:** In Progress - Fixing conftest.py
 
 **Description:** The test environment fails because it cannot import the `gi` module required by `renderer.py`. All tests fail with `ModuleNotFoundError: No module named 'gi'`.
@@ -51,7 +90,7 @@ This document tracks all bugs, issues, and problems that need fixing.
 
 ---
 
-### 3. Package Structure Fix
+### 5. Package Structure Fix
 **Status:** Pending
 
 **Description:** The `src` directory is not a proper Python package (missing `__init__.py` or incorrect structure).
@@ -66,7 +105,7 @@ This document tracks all bugs, issues, and problems that need fixing.
 
 ---
 
-### 4. GTK4 API Compatibility
+### 6. GTK4 API Compatibility
 **Status:** Pending
 
 **Description:** Tests expect GTK4 API but might be using GTK3 patterns.
@@ -81,7 +120,7 @@ This document tracks all bugs, issues, and problems that need fixing.
 
 ---
 
-### 5. GStreamer Pipeline Issues
+### 7. GStreamer Pipeline Issues
 **Status:** Pending
 
 **Description:** `uridecodebin` element may not be available in CI environment.
@@ -96,7 +135,7 @@ This document tracks all bugs, issues, and problems that need fixing.
 
 ---
 
-### 6. Pytest Fixture Scope Mismatch
+### 8. Pytest Fixture Scope Mismatch
 **Status:** In Progress
 
 **Description:** `mock_renderer_modules` fixture defined with `scope="module"` but uses `monkeypatch` which is function-scoped.
@@ -309,6 +348,21 @@ Plan: `.hermes/plans/2026-08-02_gnostr-ux-overhaul.md` (10 tasks, 4 phases). Exe
 - ✅ **Video regression fix (1943d39).** (1) **High-speed playback** was caused by the speculative `sync=False/async=False` sink change (applied without a measurement, violating Task 10's measure-first rule) — removing the clock lets the sink render frames as fast as the decoder produces them instead of pacing to real time. **Reverted to DEFAULT sync/async.** (2) **GIF regression:** the GIF branch called `load_and_play` WITHOUT `autoplay=True` (introduced by lazy-load), so GIFs built the pipeline to PAUSED and never reached PLAYING — the spinner spun forever with no playback. Now passes `autoplay=True` to restore preroll+loop. Capture analysis: 0 evictions / 0 EOS / 0 codec errors / QOS=0 — the felt "freeze/resume" is NOT frame drops; the 2336 state-changed lines are per-element messages from a handful of builds (a complex playbin3 graph emits one message per element per transition), not repeated play/pause. The freeze source is still unmeasured — do NOT disable clock sync to chase it.
 - ⏳ **Task 10 — Video stutter perf investigation.** **Lazy-load landed (0ada401):** builds dropped 23→9, preroll halved 3325→~800ms, 0 codec errors, 0 dropped frames — but playback **still choppy** with QOS=0, so it's not frame drops. New capture showed a **measurement regression**: only 1 real caps report of 9 — lazy-load autoplay races the state-change ahead of caps negotiation, so the inline caps query returned None. **Fix (deferred inspect):** `_inspect_pipeline` now runs via a 600ms `GLib.timeout_add` after first PAUSED/PLAYING so caps settle before querying. Latest capture: caps reports fire but **`video_caps=none` for all 6** — the 600ms defer helps GIFs (framerate 0/1) but REAL lazy-loaded videos race past 600ms to negotiate (preroll ~3.6s), so `get_current_caps()` still returns None for them; QOS stays 0 dropped frames, no evictions in this capture so no QOS summaries. The caps measurement needs a retry-until-non-None or a query-on-first-frame hook to correlate real-video resolution→choppiness.
 - ✅ **Bugfix — Gtk-CRITICAL gesture-group assertion.** `post_widget.py` called `ctrl.group(lp)` *before* `lp` was attached to the widget, so `gtk_gesture_group()` (gtk_gesture.c:1587) compared `ctrl`'s widget (`self`) against `lp`'s NULL widget and asserted — firing on every non-hero post. Fixed by adding `lp` to the widget first, then grouping. `GestureSingle` does NOT auto-group (init only sets defaults), so renderer's lone `click_ctrl` was never implicated.
+
+### 2026-08-08 (like button + relay feedback workstream)
+Plan: root-cause the like button doing nothing, the thread-hero wrong icon, and the absence of relay submission feedback. Executed across 14 commits, verified working on-device.
+
+- ✅ **Like button click never fired (root cause).** A `Gtk.GestureClick` CLAIM gesture on each footer action button (added to deny the card's open-thread gesture) competed with `Gtk.Button`'s internal click gesture and won on press — so `clicked` never fired and `_on_like` never ran. The like button silently did nothing regardless of keys or relays. **Fix:** removed the CLAIM gesture from the action buttons; the card's open-thread handler now checks the click target (`_on_card_clicked`) and skips opening the thread when the click is on an action button. Commit `a131851`. This was the missing piece — the earlier `set_keys` fix was necessary but not sufficient.
+- ✅ **Like/repost/reply/follow no-op on saved-key startup.** `perform_login` never called `client.set_keys`, so the client's keys stayed None and every `publish_*` returned False ("No private key loaded"). Now pushes keys to the client, mirroring the fresh-login dialog path. Commit `8096ab0`.
+- ✅ **Feed crash — `IconTheme.has_icon_pixbuf`.** GTK2/3-era method that doesn't exist on GTK4's `Gtk.IconTheme`; every PostWidget raised AttributeError and the feed never loaded. Switched to `has_icon()`. Commit `0afe54c`.
+- ✅ **Thread hero wrong icon + no working like button.** Hero PostWidget (`is_hero=True`) never applied liked state (kept the constructor's outline star) nor wired `_on_like`. Now applies outline/filled + `.liked` class and wires the like button; repost/reply stay off the hero. Commit `8cb46fe`.
+- ✅ **No relay submission feedback.** Added NIP-01 OK ack parsing (`parse_ok_message`), `publish-result` signal, `pending_publishes` tracking (event_id → label + 30s expiry), and `Adw.Toast` feedback ("Like ✓" / "Follow failed: <msg>"). Commits `148ae03`, `affb1da`.
+- ✅ **Relay activity log.** Bounded `relay_log` deque (200) + `relay-log-updated` signal feeding a sidebar "Relay Activity" pane (collapsible, monospace, newest at top). Wired into publish/OK/timeout/connect/disconnect. Commits `9da60e7`, `f9fb395`.
+- ✅ **Publish observability.** `relay.publish()` returns True/False and logs when a relay isn't connected or the send fails (was silently swallowed); `NostrClient.publish()` logs `EVENT <id> sent to N/M relay(s)`. Commit `700f7bf`.
+- ✅ **Relay subscription spam.** `bad close: invalid subscription id length` + `too many concurrent REQs` NOTICEs fixed by tracking `active_sub_ids` per relay and only CLOSing IDs actually opened on that relay. Commit `700f7bf`.
+- ✅ **Like visual.** Icon resolves against active icon theme with fallbacks; `.liked` accent CSS class toggles with state. Commit `93bf0ad`.
+- 🔶 **Open — relay connection verification.** The latest output.txt showed zero relay-activity lines, traced to the CLAIM-gesture bug (like never published). After the fix, relays should connect and log. Verify on-device that OK acks appear in the Relay Activity pane; if relays still don't connect, investigate the WebSocket connection layer.
+- 🔶 **Open — follower sync (new feature).** No explicit reconciliation between the DB `following` table and the relays' kind-3 contact list. Design documented in Current Workstream #2 — pull (reconcile DB from relay kind-3) + push (manual "Sync Followers" re-publish) + verification via Relay Activity pane.
 
 ---
 
