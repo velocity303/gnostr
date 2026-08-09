@@ -90,6 +90,60 @@ This document tracks all bugs, issues, and problems that need fixing.
 
 ---
 
+### 5. Nostr Type Recognition (NIP-19 / NIP-21) — RESEARCHED, PLAN PENDING
+**Status:** Research complete — missing types documented, implementation plan drafted (not yet implemented)
+
+**Description:** The user spotted `nostr:nevent...` references in the feed and asked which other Nostr bech32 types the app should recognize. Research against the authoritative [NIP-19](https://nips.nostr.com/19) and [NIP-21](https://nips.nostr.com/21) specs (nostr-protocol/nips master) revealed the complete set of standardized prefixes and the current gaps in gnostr.
+
+**The complete NIP-19 bech32 prefix set (7 total):**
+- `npub` — public key (bare 32-byte hex)
+- `nsec` — private key (bare 32-byte hex) — **excluded from `nostr:` URIs by NIP-21**
+- `note` — event id (bare 32-byte hex)
+- `nprofile` — profile + optional relay hints (TLV)
+- `nevent` — event + optional relay/author/kind hints (TLV)
+- `naddr` — addressable event coordinate (TLV: d-tag + kind + pubkey + relays) — **MISSING in gnostr**
+- `nrelay` — relay (deprecated 2024-07-25) — **MISSING in gnostr**
+
+**Important correction:** `nquote`, `nroom`, `nsite`, `nclientauth`, `nchannel` are **NOT** in the official NIP-19 spec — they were community proposals that never standardized. They should NOT be implemented. The only real missing standardized type is `naddr` (plus the deprecated `nrelay`).
+
+**Current gnostr support (verified in source):**
+- ✅ `nostr:npub` / `nostr:nprofile` → inline bold `@name` mention (renderer.py `render()` line ~258)
+- ✅ `nostr:note` / `nostr:nevent` → quote card (renderer.py `_add_nostr_card`, line ~404)
+- ✅ `nsec` → login/key handling (nostr_utils.py `nsec_to_hex`) — not via `nostr:` URI, per NIP-21
+- ❌ `nostr:naddr` → **silently dropped**. `_add_nostr_card` returns early (`if "nevent" not in url and "note" not in url: return`), so the reference vanishes from the feed. `_extract_hex_id` also has no `naddr` branch (only `note`/`npub` bare and `nevent`/`nprofile` TLV type-0).
+- ❌ `nostr:nrelay` → **silently dropped** (same early return). Deprecated, but should at least render as a link.
+- 🔶 `is_nostr_reference()` in nostr_utils.py is **dead code** — defined but never called; detection happens inline in renderer.py via `LINK_REGEX` + `startswith("nostr:")`. It also omits `naddr`.
+
+**Why naddr matters:** NIP-33 addressable events (kinds 30000-39999, e.g. long-form articles kind 30023, NIP-23) are referenced by `a`-tag coordinates (`<kind>:<pubkey>:<d-tag>`), not by event id. `naddr` is the bech32 form of that coordinate. Gnostr currently can't display quoted long-form articles at all.
+
+**Implementation plan (drafted, see below):**
+
+**Phase 1 — Decode layer (nostr_utils.py):**
+1. Add `decode_naddr(bech32)` → returns `(kind, pubkey, d_tag, relays[])` by parsing TLV types 0 (d-tag), 1 (relay), 2 (author pubkey), 3 (kind, big-endian u32). Per NIP-19, unknown TLVs are ignored, not errors.
+2. Add `decode_nevent_full(bech32)` → returns `(event_id, relays[], author, kind)` — currently `_extract_hex_id` only pulls type-0; the relay/author/kind hints are discarded. Needed so quote cards can fetch from the hinted relay.
+3. Generalize `_extract_hex_id` to dispatch on hrp: `note`/`npub` → bare hex; `nevent`/`nprofile` → TLV type-0; `naddr` → not a hex id (return None, handled separately).
+4. Update `is_nostr_reference()` to include `naddr` (and `nrelay`) — or delete it since it's dead code.
+
+**Phase 2 — Render layer (renderer.py):**
+5. In `render()`, route `nostr:naddr...` to a new `_add_naddr_card()` (like `_add_nostr_card` but resolves by coordinate).
+6. `_add_naddr_card`: build the `a`-tag coordinate string `f"{kind}:{pubkey}:{d_tag}"`, look it up in DB (new `database.get_event_by_a()`), render quote card if cached, else `request_once` with `{"kinds":[kind], "authors":[pubkey], "#d":[d_tag], "limit":1}` and render on arrival.
+7. `_add_nostr_card`: use `decode_nevent_full` to honor the relay hint when fetching a non-cached event (fall back to all relays).
+8. `nostr:nrelay` → render as a plain link (or a small relay card) instead of dropping.
+
+**Phase 3 — Persistence (database.py):**
+9. Add `get_event_by_a(kind, pubkey, d_tag)` — query events by kind + pubkey + `d`-tag (tags stored as JSON; parse in Python after a kind/pubkey index scan). Add index on `events(kind, pubkey)` if needed.
+10. Ensure `save_event` stores the `d`-tag so addressable events are retrievable by coordinate.
+
+**Phase 4 — Tests + DOX:**
+11. `test_nostr_types.py` — decode naddr/nevent/nprofile fixtures, assert coordinate/relay/kind extraction; renderer routes naddr to card, nrelay to link.
+12. DOX pass — update `src/gnostr/AGENTS.md` (nostr_utils/renderer/database contracts) + this TRACKING.md entry.
+
+**Open questions for implementation:**
+- Should `naddr` quote cards fetch from the relay hint in the TLV, or all connected relays? (Recommend: try hinted relay first, fall back to all.)
+- Should `nrelay` render as a plain link or a relay card with connect action? (Recommend: plain link — it's deprecated.)
+
+---
+
 ### 5. Package Structure Fix
 **Status:** Pending
 
