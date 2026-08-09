@@ -313,7 +313,14 @@ def build_reply_event(
 
 
 def is_nostr_reference(text):
-    prefixes = ("nostr:nevent", "nostr:nprofile", "nostr:note", "nostr:npub")
+    prefixes = (
+        "nostr:nevent",
+        "nostr:nprofile",
+        "nostr:naddr",
+        "nostr:nrelay",
+        "nostr:note",
+        "nostr:npub",
+    )
     return text.startswith(prefixes)
 
 
@@ -321,6 +328,90 @@ def extract_id_from_nostr_uri(uri):
     if uri.startswith("nostr:"):
         return uri.split(":")[1]
     return uri
+
+
+# --- NIP-19 TLV decoding -----------------------------------------------------
+# Shareable identifiers (nprofile, nevent, naddr) carry a binary TLV list:
+# each item is [T (1 byte)][L (1 byte)][V (L bytes)]. Standardized types:
+#   0 = special (nprofile->pubkey, nevent->event id, naddr->d-tag)
+#   1 = relay (ascii URL, may repeat)
+#   2 = author (32-byte pubkey)
+#   3 = kind (32-bit big-endian unsigned int)
+# Per NIP-19, unknown TLVs are ignored, not errors.
+
+
+def _decode_tlv(raw_bytes):
+    """Parse a NIP-19 TLV byte stream into a list of (type, value_bytes).
+    Malformed items (truncated length) are skipped, not fatal."""
+    items = []
+    i = 0
+    while i < len(raw_bytes):
+        if i + 2 > len(raw_bytes):
+            break
+        t = raw_bytes[i]
+        ln = raw_bytes[i + 1]
+        if i + 2 + ln > len(raw_bytes):
+            break
+        items.append((t, raw_bytes[i + 2 : i + 2 + ln]))
+        i += 2 + ln
+    return items
+
+
+def _tlv_first(items, t):
+    for typ, val in items:
+        if typ == t:
+            return val
+    return None
+
+
+def _tlv_all(items, t):
+    return [val for typ, val in items if typ == t]
+
+
+def decode_naddr(bech32):
+    """Decode a NIP-19 naddr into (kind, pubkey, d_tag, relays[]).
+    Returns None if the bech32 isn't a valid naddr. d_tag is '' for normal
+    replaceable events (empty d-tag)."""
+    hrp, data = bech32_decode(bech32)
+    if hrp != "naddr" or data is None:
+        return None
+    raw = bytes(convertbits(data, 5, 8, False) or b"")
+    items = _decode_tlv(raw)
+    d_tag = bytes(_tlv_first(items, 0) or b"").decode("utf-8", "replace")
+    pubkey = bytes(_tlv_first(items, 2) or b"").hex()
+    kind_bytes = _tlv_first(items, 3)
+    kind = int.from_bytes(kind_bytes, "big") if kind_bytes else 0
+    relays = [bytes(v).decode("utf-8", "replace") for v in _tlv_all(items, 1)]
+    return (kind, pubkey, d_tag, relays)
+
+
+def decode_nevent_full(bech32):
+    """Decode a NIP-19 nevent into (event_id, relays[], author, kind).
+    Returns None if not a valid nevent. author/kind are optional per NIP-19."""
+    hrp, data = bech32_decode(bech32)
+    if hrp != "nevent" or data is None:
+        return None
+    raw = bytes(convertbits(data, 5, 8, False) or b"")
+    items = _decode_tlv(raw)
+    event_id = bytes(_tlv_first(items, 0) or b"").hex()
+    relays = [bytes(v).decode("utf-8", "replace") for v in _tlv_all(items, 1)]
+    author = bytes(_tlv_first(items, 2) or b"").hex()
+    kind_bytes = _tlv_first(items, 3)
+    kind = int.from_bytes(kind_bytes, "big") if kind_bytes else None
+    return (event_id, relays, author, kind)
+
+
+def decode_nprofile(bech32):
+    """Decode a NIP-19 nprofile into (pubkey, relays[]). Returns None if not
+    a valid nprofile."""
+    hrp, data = bech32_decode(bech32)
+    if hrp != "nprofile" or data is None:
+        return None
+    raw = bytes(convertbits(data, 5, 8, False) or b"")
+    items = _decode_tlv(raw)
+    pubkey = bytes(_tlv_first(items, 0) or b"").hex()
+    relays = [bytes(v).decode("utf-8", "replace") for v in _tlv_all(items, 1)]
+    return (pubkey, relays)
 
 
 def parse_ok_message(msg):

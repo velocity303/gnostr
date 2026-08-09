@@ -182,6 +182,10 @@ class NostrRelay(GObject.Object):
 class NostrClient(GObject.Object):
     __gsignals__ = {
         "event-received": (GObject.SignalFlags.RUN_FIRST, None, (str, str, str, str)),
+        # quote-event-received: full event JSON for pending quote/naddr cards
+        # (fires for ALL kinds, not just kind-1 — addressable events are kind
+        # 30000-39999 and never hit event-received).
+        "quote-event-received": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         "profile-updated": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         "contacts-updated": (GObject.SignalFlags.RUN_FIRST, None, ()),
         "status-changed": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
@@ -554,6 +558,11 @@ class NostrClient(GObject.Object):
                 self.metrics[eid] = {"likes": 0, "reposts": 0, "replies": 0}
 
         self.db.save_event(ev)
+
+        # Fire the quote-event signal for EVERY kind so pending quote/naddr
+        # cards can populate on arrival. Addressable events (kind 30000-39999)
+        # never hit the kind-1 event-received path, so this is their only route.
+        GLib.idle_add(self.emit, "quote-event-received", json.dumps(ev))
 
         if kind == 0:
             self.db.save_profile(pubkey, ev["content"], ev["created_at"])

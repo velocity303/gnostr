@@ -159,6 +159,26 @@ class Database:
             events = self._rows_to_events(rows)
             return events[0] if events else None
 
+    def get_event_by_a(self, kind, pubkey, d_tag):
+        """Fetch the latest addressable event by its 'a'-tag coordinate
+        (kind:pubkey:d-tag, NIP-33). Tags are stored as JSON text, so the
+        kind+pubkey index narrows candidates, then the d-tag is matched in
+        Python. Returns the newest match (addressable events are replaceable)."""
+        if not self.conn:
+            return None
+        with self.lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "SELECT * FROM events WHERE kind = ? AND pubkey = ? ORDER BY created_at DESC",
+                (kind, pubkey),
+            )
+            events = self._rows_to_events(cursor.fetchall())
+            for ev in events:
+                for t in ev.get("tags", []):
+                    if len(t) >= 2 and t[0] == "d" and t[1] == d_tag:
+                        return ev
+            return None
+
     def get_feed_for_user(self, pubkey, limit=50):
         if not self.conn:
             return []

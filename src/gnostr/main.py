@@ -36,6 +36,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.db = Database()
         self.client = NostrClient(self.db)
         self.client.connect("event-received", self.on_event_received)
+        self.client.connect("quote-event-received", self.on_quote_event_received)
         self.client.connect("status-changed", self.on_status_changed)
         self.client.connect("contacts-updated", self.on_contacts_updated)
         self.client.connect("profile-updated", self.on_profile_updated)
@@ -260,6 +261,43 @@ class MainWindow(Adw.ApplicationWindow):
             # Slot into the correct time position (newest-at-top), not a blind
             # prepend — backfilled/older posts keep the feed in time order.
             PostWidget.insert_time_sorted(self.feed_view.posts_box, w)
+
+    def on_quote_event_received(self, client, event_json):
+        """Populate pending quote/naddr cards when their event arrives.
+        Fires for ALL kinds (addressable events never hit event-received)."""
+        try:
+            ev = json.loads(event_json)
+        except Exception:
+            return
+        eid = ev.get("id")
+        kind = ev.get("kind")
+        pubkey = ev.get("pubkey")
+        tags = ev.get("tags", [])
+
+        # Addressable coordinate for naddr cards: kind:pubkey:d-tag.
+        d_tag = ""
+        for t in tags:
+            if len(t) >= 2 and t[0] == "d":
+                d_tag = t[1]
+                break
+        coordinate = f"{kind}:{pubkey}:{d_tag}" if d_tag else None
+
+        for w in self.event_widgets.values():
+            for match_key, quote_box in getattr(w, "quote_widgets", None) or ():
+                mtype, mval = match_key
+                matched = False
+                if mtype == "id" and mval == eid:
+                    matched = True
+                elif mtype == "a" and coordinate and mval == coordinate:
+                    matched = True
+                if not matched:
+                    continue
+                # Clear the "Loading Quoted Event..." label, then render content.
+                child = quote_box.get_first_child()
+                while child is not None:
+                    quote_box.remove(child)
+                    child = quote_box.get_first_child()
+                ContentRenderer._build_quote_content(quote_box, ev, self)
 
     def on_status_changed(self, client, status):
         emoji = {"CONNECTED": "🟢", "WARNING": "🟡", "DISCONNECTED": "🔴"}.get(

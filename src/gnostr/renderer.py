@@ -281,6 +281,26 @@ class ContentRenderer:
                                     (None, GLib.markup_escape_text(trailing))
                                 )
                             continue
+                        # nostr:naddr -> addressable-event quote card (NIP-19/NIP-33)
+                        if "naddr" in clean_part:
+                            flush_text()
+                            ContentRenderer._add_naddr_card(
+                                box, clean_part, window_ref, post_widget_ref
+                            )
+                            if trailing:
+                                text_fragments.append(
+                                    (None, GLib.markup_escape_text(trailing))
+                                )
+                            continue
+                        # nostr:nrelay -> plain link (deprecated NIP-19 type)
+                        if "nrelay" in clean_part:
+                            flush_text()
+                            ContentRenderer._add_link(box, clean_part)
+                            if trailing:
+                                text_fragments.append(
+                                    (None, GLib.markup_escape_text(trailing))
+                                )
+                            continue
                         # nostr event quote -> block card
                         flush_text()
                         ContentRenderer._add_nostr_card(
@@ -408,45 +428,128 @@ class ContentRenderer:
             if not hex_id:
                 return
 
-            event = window.db.get_event_by_id(hex_id)
+            # Honor the nevent relay hint (NIP-19 TLV type 1) when fetching.
+            relays = []
+            if "nevent" in url:
+                decoded = nostr_utils.decode_nevent_full(bech32_str)
+                if decoded:
+                    relays = decoded[1]
 
-            quote_frame = Gtk.Frame(css_classes=["quote-card"])
-            quote_box = Gtk.Box(
-                orientation=Gtk.Orientation.VERTICAL,
-                spacing=6,
-                margin_top=8,
-                margin_bottom=8,
-                margin_start=8,
-                margin_end=8,
+            ContentRenderer._build_quote_card(
+                box,
+                window,
+                post_widget_ref,
+                match_key=("id", hex_id),
+                fetch_filter={"ids": [hex_id], "limit": 1},
+                click_target=("thread", hex_id),
+                relays=relays,
             )
-            quote_frame.set_child(quote_box)
-
-            if event:
-                ContentRenderer._build_quote_content(quote_box, event, window)
-            else:
-                lbl = Gtk.Label(
-                    label=f"Loading Quoted Event...", css_classes=["dim-label"]
-                )
-                quote_box.append(lbl)
-                window.client.request_once(
-                    f"quote_{hex_id[:8]}", {"ids": [hex_id], "limit": 1}
-                )
-
-                if post_widget_ref:
-                    if not hasattr(post_widget_ref, "quote_widgets"):
-                        post_widget_ref.quote_widgets = []
-                    post_widget_ref.quote_widgets.append((hex_id, quote_box))
-
-            wrapper_btn = Gtk.Button(css_classes=["flat", "quote-wrapper"])
-            wrapper_btn.set_child(quote_frame)
-            wrapper_btn.connect(
-                "clicked",
-                lambda b: window.show_thread(hex_id, "Unknown", "Loading..."),
-            )
-            box.append(wrapper_btn)
-
         except Exception as e:
             print(f"[Renderer] Card Render Error: {e}")
+
+    @staticmethod
+    def _add_naddr_card(box, url, window, post_widget_ref=None):
+        """Render a quote card for a NIP-19 naddr (addressable event coordinate).
+        Resolves by kind:pubkey:d-tag — the 'a'-tag coordinate — not event id."""
+        try:
+            parts = url.split(":")
+            if len(parts) < 2:
+                return
+            bech32_str = parts[1]
+            decoded = nostr_utils.decode_naddr(bech32_str)
+            if not decoded:
+                return
+            kind, pubkey, d_tag, relays = decoded
+            if not pubkey or not kind:
+                return
+            coordinate = f"{kind}:{pubkey}:{d_tag}"
+
+            ContentRenderer._build_quote_card(
+                box,
+                window,
+                post_widget_ref,
+                match_key=("a", coordinate),
+                fetch_filter={
+                    "kinds": [kind],
+                    "authors": [pubkey],
+                    "#d": [d_tag],
+                    "limit": 1,
+                },
+                click_target=("a", coordinate),
+                relays=relays,
+            )
+        except Exception as e:
+            print(f"[Renderer] Naddr Card Render Error: {e}")
+
+    @staticmethod
+    def _build_quote_card(
+        box, window, post_widget_ref, match_key, fetch_filter, click_target, relays=None
+    ):
+        """Shared quote-card builder for note/nevent (by event id) and naddr
+        (by coordinate). Creates the frame, checks the DB, fetches if missing,
+        registers the pending card for population on arrival, and wires the click."""
+        match_type, match_val = match_key
+        event = None
+        if match_type == "id":
+            event = window.db.get_event_by_id(match_val)
+        elif match_type == "a":
+            kind, pk, d = match_val.split(":", 2)
+            event = window.db.get_event_by_a(int(kind), pk, d)
+
+        quote_frame = Gtk.Frame(css_classes=["quote-card"])
+        quote_box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=6,
+            margin_top=8,
+            margin_bottom=8,
+            margin_start=8,
+            margin_end=8,
+        )
+        quote_frame.set_child(quote_box)
+
+        if event:
+            ContentRenderer._build_quote_content(quote_box, event, window)
+        else:
+            lbl = Gtk.Label(label=f"Loading Quoted Event...", css_classes=["dim-label"])
+            quote_box.append(lbl)
+            window.client.request_once(f"quote_{match_val[:8]}", fetch_filter)
+
+            if post_widget_ref:
+                if not hasattr(post_widget_ref, "quote_widgets"):
+                    post_widget_ref.quote_widgets = []
+                post_widget_ref.quote_widgets.append((match_key, quote_box))
+
+        wrapper_btn = Gtk.Button(css_classes=["flat", "quote-wrapper"])
+        wrapper_btn.set_child(quote_frame)
+        wrapper_btn.connect(
+            "clicked",
+            lambda b: ContentRenderer._on_quote_clicked(
+                window, click_target, match_val
+            ),
+        )
+        box.append(wrapper_btn)
+
+    @staticmethod
+    def _on_quote_clicked(window, click_target, match_val):
+        """Open a quote card's target. ('thread', id) opens the thread view;
+        ('a', coordinate) resolves the addressable event then opens it."""
+        try:
+            if click_target[0] == "thread":
+                window.show_thread(match_val, "Unknown", "Loading...")
+                return
+            # addressable coordinate -> resolve to an event id, then open
+            kind, pk, d = match_val.split(":", 2)
+            event = window.db.get_event_by_a(int(kind), pk, d)
+            if event:
+                window.show_thread(event["id"], event["pubkey"], event["content"])
+            else:
+                window.client.request_once(
+                    f"quote_{match_val[:8]}",
+                    {"kinds": [int(kind)], "authors": [pk], "#d": [d], "limit": 1},
+                )
+                window.add_toast(Adw.Toast(title="Loading article..."))
+        except Exception as e:
+            print(f"[Renderer] Quote click error: {e}")
 
     @staticmethod
     def _build_quote_content(container, event, window):

@@ -90,8 +90,8 @@ This document tracks all bugs, issues, and problems that need fixing.
 
 ---
 
-### 5. Nostr Type Recognition (NIP-19 / NIP-21) — RESEARCHED, PLAN PENDING
-**Status:** Research complete — missing types documented, implementation plan drafted (not yet implemented)
+### 5. Nostr Type Recognition (NIP-19 / NIP-21) — IMPLEMENTED (naddr/long-form)
+**Status:** ✅ COMPLETE — naddr (long-form article) support implemented + verified (2026-08-09). nrelay renders as a link. See Progress Log entry below.
 
 **Description:** The user spotted `nostr:nevent...` references in the feed and asked which other Nostr bech32 types the app should recognize. Research against the authoritative [NIP-19](https://nips.nostr.com/19) and [NIP-21](https://nips.nostr.com/21) specs (nostr-protocol/nips master) revealed the complete set of standardized prefixes and the current gaps in gnostr.
 
@@ -107,40 +107,42 @@ This document tracks all bugs, issues, and problems that need fixing.
 **Important correction:** `nquote`, `nroom`, `nsite`, `nclientauth`, `nchannel` are **NOT** in the official NIP-19 spec — they were community proposals that never standardized. They should NOT be implemented. The only real missing standardized type is `naddr` (plus the deprecated `nrelay`).
 
 **Current gnostr support (verified in source):**
-- ✅ `nostr:npub` / `nostr:nprofile` → inline bold `@name` mention (renderer.py `render()` line ~258)
-- ✅ `nostr:note` / `nostr:nevent` → quote card (renderer.py `_add_nostr_card`, line ~404)
+- ✅ `nostr:npub` / `nostr:nprofile` → inline bold `@name` mention (renderer.py `render()`)
+- ✅ `nostr:note` / `nostr:nevent` → quote card (renderer.py `_add_nostr_card`, honors nevent relay hint)
+- ✅ `nostr:naddr` → **quote card resolved by coordinate** (renderer.py `_add_naddr_card` + `database.get_event_by_a`) — NEW
+- ✅ `nostr:nrelay` → **plain link** (deprecated NIP-19 type) — NEW
 - ✅ `nsec` → login/key handling (nostr_utils.py `nsec_to_hex`) — not via `nostr:` URI, per NIP-21
-- ❌ `nostr:naddr` → **silently dropped**. `_add_nostr_card` returns early (`if "nevent" not in url and "note" not in url: return`), so the reference vanishes from the feed. `_extract_hex_id` also has no `naddr` branch (only `note`/`npub` bare and `nevent`/`nprofile` TLV type-0).
-- ❌ `nostr:nrelay` → **silently dropped** (same early return). Deprecated, but should at least render as a link.
-- 🔶 `is_nostr_reference()` in nostr_utils.py is **dead code** — defined but never called; detection happens inline in renderer.py via `LINK_REGEX` + `startswith("nostr:")`. It also omits `naddr`.
+- ✅ `is_nostr_reference()` now covers nevent/nprofile/naddr/nrelay/note/npub
 
-**Why naddr matters:** NIP-33 addressable events (kinds 30000-39999, e.g. long-form articles kind 30023, NIP-23) are referenced by `a`-tag coordinates (`<kind>:<pubkey>:<d-tag>`), not by event id. `naddr` is the bech32 form of that coordinate. Gnostr currently can't display quoted long-form articles at all.
+**Why naddr matters:** NIP-33 addressable events (kinds 30000-39999, e.g. long-form articles kind 30023, NIP-23) are referenced by `a`-tag coordinates (`<kind>:<pubkey>:<d-tag>`), not by event id. `naddr` is the bech32 form of that coordinate. Gnostr can now display quoted long-form articles.
 
-**Implementation plan (drafted, see below):**
+**Implementation plan (all phases complete):**
 
-**Phase 1 — Decode layer (nostr_utils.py):**
-1. Add `decode_naddr(bech32)` → returns `(kind, pubkey, d_tag, relays[])` by parsing TLV types 0 (d-tag), 1 (relay), 2 (author pubkey), 3 (kind, big-endian u32). Per NIP-19, unknown TLVs are ignored, not errors.
-2. Add `decode_nevent_full(bech32)` → returns `(event_id, relays[], author, kind)` — currently `_extract_hex_id` only pulls type-0; the relay/author/kind hints are discarded. Needed so quote cards can fetch from the hinted relay.
-3. Generalize `_extract_hex_id` to dispatch on hrp: `note`/`npub` → bare hex; `nevent`/`nprofile` → TLV type-0; `naddr` → not a hex id (return None, handled separately).
-4. Update `is_nostr_reference()` to include `naddr` (and `nrelay`) — or delete it since it's dead code.
+**Phase 1 — Decode layer (nostr_utils.py):** ✅
+1. ✅ `decode_naddr(bech32)` → `(kind, pubkey, d_tag, relays[])` via TLV types 0/1/2/3. Unknown TLVs ignored per NIP-19.
+2. ✅ `decode_nevent_full(bech32)` → `(event_id, relays[], author, kind)` — relay/author/kind hints now available.
+3. ✅ `decode_nprofile(bech32)` → `(pubkey, relays[])`; shared `_decode_tlv` parser.
+4. ✅ `is_nostr_reference()` includes `naddr` + `nrelay`.
 
-**Phase 2 — Render layer (renderer.py):**
-5. In `render()`, route `nostr:naddr...` to a new `_add_naddr_card()` (like `_add_nostr_card` but resolves by coordinate).
-6. `_add_naddr_card`: build the `a`-tag coordinate string `f"{kind}:{pubkey}:{d_tag}"`, look it up in DB (new `database.get_event_by_a()`), render quote card if cached, else `request_once` with `{"kinds":[kind], "authors":[pubkey], "#d":[d_tag], "limit":1}` and render on arrival.
-7. `_add_nostr_card`: use `decode_nevent_full` to honor the relay hint when fetching a non-cached event (fall back to all relays).
-8. `nostr:nrelay` → render as a plain link (or a small relay card) instead of dropping.
+**Phase 2 — Render layer (renderer.py):** ✅
+5. ✅ `render()` routes `nostr:naddr...` to `_add_naddr_card()`.
+6. ✅ `_add_naddr_card` builds coordinate `f"{kind}:{pubkey}:{d_tag}"`, checks `database.get_event_by_a()`, else `request_once` with `{"kinds":[kind], "authors":[pubkey], "#d":[d_tag], "limit":1}`.
+7. ✅ `_add_nostr_card` honors the nevent relay hint via `decode_nevent_full`.
+8. ✅ `nostr:nrelay` renders as a plain link.
+9. ✅ Both card types share `_build_quote_card` (DB check → fetch → register pending → wire click); `_on_quote_clicked` opens thread for events, resolves coordinate for naddr.
 
-**Phase 3 — Persistence (database.py):**
-9. Add `get_event_by_a(kind, pubkey, d_tag)` — query events by kind + pubkey + `d`-tag (tags stored as JSON; parse in Python after a kind/pubkey index scan). Add index on `events(kind, pubkey)` if needed.
-10. Ensure `save_event` stores the `d`-tag so addressable events are retrievable by coordinate.
+**Phase 3 — Persistence (database.py):** ✅
+10. ✅ `get_event_by_a(kind, pubkey, d_tag)` — kind+pubkey index scan, d-tag matched in Python from JSON tags, returns newest (addressable events are replaceable). Existing `idx_events_feed(pubkey, kind, created_at)` covers the query — no new index needed.
 
-**Phase 4 — Tests + DOX:**
-11. `test_nostr_types.py` — decode naddr/nevent/nprofile fixtures, assert coordinate/relay/kind extraction; renderer routes naddr to card, nrelay to link.
-12. DOX pass — update `src/gnostr/AGENTS.md` (nostr_utils/renderer/database contracts) + this TRACKING.md entry.
+**Phase 4 — Signal wiring + Tests + DOX:** ✅
+11. ✅ `client.py` emits `quote-event-received` (full event JSON) for EVERY kind after `save_event` — addressable events never hit the kind-1 `event-received` path.
+12. ✅ `main.py` `on_quote_event_received` matches pending cards by event id (`("id", hex)`) or coordinate (`("a", kind:pubkey:d-tag)`) and populates via `_build_quote_content`. **Also fixes a latent bug:** note/nevent quote cards previously showed "Loading..." forever — `quote_widgets` was set but never consumed.
+13. ✅ `test_nostr_types.py` — decode naddr/nevent/nprofile against real spec examples + `get_event_by_a` DB lookup. 7 tests, all pass.
+14. ✅ DOX pass — `src/gnostr/AGENTS.md` (nostr_utils/renderer/database/client/main contracts) + `tests/AGENTS.md` + this TRACKING.md entry.
 
-**Open questions for implementation:**
-- Should `naddr` quote cards fetch from the relay hint in the TLV, or all connected relays? (Recommend: try hinted relay first, fall back to all.)
-- Should `nrelay` render as a plain link or a relay card with connect action? (Recommend: plain link — it's deprecated.)
+**Open questions (resolved during implementation):**
+- naddr quote cards fetch via `request_once` to all connected relays (the relay hint is decoded but not yet used to target a specific relay — `request_once` fans out to all active relays; a relay-hint-targeted fetch is a future optimization).
+- `nrelay` renders as a plain link (deprecated type, no connect action).
 
 ---
 
@@ -417,6 +419,17 @@ Plan: root-cause the like button doing nothing, the thread-hero wrong icon, and 
 - ✅ **Like visual.** Icon resolves against active icon theme with fallbacks; `.liked` accent CSS class toggles with state. Commit `93bf0ad`.
 - 🔶 **Open — relay connection verification.** The latest output.txt showed zero relay-activity lines, traced to the CLAIM-gesture bug (like never published). After the fix, relays should connect and log. Verify on-device that OK acks appear in the Relay Activity pane; if relays still don't connect, investigate the WebSocket connection layer.
 - 🔶 **Open — follower sync (new feature).** No explicit reconciliation between the DB `following` table and the relays' kind-3 contact list. Design documented in Current Workstream #2 — pull (reconcile DB from relay kind-3) + push (manual "Sync Followers" re-publish) + verification via Relay Activity pane.
+
+### 2026-08-09 (NIP-19/NIP-21 nostr type support — naddr/long-form)
+Plan: research the full NIP-19 bech32 type set, document gaps in TRACKING.md, then implement long-form (naddr) support. Committed docs first (`ea9ba4a`), then implemented across 4 phases.
+
+- ✅ **Research (committed `ea9ba4a`).** Pulled authoritative NIP-19/NIP-21 from nostr-protocol/nips master. The complete bech32 set is npub/nsec/note/nprofile/nevent/naddr/nrelay. `nquote`/`nroom`/`nsite`/`nclientauth`/`nchannel` are community proposals, NOT in spec — correctly excluded. Only real gap was `naddr` (addressable event coordinate) + deprecated `nrelay`.
+- ✅ **Phase 1 — decode layer (`nostr_utils.py`).** Added `decode_naddr` (kind:pubkey:d-tag + relays), `decode_nevent_full` (event id + relay/author/kind hints), `decode_nprofile` (pubkey + relays) via shared `_decode_tlv` parser (unknown TLVs ignored per NIP-19). `is_nostr_reference` now covers naddr/nrelay. Verified against real spec examples (naddr → kind 30023, pubkey, d-tag `18ff5416`, relay `wss://fiatjaf.com`).
+- ✅ **Phase 2 — render layer (`renderer.py`).** `render()` routes `nostr:naddr` → `_add_naddr_card` (quote card resolved by coordinate), `nostr:nrelay` → plain link. `_add_nostr_card` honors the nevent relay hint. Both share `_build_quote_card` (DB check → fetch → register pending on `quote_widgets` → wire click); `_on_quote_clicked` opens thread for events, resolves coordinate for naddr.
+- ✅ **Phase 3 — persistence (`database.py`).** `get_event_by_a(kind, pubkey, d_tag)` returns newest addressable event for a coordinate (kind+pubkey index scan, d-tag matched in Python from JSON tags). Existing `idx_events_feed(pubkey, kind, created_at)` covers the query — no new index.
+- ✅ **Phase 4 — signal wiring + tests + DOX.** `client.py` emits `quote-event-received` (full event JSON) for EVERY kind after `save_event` — addressable events never hit the kind-1 `event-received` path. `main.py` `on_quote_event_received` matches pending cards by event id or coordinate and populates via `_build_quote_content`. **Fixed a latent bug:** note/nevent quote cards showed "Loading..." forever — `quote_widgets` was set but never consumed. Added `test_nostr_types.py` (7 tests: decode naddr/nevent/nprofile against spec examples + `get_event_by_a` DB lookup). DOX pass on `src/gnostr/AGENTS.md` + `tests/AGENTS.md`.
+- ✅ **Verification.** 18 tests pass (7 new + 11 existing protocol/DB tests). Full suite: 46 passed, 1 pre-existing failure (`test_codec_support.py::TestVideoPlayer::test_load_and_play_success` — GStreamer state mock, unrelated, confirmed via git stash). black clean, flake8 clean on new code regions.
+- 🔶 **Open — relay-hint-targeted fetch.** naddr/nevent relay hints are decoded but `request_once` fans out to all connected relays; targeting a specific hinted relay is a future optimization.
 
 ---
 
