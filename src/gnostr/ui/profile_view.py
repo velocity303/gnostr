@@ -173,6 +173,14 @@ class ProfileView(Adw.Bin):
             self.btn_follow.set_halign(Gtk.Align.CENTER)
             self.btn_follow.connect("clicked", lambda b: self.toggle_follow())
             header.append(self.btn_follow)
+        elif my_pubkey and pubkey == my_pubkey:
+            # Own profile — Edit Profile button instead of Follow toggle
+            btn_edit = Gtk.Button(
+                label="Edit Profile", css_classes=["pill", "suggested-action"]
+            )
+            btn_edit.set_halign(Gtk.Align.CENTER)
+            btn_edit.connect("clicked", lambda b: self.open_edit_dialog())
+            header.append(btn_edit)
 
         self.layout.append(header)
 
@@ -293,3 +301,11 @@ class ProfileView(Adw.Bin):
         self.main_window.add_toast(
             Adw.Toast(title="Following" if self._following else "Unfollowed")
         )
+
+    def open_edit_dialog(self):
+        """Open the Edit Profile dialog for the user's own profile."""
+        from ..dialogs import EditProfileDialog
+
+        prof = self.main_window.db.get_profile(self.pubkey) or {}
+        dialog = EditProfileDialog(self.main_window.client, self.main_window, prof)
+        dialog.present()

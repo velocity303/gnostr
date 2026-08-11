@@ -145,3 +145,83 @@ class ComposeWindow(Adw.Window):
         if text.strip():
             self.on_post_callback(text)
             self.close()
+
+
+class EditProfileDialog(Adw.Window):
+    """Edit + publish the user's own kind-0 profile metadata (NIP-01/NIP-24).
+
+    Fields: name, display_name, about, picture, banner, website, nip05, lud16.
+    On save, builds a metadata dict and calls client.publish_profile(), which
+    signs + publishes the kind-0 event and persists locally."""
+
+    def __init__(self, client, parent, profile=None):
+        super().__init__()
+        self.client = client
+        self.set_transient_for(parent)
+        self.set_modal(True)
+        self.set_default_size(520, 620)
+        self.set_title("Edit Profile")
+        prof = profile or {}
+
+        c = Adw.ToolbarView()
+        self.set_content(c)
+        c.add_top_bar(Adw.HeaderBar())
+        p = Adw.PreferencesPage()
+        c.set_content(p)
+
+        g = Adw.PreferencesGroup(title="Identity")
+        p.add(g)
+        self.ent_name = self._entry_row(g, "Name", prof.get("name", ""))
+        self.ent_display = self._entry_row(
+            g, "Display Name", prof.get("display_name", "")
+        )
+        self.ent_about = self._entry_row(g, "About / Bio", prof.get("about", ""))
+
+        g2 = Adw.PreferencesGroup(title="Media")
+        p.add(g2)
+        self.ent_picture = self._entry_row(
+            g2, "Profile Picture URL", prof.get("picture", "")
+        )
+        self.ent_banner = self._entry_row(g2, "Banner URL", prof.get("banner", ""))
+
+        g3 = Adw.PreferencesGroup(title="Links & Verification")
+        p.add(g3)
+        self.ent_website = self._entry_row(g3, "Website", prof.get("website", ""))
+        self.ent_nip05 = self._entry_row(
+            g3, "NIP-05 Identifier (user@domain)", prof.get("nip05", "")
+        )
+        self.ent_lud16 = self._entry_row(
+            g3, "Lightning Address (user@domain)", prof.get("lud16", "")
+        )
+
+        bg = Adw.PreferencesGroup()
+        p.add(bg)
+        b = Gtk.Button(label="Save Profile", css_classes=["pill", "suggested-action"])
+        b.connect("clicked", self.on_save)
+        bg.add(b)
+
+    def _entry_row(self, group, title, value):
+        row = Adw.ActionRow(title=title)
+        entry = Gtk.Entry(text=value)
+        entry.set_hexpand(True)
+        row.add_suffix(entry)
+        group.add(row)
+        return entry
+
+    def on_save(self, b):
+        metadata = {
+            "name": self.ent_name.get_text().strip(),
+            "display_name": self.ent_display.get_text().strip(),
+            "about": self.ent_about.get_text().strip(),
+            "picture": self.ent_picture.get_text().strip(),
+            "banner": self.ent_banner.get_text().strip(),
+            "website": self.ent_website.get_text().strip(),
+            "nip05": self.ent_nip05.get_text().strip(),
+            "lud16": self.ent_lud16.get_text().strip(),
+        }
+        # Drop empty fields so we don't publish blank metadata
+        metadata = {k: v for k, v in metadata.items() if v}
+        if self.client.publish_profile(metadata):
+            self.close()
+        else:
+            self.add_toast(Adw.Toast(title="No private key loaded — cannot publish"))
