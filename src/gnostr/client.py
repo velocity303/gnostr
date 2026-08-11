@@ -199,6 +199,10 @@ class NostrClient(GObject.Object):
         ),
         # relay-log-updated: (line:str) — a new relay-activity log line
         "relay-log-updated": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
+        # external-identities-updated: (pubkey:str) — NIP-39 kind-10011 arrived
+        "external-identities-updated": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
+        # badges-updated: (pubkey:str) — NIP-58 kind-10008 profile badges arrived
+        "badges-updated": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
     }
 
     def __init__(self, db):
@@ -214,6 +218,8 @@ class NostrClient(GObject.Object):
         self.my_pubkey = None
         self.my_privkey = None
         self.requested_profiles = {}  # pubkey -> last request timestamp (TTL cache)
+        self.requested_external_ids = {}  # NIP-39 kind-10011 TTL cache
+        self.requested_badges = {}  # NIP-58 kind-10008 TTL cache
         self.metrics = {}
         self.config_file = os.path.join(
             GLib.get_user_config_dir(), "gnostr", "config.json"
@@ -456,6 +462,27 @@ class NostrClient(GObject.Object):
             return True
         return False
 
+    def publish_profile(self, metadata):
+        """Publish a kind-0 user-metadata event (NIP-01/NIP-24).
+
+        `metadata` is a dict of profile fields (name, display_name, about,
+        picture, banner, website, nip05, lud16, bot, birthday). Builds the
+        stringified-JSON content, signs, publishes, tracks the OK ack, and
+        persists locally. Returns True on success."""
+        if not self.my_privkey or not self.my_pubkey:
+            print("❌ No private key loaded")
+            return False
+        content = json.dumps(metadata, separators=(",", ":"))
+        event = gnostr.nostr_utils.build_event(self.my_pubkey, 0, content, [])
+        signed = gnostr.nostr_utils.sign_event(event, self.my_privkey)
+        if signed:
+            self.publish(signed)
+            self._track_publish(signed, "Profile")
+            self.db.save_profile(self.my_pubkey, content, event["created_at"])
+            GLib.idle_add(self.emit, "profile-updated", self.my_pubkey)
+            return True
+        return False
+
     def publish_relay_list(self):
 
         event = {
@@ -568,6 +595,24 @@ class NostrClient(GObject.Object):
             self.db.save_profile(pubkey, ev["content"], ev["created_at"])
             GLib.idle_add(self.emit, "profile-updated", pubkey)
 
+        elif kind == 10011:
+            # NIP-39 external identities
+            ids = gnostr.profile_nips.parse_external_identities(ev)
+            if ids:
+                self.db.save_external_identities(pubkey, ids)
+                GLib.idle_add(self.emit, "external-identities-updated", pubkey)
+
+        elif kind == 10008:
+            # NIP-58 profile badges (ordered a/e pairs)
+            badges = gnostr.profile_nips.parse_profile_badges(ev)
+            if badges:
+                self.db.save_profile_badges(pubkey, badges)
+                GLib.idle_add(self.emit, "badges-updated", pubkey)
+
+        elif kind == 30009:
+            # NIP-58 badge definition — store for later image resolution
+            self.db.save_badge_definition(ev)
+
         elif kind == 3:
             if pubkey == self.my_pubkey:
                 c = gnostr.nostr_utils.extract_followed_pubkeys(ev)
@@ -633,6 +678,36 @@ class NostrClient(GObject.Object):
         for r in self.active_relays.values():
             r.request_once(
                 f"meta_{pubkey[:8]}", {"kinds": [0], "authors": [pubkey], "limit": 1}
+            )
+
+    def fetch_external_identities(self, pubkey, ttl=600):
+        """Request a user's NIP-39 external identities (kind 10011)."""
+        now = time.time()
+        if (
+            pubkey in self.requested_external_ids
+            and (now - self.requested_external_ids[pubkey]) < ttl
+        ):
+            return
+        self.requested_external_ids[pubkey] = now
+        for r in self.active_relays.values():
+            r.request_once(
+                f"extid_{pubkey[:8]}",
+                {"kinds": [10011], "authors": [pubkey], "limit": 1},
+            )
+
+    def fetch_badges(self, pubkey, ttl=600):
+        """Request a user's NIP-58 profile badges (kind 10008)."""
+        now = time.time()
+        if (
+            pubkey in self.requested_badges
+            and (now - self.requested_badges[pubkey]) < ttl
+        ):
+            return
+        self.requested_badges[pubkey] = now
+        for r in self.active_relays.values():
+            r.request_once(
+                f"badges_{pubkey[:8]}",
+                {"kinds": [10008], "authors": [pubkey], "limit": 1},
             )
 
     def fetch_thread(self, root_id):

@@ -14,6 +14,7 @@ from . import gateway
 from . import key_manager
 from . import main
 from . import nostr_utils
+from . import profile_nips
 from . import renderer
 from . import window
 

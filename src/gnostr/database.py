@@ -64,6 +64,9 @@ class Database:
                 ("bot", "INTEGER"),
                 ("birthday", "TEXT"),
                 ("raw_json", "TEXT"),
+                # NIP-39 external identities + NIP-58 profile badges (JSON lists)
+                ("external_identities", "TEXT"),
+                ("profile_badges", "TEXT"),
             ):
                 if col not in cols:
                     cursor.execute(f"ALTER TABLE profiles ADD COLUMN {col} {decl}")
@@ -73,6 +76,19 @@ class Database:
                     owner_pubkey TEXT,
                     followed_pubkey TEXT,
                     UNIQUE(owner_pubkey, followed_pubkey)
+                )
+            """)
+
+            # NIP-58 badge definitions (kind 30009), keyed by addressable coordinate
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS badge_definitions (
+                    coordinate TEXT PRIMARY KEY,
+                    pubkey TEXT,
+                    d_tag TEXT,
+                    name TEXT,
+                    image TEXT,
+                    description TEXT,
+                    updated_at INTEGER
                 )
             """)
 
@@ -205,6 +221,151 @@ class Database:
                     "raw_json": row[10],
                 }
             return None
+
+    def save_external_identities(self, pubkey, identities):
+        """Store NIP-39 external identities (list of dicts) as JSON in the
+        dedicated external_identities column. Creates the row if absent."""
+        if not self.conn:
+            return
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute(
+                    "INSERT INTO profiles (pubkey, updated_at) VALUES (?, 0) "
+                    "ON CONFLICT(pubkey) DO NOTHING",
+                    (pubkey,),
+                )
+                cursor.execute(
+                    "UPDATE profiles SET external_identities = ? WHERE pubkey = ?",
+                    (json.dumps(identities), pubkey),
+                )
+                self.conn.commit()
+            except Exception as e:
+                print(f"⚠️ DB External Identities Error: {e}")
+
+    def get_external_identities(self, pubkey):
+        """Return the stored NIP-39 external identities for a pubkey."""
+        if not self.conn:
+            return []
+        with self.lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "SELECT external_identities FROM profiles WHERE pubkey = ?",
+                (pubkey,),
+            )
+            row = cursor.fetchone()
+            if not row or not row[0]:
+                return []
+            try:
+                data = json.loads(row[0])
+                return data if isinstance(data, list) else []
+            except Exception:
+                return []
+
+    def save_profile_badges(self, pubkey, badges):
+        """Store NIP-58 profile badges (list of (a,e) pairs) as JSON in the
+        dedicated profile_badges column. Creates the row if absent."""
+        if not self.conn:
+            return
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute(
+                    "INSERT INTO profiles (pubkey, updated_at) VALUES (?, 0) "
+                    "ON CONFLICT(pubkey) DO NOTHING",
+                    (pubkey,),
+                )
+                cursor.execute(
+                    "UPDATE profiles SET profile_badges = ? WHERE pubkey = ?",
+                    (json.dumps(badges), pubkey),
+                )
+                self.conn.commit()
+            except Exception as e:
+                print(f"⚠️ DB Profile Badges Error: {e}")
+
+    def get_profile_badges(self, pubkey):
+        """Return the stored NIP-58 profile badges for a pubkey."""
+        if not self.conn:
+            return []
+        with self.lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "SELECT profile_badges FROM profiles WHERE pubkey = ?", (pubkey,)
+            )
+            row = cursor.fetchone()
+            if not row or not row[0]:
+                return []
+            try:
+                data = json.loads(row[0])
+                return data if isinstance(data, list) else []
+            except Exception:
+                return []
+
+    def save_badge_definition(self, event):
+        """Store a NIP-58 badge definition (kind 30009) so badge images can be
+        resolved later. Keyed by its addressable coordinate (kind:pubkey:d-tag)."""
+        if not self.conn:
+            return
+        d_tag = ""
+        for t in event.get("tags", []):
+            if len(t) >= 2 and t[0] == "d":
+                d_tag = t[1]
+                break
+        if not d_tag:
+            return
+        coordinate = f"30009:{event['pubkey']}:{d_tag}"
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute(
+                    "INSERT INTO badge_definitions (coordinate, pubkey, d_tag, "
+                    "name, image, description, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(coordinate) DO UPDATE SET "
+                    "name=excluded.name, image=excluded.image, "
+                    "description=excluded.description, updated_at=excluded.updated_at",
+                    (
+                        coordinate,
+                        event["pubkey"],
+                        d_tag,
+                        self._tag_value(event, "name"),
+                        self._tag_value(event, "image"),
+                        self._tag_value(event, "description"),
+                        event["created_at"],
+                    ),
+                )
+                self.conn.commit()
+            except Exception as e:
+                print(f"⚠️ DB Badge Definition Error: {e}")
+
+    def get_badge_definition(self, coordinate):
+        """Return a stored NIP-58 badge definition by coordinate, or None."""
+        if not self.conn:
+            return None
+        with self.lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "SELECT coordinate, pubkey, d_tag, name, image, description "
+                "FROM badge_definitions WHERE coordinate = ?",
+                (coordinate,),
+            )
+            row = cursor.fetchone()
+            if row:
+                return {
+                    "coordinate": row[0],
+                    "pubkey": row[1],
+                    "d_tag": row[2],
+                    "name": row[3],
+                    "image": row[4],
+                    "description": row[5],
+                }
+            return None
+
+    @staticmethod
+    def _tag_value(event, key):
+        for t in event.get("tags", []):
+            if len(t) >= 2 and t[0] == key:
+                return t[1]
+        return ""
 
     def get_event_by_id(self, event_id):
         """Fetch a single event by ID."""

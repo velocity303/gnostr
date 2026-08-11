@@ -103,3 +103,62 @@ def test_migration_adds_columns_to_existing_table(tmp_path, monkeypatch):
     assert prof["name"] == "migrated"
     assert prof["banner"] == "https://b/b.png"
     assert prof["website"] == ""
+
+
+# --- NIP-39 external identities + NIP-58 badges persistence ---
+
+
+def test_external_identities_round_trip(tmp_path, monkeypatch):
+    db = _make_db(tmp_path, monkeypatch)
+    ids = [
+        {"platform": "github", "identity": "semisol", "proof": "gist1",
+         "url": "https://github.com/semisol"}
+    ]
+    db.save_external_identities("pk1", ids)
+    assert db.get_external_identities("pk1") == ids
+
+
+def test_external_identities_missing_returns_empty(tmp_path, monkeypatch):
+    db = _make_db(tmp_path, monkeypatch)
+    assert db.get_external_identities("nobody") == []
+
+
+def test_profile_badges_round_trip(tmp_path, monkeypatch):
+    db = _make_db(tmp_path, monkeypatch)
+    badges = [("30009:issuer1:bravery", "award1")]
+    db.save_profile_badges("pk1", badges)
+    # JSON round-trip: tuples serialize to arrays, so the UI receives lists.
+    got = db.get_profile_badges("pk1")
+    assert got == [["30009:issuer1:bravery", "award1"]]
+
+
+def test_profile_badges_missing_returns_empty(tmp_path, monkeypatch):
+    db = _make_db(tmp_path, monkeypatch)
+    assert db.get_profile_badges("nobody") == []
+
+
+def test_badge_definition_round_trip(tmp_path, monkeypatch):
+    db = _make_db(tmp_path, monkeypatch)
+    event = {
+        "pubkey": "issuer1",
+        "created_at": 100,
+        "kind": 30009,
+        "tags": [
+            ["d", "bravery"],
+            ["name", "Bravery"],
+            ["image", "https://x/badge.png"],
+            ["description", "For brave acts"],
+        ],
+    }
+    db.save_badge_definition(event)
+    coord = "30009:issuer1:bravery"
+    got = db.get_badge_definition(coord)
+    assert got is not None
+    assert got["name"] == "Bravery"
+    assert got["image"] == "https://x/badge.png"
+    assert got["description"] == "For brave acts"
+
+
+def test_badge_definition_missing_returns_none(tmp_path, monkeypatch):
+    db = _make_db(tmp_path, monkeypatch)
+    assert db.get_badge_definition("30009:x:y") is None
