@@ -12,6 +12,7 @@ install_data(
     'dialogs.py',
     'key_manager.py',
     'nostr_utils.py',
+    'profile_nips.py',
     'renderer.py',
     'connection_status.py',
     'window.py',
