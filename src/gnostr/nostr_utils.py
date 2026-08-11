@@ -108,6 +108,19 @@ def nsec_to_hex(nsec):
     return bytes(decoded).hex()
 
 
+def npub_to_hex(npub):
+    """Decode a NIP-19 npub into a 64-char hex pubkey. Returns None if invalid."""
+    if not npub or not npub.startswith("npub"):
+        return None
+    hrp, data = bech32_decode(npub)
+    if hrp != "npub" or data is None:
+        return None
+    decoded = convertbits(data, 5, 8, False)
+    if decoded is None:
+        return None
+    return bytes(decoded).hex()
+
+
 def hex_to_nsec(hex_key):
     if len(hex_key) != 64:
         return None
@@ -322,6 +335,38 @@ def is_nostr_reference(text):
         "nostr:npub",
     )
     return text.startswith(prefixes)
+
+
+def resolve_profile_identifier(text):
+    """Map a pasted Nostr identifier to a 64-char hex pubkey, or None.
+
+    Supports npub, nprofile, nsec (own key), raw 64-char hex, and a `nostr:`
+    URI prefix. nevent/naddr resolve to their author pubkey when present.
+    """
+    if not text:
+        return None
+    s = text.strip()
+    if s.lower().startswith("nostr:"):
+        s = s[6:].strip()
+    if not s:
+        return None
+    if is_valid_hex_key(s):
+        return s
+    if s.startswith("npub"):
+        return npub_to_hex(s)
+    if s.startswith("nprofile"):
+        r = decode_nprofile(s)
+        return r[0] if r else None
+    if s.startswith("nsec"):
+        priv = nsec_to_hex(s)
+        return get_public_key(priv) if priv else None
+    if s.startswith("nevent"):
+        r = decode_nevent_full(s)
+        return r[2] if r and r[2] else None
+    if s.startswith("naddr"):
+        r = decode_naddr(s)
+        return r[1] if r and r[1] else None
+    return None
 
 
 def extract_id_from_nostr_uri(uri):
