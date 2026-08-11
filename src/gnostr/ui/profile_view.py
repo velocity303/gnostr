@@ -2,10 +2,11 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, Adw, Gdk
+from gi.repository import Gtk, Adw, Gdk, GLib
 from .post_widget import PostWidget
 from ..renderer import ContentRenderer, ImageLoader, VideoPlayer
 from ..nostr_utils import hex_to_npub
+from .. import profile_nips
 
 
 class ProfileView(Adw.Bin):
@@ -47,7 +48,6 @@ class ProfileView(Adw.Bin):
         # centered header, so back/refresh align with the app header.
         self.layout.append(back_row)
 
-        # Avatar - supports animated GIFs/videos
         prof = self.main_window.db.get_profile(pubkey)
         name = (
             prof.get("display_name") or prof.get("name") or pubkey[:8]
@@ -55,7 +55,17 @@ class ProfileView(Adw.Bin):
             else pubkey[:8]
         )
 
-        # Use a container that can hold either avatar or video
+        # Banner — wide background image at the top (NIP-24 `banner`, ~1024x768)
+        if prof and prof.get("banner"):
+            self.banner_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            self.banner_container.set_size_request(-1, 160)
+            self.banner_container.set_halign(Gtk.Align.FILL)
+            self.layout.append(self.banner_container)
+            ImageLoader.load_image_into_widget(
+                prof["banner"], self.banner_container, None
+            )
+
+        # Avatar - supports animated GIFs/videos
         self.avatar_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.avatar_container.set_size_request(120, 120)
         self.avatar_container.set_halign(Gtk.Align.CENTER)
@@ -97,6 +107,59 @@ class ProfileView(Adw.Bin):
 
         header.append(npub_box)
 
+        # NIP-05 identity verification (async — never blocks the UI)
+        if prof and prof.get("nip05"):
+            self.nip05_label = Gtk.Label(label="", css_classes=["caption", "dim-label"])
+            self.nip05_label.set_halign(Gtk.Align.CENTER)
+            header.append(self.nip05_label)
+            self._verify_nip05_async(prof["nip05"])
+
+        # Bio / about (NIP-01 `about`)
+        if prof and prof.get("about"):
+            lbl_about = Gtk.Label(
+                label=prof["about"], xalign=0.5, wrap=True, css_classes=["body"]
+            )
+            lbl_about.set_halign(Gtk.Align.CENTER)
+            header.append(lbl_about)
+
+        # Website link (NIP-24 `website`)
+        if prof and prof.get("website"):
+            website = prof["website"]
+            btn_website = Gtk.Button(label=website, css_classes=["flat", "accent"])
+            btn_website.set_halign(Gtk.Align.CENTER)
+            btn_website.connect("clicked", lambda b: self._open_url(website))
+            header.append(btn_website)
+
+        # Lightning address (LUD-16 `lud16`)
+        if prof and prof.get("lud16"):
+            lud16 = prof["lud16"]
+            lud16_row = Gtk.Box(spacing=6, halign=Gtk.Align.CENTER)
+            bolt = Gtk.Image(icon_name="emblem-important-symbolic")
+            lud16_row.append(bolt)
+            lbl_lud16 = Gtk.Label(label=lud16, css_classes=["caption", "dim-label"])
+            lud16_row.append(lbl_lud16)
+            header.append(lud16_row)
+
+        # NIP-39 external identities (GitHub/Twitter/etc.)
+        self.identities_box = Gtk.Box(spacing=8, halign=Gtk.Align.CENTER)
+        header.append(self.identities_box)
+        self._render_external_identities()
+
+        # NIP-58 badges row
+        self.badges_box = Gtk.Box(spacing=8, halign=Gtk.Align.CENTER)
+        header.append(self.badges_box)
+        self._render_badges()
+
+        # Follower/following counts
+        counts_row = Gtk.Box(spacing=16, halign=Gtk.Align.CENTER)
+        following = self.main_window.db.get_following_list(pubkey)
+        lbl_following = Gtk.Label(
+            label=f"Following {len(following)}",
+            css_classes=["caption", "dim-label"],
+        )
+        counts_row.append(lbl_following)
+        header.append(counts_row)
+
         # Follow/Unfollow toggle — hidden on your own profile
         my_pubkey = self.main_window.pub_key
         if my_pubkey and pubkey != my_pubkey:
@@ -135,6 +198,78 @@ class ProfileView(Adw.Bin):
                 is_hero=False,
             )
             self.posts_box.append(w)
+
+        # Fetch missing NIP-39/58 data on open
+        self.main_window.client.fetch_external_identities(pubkey)
+        self.main_window.client.fetch_badges(pubkey)
+
+    def _verify_nip05_async(self, nip05):
+        """Verify a NIP-05 identifier off the UI thread, then update the label."""
+        import threading
+
+        def work():
+            ok = profile_nips.verify_nip05(self.pubkey, nip05)
+            GLib.idle_add(self._set_nip05_result, ok, nip05)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _set_nip05_result(self, ok, nip05):
+        if ok:
+            self.nip05_label.set_label(f"✓ {nip05}")
+            self.nip05_label.set_css_classes(["caption", "success"])
+        else:
+            self.nip05_label.set_label(f"{nip05} (unverified)")
+        return False
+
+    def _render_external_identities(self):
+        """Render NIP-39 external identities as small link buttons."""
+        ids = self.main_window.db.get_external_identities(self.pubkey)
+        for ident in ids:
+            if not isinstance(ident, dict):
+                continue
+            platform = ident.get("platform", "")
+            identity = ident.get("identity", "")
+            url = ident.get("url")
+            label = f"{platform}:{identity}" if identity else platform
+            btn = Gtk.Button(label=label, css_classes=["flat", "caption"])
+            if url:
+                btn.connect("clicked", lambda b, u=url: self._open_url(u))
+            self.identities_box.append(btn)
+
+    def _render_badges(self):
+        """Render NIP-58 profile badges. Resolves kind-30009 definitions for
+        image URLs when cached; otherwise shows a placeholder count."""
+        badges = self.main_window.db.get_profile_badges(self.pubkey)
+        if not badges:
+            return
+        for pair in badges:
+            if not isinstance(pair, list) or len(pair) < 2:
+                continue
+            coord = pair[0]
+            definition = self.main_window.db.get_badge_definition(coord)
+            if definition and definition.get("image"):
+                ImageLoader.load_avatars(
+                    definition["image"],
+                    lambda t, d=definition: self._append_badge_image(t, d),
+                )
+            else:
+                # No cached definition — show a placeholder chip
+                chip = Gtk.Label(label="🏅", css_classes=["caption"])
+                self.badges_box.append(chip)
+
+    def _append_badge_image(self, texture, definition):
+        if texture:
+            img = Gtk.Image.new_from_paintable(texture)
+            img.set_size_request(48, 48)
+            img.set_tooltip_text(definition.get("name", ""))
+            self.badges_box.append(img)
+        return False
+
+    def _open_url(self, url):
+        try:
+            Gtk.show_uri(self.main_window, url, 0)
+        except Exception:
+            pass
 
     def copy_to_clipboard(self, text):
         display = Gdk.Display.get_default()
