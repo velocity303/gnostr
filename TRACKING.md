@@ -226,6 +226,24 @@ This document tracks all bugs, issues, and problems that need fixing.
 
 ---
 
+### 10. Search Feature — Paste Identifier → Profile (IMPLEMENTED 2026-08-11)
+**Status:** ✅ COMPLETE — committed + pushed to Gitea
+
+**Description:** Replaced the "Search coming soon" stub with a SearchDialog that accepts a pasted Nostr identifier (npub, nprofile, nsec, raw hex pubkey, or `nostr:` URI) and opens the matching user's profile. Implemented across 4 commits (`dbe67a8` → `eddaf8a`).
+
+**Implemented:**
+- ✅ **Identifier resolver** — `nostr_utils.resolve_profile_identifier(text)` maps any supported identifier → 64-char hex pubkey (or None): npub (new `npub_to_hex`), nprofile, nsec (own key via `nsec_to_hex` + `get_public_key`), raw hex, `nostr:` prefix; nevent/naddr resolve to author pubkey only when the NIP-19 TLV carries the hint. Commit `dbe67a8`.
+- ✅ **SearchDialog** — `dialogs.SearchDialog` (Adw.Window) with entry + Search button; resolves, calls `show_profile`, closes on success; "Not a valid Nostr identifier" toast on failure. Commit `de98a54`.
+- ✅ **Wiring** — `main.show_search_dialog()` launches `SearchDialog` (was a stub toast). Commit `eddaf8a`.
+- ✅ **Tests** — 9 new tests (`test_search_resolver.py` 8 + `test_search_dialog.py` 1); full suite 83 passed + 1 pre-existing codec failure.
+- ✅ **Flatpak-safe** — no new core modules (resolver in `nostr_utils.py`, dialog in `dialogs.py`), so no `meson.build` install-list change needed.
+- ✅ **DOX pass** — updated `src/gnostr/AGENTS.md` (base64), `tests/AGENTS.md`.
+
+**Deferred (out of scope, YAGNI):**
+- 🔶 **NIP-50 relay text search** — keyword search over relay `search` filter is a separate, larger feature; this is identifier resolution only.
+
+---
+
 ## Feature Implementation: Enhanced Video Playback
 
 ### Status: ✅ COMPLETE - VIDEO PLAYBACK VERIFIED WORKING (2026-07-31)

@@ -16,6 +16,8 @@ Test suite for gnostr — pytest-based with xvfb for GTK rendering. Covers servi
 - `test_following.py` — follow/unfollow DB persistence + `user_reaction` like-toggle query
 - `test_profile_db.py` — profiles table persistence: full NIP-01/NIP-24 field round-trip, deprecated-field handling, schema migration, NIP-39 external identities + NIP-58 badges + badge-definition storage — imports the mocked-GLib Database
 - `test_profile_nips.py` — profile NIP protocol helpers: NIP-05 verification (mocked urllib), NIP-39 external identities, NIP-58 profile badges, LUD-16 resolution — imports real `profile_nips` (GTK-free)
+- `test_search_resolver.py` — search identifier resolver: npub/nprofile/nsec/hex/nostr: → pubkey — imports real `nostr_utils` (GTK-free)
+- `test_search_dialog.py` — SearchDialog construction smoke test (mocked gi)
 - `test_simple.py` — basic import/smoke tests
 
 ## Local Contracts
