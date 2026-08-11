@@ -225,3 +225,57 @@ class EditProfileDialog(Adw.Window):
             self.close()
         else:
             self.add_toast(Adw.Toast(title="No private key loaded — cannot publish"))
+
+
+class SearchDialog(Adw.Window):
+    """Search for a user by pasting an npub/nprofile/nsec/hex/nostr: identifier."""
+
+    def __init__(self, main_window):
+        super().__init__()
+        self.main_window = main_window
+        self.set_transient_for(main_window)
+        self.set_modal(True)
+        self.set_default_size(480, 200)
+        self.set_title("Search User")
+
+        c = Adw.ToolbarView()
+        self.set_content(c)
+        c.add_top_bar(Adw.HeaderBar())
+
+        box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=12,
+            margin_top=12,
+            margin_bottom=12,
+            margin_start=12,
+            margin_end=12,
+        )
+        c.set_content(box)
+
+        lbl = Gtk.Label(
+            label="Paste an npub, nprofile, nsec, raw hex pubkey, or nostr: link",
+            xalign=0,
+            css_classes=["caption", "dim-label"],
+        )
+        box.append(lbl)
+
+        self.entry = Gtk.Entry(placeholder_text="npub1... / nprofile1... / hex")
+        self.entry.set_hexpand(True)
+        self.entry.connect("activate", self.on_search)
+        box.append(self.entry)
+
+        btn = Gtk.Button(label="Search", css_classes=["pill", "suggested-action"])
+        btn.set_halign(Gtk.Align.END)
+        btn.connect("clicked", self.on_search)
+        box.append(btn)
+
+    def on_search(self, *a):
+        from gnostr.nostr_utils import resolve_profile_identifier
+
+        text = self.entry.get_text().strip()
+        pubkey = resolve_profile_identifier(text)
+        if not pubkey:
+            self.add_toast(Adw.Toast(title="Not a valid Nostr identifier"))
+            return
+        self.main_window.show_profile(pubkey)
+        self.close()
