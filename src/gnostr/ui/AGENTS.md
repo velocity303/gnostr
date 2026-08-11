@@ -6,7 +6,7 @@ GTK widget components — all reusable UI elements for displaying Nostr data. Ea
 ## Ownership
 - `feed_view.py` — FeedView: scrollable post list with post_box container
 - `post_widget.py` — PostWidget: individual event card with interactive like/repost/reply buttons (icon + count)
-- `profile_view.py` — ProfileView: user profile display with avatar, name, bio
+- `profile_view.py` — ProfileView: user profile display with avatar, name, bio, banner, website, nip05, lightning, external identities, badges, counts
 - `thread_view.py` — ThreadView: event thread with reply tree
 - `sidebar.py` — Sidebar: navigation menu (global/following/profile/search) + Relay Activity pane
 
@@ -35,7 +35,7 @@ GTK widget components — all reusable UI elements for displaying Nostr data. Ea
 - CSS classes used: `dim-label`, `heading`, `caption`, `caption-heading`, `quote-card`, `profile-card`, `quote-wrapper`, `flat`
 - Posts are kept in time order via `PostWidget.insert_time_sorted` (newest at top) in both feed and thread views — widgets never decide ordering themselves, the insert helper does
 - All labels use `xalign=0` for left alignment, wrap=True for long content
-- ProfileView shows avatar with Adw.Avatar, supports both image and video profile pictures; back/refresh toolbar sits at the top of the layout (upper-left), outside the centered header; on other users' profiles it has a Follow/Unfollow toggle (updates the DB via `set_following` + publishes a kind-3 contact list)
+- ProfileView shows avatar with Adw.Avatar, supports both image and video profile pictures; back/refresh toolbar sits at the top of the layout (upper-left), outside the centered header; on other users' profiles it has a Follow/Unfollow toggle (updates the DB via `set_following` + publishes a kind-3 contact list). It also renders the full NIP-01/NIP-24 metadata: banner background image, about/bio, website link, NIP-05 identity verification (async thread via `profile_nips.verify_nip05`, never blocks the UI), lightning address (lud16), NIP-39 external identities as link buttons, NIP-58 badges (resolves kind-30009 definitions for images), and a following count. On open it kicks off `client.fetch_external_identities` + `client.fetch_badges`. On the user's OWN profile it shows an Edit Profile button (opens `dialogs.EditProfileDialog`) instead of the Follow toggle
 - Do NOT put business logic in widgets — they render data, they don't decide what to show
 
 ## Verification

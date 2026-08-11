@@ -202,6 +202,30 @@ This document tracks all bugs, issues, and problems that need fixing.
 
 ---
 
+### 9. Profile Page Buildout (NIP-05/24/39/57/58) — IMPLEMENTED 2026-08-10
+**Status:** ✅ COMPLETE — all implementable profile-page portions done, committed + pushed to Gitea
+
+**Description:** Fully built out the profile page per the NIPs for identity verification, profile descriptions, banners, lightning addresses, external identities, and badges. Implemented across 6 commits (`8c68b7e` → `32d7f78`).
+
+**Implemented:**
+- ✅ **NIP-01/NIP-24 metadata persistence** — widened `profiles` table with `website`, `banner`, `nip05`, `lud16`, `bot`, `birthday`, `raw_json` columns + ALTER TABLE migration for existing installs; `save_profile` extracts all fields and stores raw kind-0 JSON; deprecated `displayName`/`username` ignored. Commit `8c68b7e`.
+- ✅ **NIP-05 identity verification** — GTK-free `profile_nips.verify_nip05` (DNS check via `/.well-known/nostr.json`, returns False on any failure). Commit `4602e35`.
+- ✅ **NIP-39 external identities** — `parse_external_identities` (kind 10011 i-tags → github/twitter/mastodon/telegram URLs). Commit `4602e35`.
+- ✅ **NIP-58 badges** — `parse_profile_badges` (kind 10008 ordered a/e pairs) + `badge_definitions` table (kind 30009, keyed by coordinate). Commit `4602e35`.
+- ✅ **LUD-16 lightning address** — `resolve_lnurl_endpoint` (user@domain → lnurlp URL). Commit `4602e35`.
+- ✅ **Client wiring** — `_handle_event` handles kinds 10011/10008/30009 (parse + persist + emit signals); `publish_profile` kind-0 publish path; `fetch_external_identities`/`fetch_badges` TTL-cached fetches. Commit `953b851`.
+- ✅ **ProfileView rebuild** — renders banner, bio, website, verified nip05 (async), lightning address, external identities, badges, following count; kicks off NIP-39/58 fetches on open. Commit `6178235`.
+- ✅ **Edit Profile dialog** — `EditProfileDialog` (Adw.Window + PreferencesPage) with all metadata fields; publishes kind-0 via `publish_profile`; Edit button on own profile. Commit `32d7f78`.
+- ✅ **Tests** — 26 new tests (`test_profile_db.py` + `test_profile_nips.py`); full suite 72 passed + 1 pre-existing codec failure.
+- ✅ **DOX pass** — updated `src/gnostr/AGENTS.md` (base64), `src/gnostr/ui/AGENTS.md`, `tests/AGENTS.md`.
+
+**Deferred (needs external integration, not implementable in-app):**
+- 🔶 **Zap sending (NIP-57)** — `lud16` renders the address; actual zap-send needs a Lightning wallet integration decision.
+- 🔶 **Global follower count** — not in local DB; needs a relay-side kind-3 query (local "following" count shown instead).
+- 🔶 **Badge image fetch-on-demand** — badges render from cached kind-30009 definitions; missing definitions show a placeholder chip until fetched.
+
+---
+
 ## Feature Implementation: Enhanced Video Playback
 
 ### Status: ✅ COMPLETE - VIDEO PLAYBACK VERIFIED WORKING (2026-07-31)
