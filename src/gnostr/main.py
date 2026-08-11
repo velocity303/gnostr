@@ -239,7 +239,9 @@ class MainWindow(Adw.ApplicationWindow):
         self.client.fetch_thread(event_id)
 
     def show_search_dialog(self):
-        self.add_toast(Adw.Toast(title="Search coming soon"))
+        from gnostr.dialogs import SearchDialog
+
+        SearchDialog(self).present()
 
     def on_event_received(self, client, eid, pubkey, content, tags_json):
         import json
