@@ -4,6 +4,12 @@ Gnostr - A native Linux Nostr client.
 
 __version__ = "0.1.0"
 
+# Import profile_nips FIRST — it's stdlib-only (no package deps), so importing
+# it before client/dialogs/etc. avoids the partial-initialization window where
+# `client.py`'s module-level `import gnostr` would otherwise see a `gnostr`
+# package that doesn't yet have `profile_nips` as an attribute.
+from . import profile_nips
+
 # Import submodules to make them available as package attributes
 # This ensures that `from gnostr.gateway import gateway` works
 from . import client
@@ -14,7 +20,6 @@ from . import gateway
 from . import key_manager
 from . import main
 from . import nostr_utils
-from . import profile_nips
 from . import renderer
 from . import window
 
