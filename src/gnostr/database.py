@@ -42,9 +42,31 @@ class Database:
                     display_name TEXT,
                     about TEXT,
                     picture TEXT,
+                    website TEXT,
+                    banner TEXT,
+                    nip05 TEXT,
+                    lud16 TEXT,
+                    bot INTEGER,
+                    birthday TEXT,
+                    raw_json TEXT,
                     updated_at INTEGER
                 )
             """)
+
+            # Migrate pre-existing profiles tables (CREATE IF NOT EXISTS won't
+            # add columns to an existing table). NIP-01/NIP-24 metadata fields.
+            cols = {r[1] for r in cursor.execute("PRAGMA table_info(profiles)")}
+            for col, decl in (
+                ("website", "TEXT"),
+                ("banner", "TEXT"),
+                ("nip05", "TEXT"),
+                ("lud16", "TEXT"),
+                ("bot", "INTEGER"),
+                ("birthday", "TEXT"),
+                ("raw_json", "TEXT"),
+            ):
+                if col not in cols:
+                    cursor.execute(f"ALTER TABLE profiles ADD COLUMN {col} {decl}")
 
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS following (
@@ -108,22 +130,50 @@ class Database:
             display_name = data.get("display_name", "")
             about = data.get("about", "")
             picture = data.get("picture", "")
+            website = data.get("website", "")
+            banner = data.get("banner", "")
+            nip05 = data.get("nip05", "")
+            lud16 = data.get("lud16", "")
+            bot = 1 if data.get("bot") else 0
+            birthday = json.dumps(data["birthday"]) if isinstance(data.get("birthday"), dict) else ""
 
             with self.lock:
                 cursor = self.conn.cursor()
                 cursor.execute(
                     """
-                    INSERT INTO profiles (pubkey, name, display_name, about, picture, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO profiles (pubkey, name, display_name, about, picture,
+                        website, banner, nip05, lud16, bot, birthday, raw_json, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(pubkey) DO UPDATE SET
                         name=excluded.name,
                         display_name=excluded.display_name,
                         about=excluded.about,
                         picture=excluded.picture,
+                        website=excluded.website,
+                        banner=excluded.banner,
+                        nip05=excluded.nip05,
+                        lud16=excluded.lud16,
+                        bot=excluded.bot,
+                        birthday=excluded.birthday,
+                        raw_json=excluded.raw_json,
                         updated_at=excluded.updated_at
                     WHERE excluded.updated_at > profiles.updated_at
                 """,
-                    (pubkey, name, display_name, about, picture, created_at),
+                    (
+                        pubkey,
+                        name,
+                        display_name,
+                        about,
+                        picture,
+                        website,
+                        banner,
+                        nip05,
+                        lud16,
+                        bot,
+                        birthday,
+                        content_json,
+                        created_at,
+                    ),
                 )
                 self.conn.commit()
         except Exception as e:
@@ -135,7 +185,8 @@ class Database:
         with self.lock:
             cursor = self.conn.cursor()
             cursor.execute(
-                "SELECT name, display_name, about, picture FROM profiles WHERE pubkey = ?",
+                "SELECT name, display_name, about, picture, website, banner, "
+                "nip05, lud16, bot, birthday, raw_json FROM profiles WHERE pubkey = ?",
                 (pubkey,),
             )
             row = cursor.fetchone()
@@ -145,6 +196,13 @@ class Database:
                     "display_name": row[1],
                     "about": row[2],
                     "picture": row[3],
+                    "website": row[4],
+                    "banner": row[5],
+                    "nip05": row[6],
+                    "lud16": row[7],
+                    "bot": row[8],
+                    "birthday": row[9],
+                    "raw_json": row[10],
                 }
             return None
 
