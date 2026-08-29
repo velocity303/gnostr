@@ -164,6 +164,13 @@ class MainWindow(Adw.ApplicationWindow):
                 self.show_profile(self.pub_key)
         elif r_id == "search":
             self.show_search_dialog()
+        elif r_id == "follow_sync":
+            if not self.client.sync_followers():
+                self.add_toast(Adw.Toast(title="Follow Sync: not logged in"))
+            else:
+                self.add_toast(
+                    Adw.Toast(title="Follow Sync published — watch Relay Activity")
+                )
         self.split_view.set_show_content(True)
 
     def on_login_clicked(self, btn):
@@ -310,6 +317,11 @@ class MainWindow(Adw.ApplicationWindow):
         if status == "CONNECTED" and not self._feed_live:
             self._feed_live = True
             GLib.idle_add(lambda: self.switch_feed(self.active_feed_type))
+            # Pull reconciliation: ask relays for our newest kind-3 so the DB
+            # following table matches what the relays actually have (follows
+            # that only hit the DB locally get corrected here).
+            if self.pub_key:
+                GLib.idle_add(self.client.fetch_contacts)
 
     def on_contacts_updated(self, client):
         pass

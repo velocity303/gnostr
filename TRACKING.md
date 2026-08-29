@@ -25,21 +25,18 @@ This document tracks all bugs, issues, and problems that need fixing.
 
 ---
 
-### 2. Follower Sync: DB ↔ Relays (NEW FEATURE)
-**Status:** Pending — design documented, not yet implemented
+### 2. Follower Sync: DB ↔ Relays — IMPLEMENTED 2026-08-29
+**Status:** ✅ COMPLETE — pull + push implemented, 4 tests, DOX pass
 
-**Description:** The user suspects recent follows only hit the local DB and never reached relays. The kind-3 contact-list publish is registered in `pending_publishes` (Follow/Unfollow label) and its OK ack appears in the Relay Activity pane, but there is no explicit reconciliation between the DB `following` table and the relays' view of your contact list.
+**Description:** The user suspected recent follows only hit the local DB and never reached relays. Both reconciliation directions now implemented.
 
-**Design:**
-- **Pull (relay → DB):** `fetch_contacts()` already subscribes for kind-3 events authored by `my_pubkey` (`sub_contacts`, limit 1). When a kind-3 event arrives, parse its `p`-tags and reconcile the DB `following` table — add any followed pubkeys present in the relay event but missing locally, and (optionally) remove local follows absent from the relay event. This makes the DB match what relays actually have.
-- **Push (DB → relay):** `_publish_contact_list(following, label)` already publishes the full kind-3 contact list on every follow/unfollow. Add a manual "Sync Followers" action that re-publishes the current DB `following` list to all relays (idempotent — relays replace the contact list on kind-3), so a stale relay copy is corrected.
-- **Verification:** the OK ack for the kind-3 publish appears in the Relay Activity pane as `Follow OK <relay>` — confirming the sync reached relays, not just the DB.
+**Implemented:**
+- ✅ **Pull (relay → DB):** on first relay CONNECTED, `main.on_status_changed` triggers `client.fetch_contacts` (kind-3, own pubkey, limit 1); `_handle_event`'s kind-3 branch reconciles the DB `following` table wholesale (`save_contacts` replaces rows) and logs `kind-3 received: N follows reconciled` to the Relay Activity pane.
+- ✅ **Push (DB → relay):** new `client.sync_followers()` re-publishes the current DB following list via `_publish_contact_list(label="Follow Sync")` — tracked in `pending_publishes`, so the OK ack lands in the Relay Activity pane as `Follow Sync OK <relay>`. Sidebar gets a `Follow Sync` nav row wired through `main.on_menu_selected`.
+- ✅ **Dedup:** `publish_contacts()` was a duplicate untracked kind-3 builder; now delegates to `_publish_contact_list` (acks tracked for that path too).
+- ✅ **Tests:** `tests/test_follow_sync.py` — 4 tests: pull reconciles from relay p-tags, pull ignores other authors' kind-3, push publishes DB list + tracks ack + logs, push requires keys. Full suite 92 passed.
 
-**Tasks (each a commit):**
-1. `fetch_contacts` → on kind-3 arrival, reconcile DB `following` from the event's `p`-tags (add missing; optionally prune absent).
-2. Add a "Sync Followers" action (sidebar or profile) that re-publishes the DB `following` list via `_publish_contact_list`.
-3. Wire the sync result into the Relay Activity pane + toast.
-4. DOX pass + tests (`test_follow_sync.py` — mock kind-3 event, assert DB reconcile).
+**Deferred:** automatic periodic sync (manual + startup only); relay-hint-targeted kind-3 fetch.
 
 ---
 
@@ -303,6 +300,11 @@ Successfully implemented enhanced video playback controls with the following fea
 ---
 
 ## Progress Log
+
+### 2026-08-29 (follower sync workstream)
+- ✅ **Pull:** first-relay-CONNECTED now triggers `fetch_contacts` (kind-3 own-pubkey, limit 1); `_handle_event` kind-3 branch logs the reconciliation count to the Relay Activity pane.
+- ✅ **Push:** `client.sync_followers()` + sidebar `Follow Sync` row; publishes the DB list as kind-3 tracked for OK acks (`Follow Sync OK <relay>` in the pane). `publish_contacts()` deduped into `_publish_contact_list`.
+- ✅ **Tests:** `test_follow_sync.py` 4 tests (ast-extraction pattern — NostrClient subclasses mocked GObject so the class isn't importable; real methods are extracted from source and bound to a FakeClient). Suite 92 passed.
 
 ### 2026-08-29 (hygiene + guard pass)
 - ✅ **Chronic red test fixed.** `test_codec_support.py::test_load_and_play_success` (the "pre-existing failure" across 4 workstreams) asserted the pre-lazy-load contract (`set_state(PLAYING)` at build). Replaced with two tests against the current contract: build leaves the pipeline PAUSED (lazy start), `autoplay=True` reaches PLAYING. Added an autouse fixture resetting the shared conftest gi mocks + the class-level `VideoPlayer._cache` between tests — call counts were accumulating across tests, making `assert_called_once` order-dependent. Commit `b113e06`.

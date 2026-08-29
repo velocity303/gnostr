@@ -31,6 +31,7 @@ class Sidebar(Gtk.Box):
             ("global", "Global", "network-server"),
             ("profile", "Profile", "avatar-default"),
             ("search", "Search User", "system-search"),
+            ("follow_sync", "Follow Sync", "network-transmit-receive"),
         ]
 
         for r_id, title, icon in items:

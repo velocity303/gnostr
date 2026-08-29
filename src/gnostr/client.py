@@ -448,19 +448,23 @@ class NostrClient(GObject.Object):
         """Publish the current follow list as a kind-3 contact-list event."""
         if not self.my_privkey or not self.my_pubkey:
             return False
-        followed = self.db.get_following_list(self.my_pubkey)
-        event = {
-            "pubkey": self.my_pubkey,
-            "created_at": int(time.time()),
-            "kind": 3,
-            "tags": [["p", pk] for pk in followed],
-            "content": "",
-        }
-        signed = gnostr.nostr_utils.sign_event(event, self.my_privkey)
-        if signed:
-            self.publish(signed)
-            return True
-        return False
+        following = self.db.get_following_list(self.my_pubkey)
+        self._publish_contact_list(following, label="Contacts")
+        return True
+
+    def sync_followers(self):
+        """Manual 'Sync Followers' push: re-publish the DB following list to all
+        relays (kind-3 is replaceable — relays swap the contact list wholesale),
+        tracked for OK acks so the Relay Activity pane confirms the sync landed.
+        Pairs with the startup pull (fetch_contacts → kind-3 → save_contacts)
+        that reconciles the DB from the relays' newest view."""
+        if not self.my_privkey or not self.my_pubkey:
+            self._log_relay("follow-sync skipped: no keys")
+            return False
+        following = self.db.get_following_list(self.my_pubkey)
+        self._log_relay(f"follow-sync: pushing {len(following)} follows")
+        self._publish_contact_list(following, label="Follow Sync")
+        return True
 
     def publish_profile(self, metadata):
         """Publish a kind-0 user-metadata event (NIP-01/NIP-24).
@@ -615,8 +619,12 @@ class NostrClient(GObject.Object):
 
         elif kind == 3:
             if pubkey == self.my_pubkey:
+                # PULL reconciliation: the newest kind-3 from the relays is the
+                # authoritative contact list — save_contacts replaces the DB
+                # rows wholesale, so the DB ends up matching what relays have.
                 c = gnostr.nostr_utils.extract_followed_pubkeys(ev)
                 self.db.save_contacts(self.my_pubkey, c)
+                self._log_relay(f"kind-3 received: {len(c)} follows reconciled")
                 GLib.idle_add(self.emit, "contacts-updated")
                 try:
                     if ev["content"]:
