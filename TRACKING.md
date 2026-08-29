@@ -63,7 +63,7 @@ This document tracks all bugs, issues, and problems that need fixing.
 ---
 
 ### 4. Test Import Fix (CRITICAL)
-**Status:** In Progress - Fixing conftest.py
+**Status:** ✅ RESOLVED (2026-07-12, verified 2026-08-29) — full suite imports and runs headless (88 passed) with gi mocked in `conftest.py`.
 
 **Description:** The test environment fails because it cannot import the `gi` module required by `renderer.py`. All tests fail with `ModuleNotFoundError: No module named 'gi'`.
 
@@ -146,8 +146,8 @@ This document tracks all bugs, issues, and problems that need fixing.
 
 ---
 
-### 5. Package Structure Fix
-**Status:** Pending
+### 6. Package Structure Fix
+**Status:** ✅ RESOLVED (2026-08-29 review) — `src/gnostr/__init__.py` exists and the package imports cleanly; `tests/test_package_import.py` guards it. The original `from src.renderer import` pattern is gone; tests import `gnostr.*` with `src/` on sys.path via `conftest.py`.
 
 **Description:** The `src` directory is not a proper Python package (missing `__init__.py` or incorrect structure).
 
@@ -161,48 +161,18 @@ This document tracks all bugs, issues, and problems that need fixing.
 
 ---
 
-### 6. GTK4 API Compatibility
-**Status:** Pending
+### 7. GTK4 API Compatibility
+**Status:** ✅ RESOLVED (2026-08-29 review) — tests use GTK4-correct patterns throughout (`get_children()` as method returning a list); no GTK3-era calls remain in the suite.
 
-**Description:** Tests expect GTK4 API but might be using GTK3 patterns.
+### 8. GStreamer Pipeline Issues
+**Status:** ✅ OBSOLETE (2026-08-29 review) — the appsink/`uridecodebin` path was removed entirely (gtk4paintablesink migration, 2026-07-31). Tests mock Gst; CI no longer needs plugin availability for this.
 
-**Root Cause:**
-- `Box.get_children()` in GTK4 returns a list directly (not a method call)
-- Tests incorrectly call `box.get_children()` as a method
-
-**Fix:**
-- Update test expectations to match GTK4 API
-- Use `box.get_children()` as property, not method call
+### 9. Pytest Fixture Scope Mismatch
+**Status:** ✅ RESOLVED (2026-07-12) — fixed in the test-import pass; verified still function-scoped in `conftest.py`.
 
 ---
 
-### 7. GStreamer Pipeline Issues
-**Status:** Pending
-
-**Description:** `uridecodebin` element may not be available in CI environment.
-
-**Root Cause:**
-- GStreamer plugins missing or version mismatch
-- Tests mock Gst but pipeline creation fails
-
-**Fix:**
-- Ensure CI installs required GStreamer plugins (`gstreamer1.0-plugins-good`, `gstreamer1.0-plugins-bad`)
-- Add fallback for missing elements
-
----
-
-### 8. Pytest Fixture Scope Mismatch
-**Status:** In Progress
-
-**Description:** `mock_renderer_modules` fixture defined with `scope="module"` but uses `monkeypatch` which is function-scoped.
-
-**Fix:**
-- Change fixture scope to `function`
-- OR remove `monkeypatch` dependency
-
----
-
-### 9. Profile Page Buildout (NIP-05/24/39/57/58) — IMPLEMENTED 2026-08-10
+### 10. Profile Page Buildout (NIP-05/24/39/57/58) — IMPLEMENTED 2026-08-10
 **Status:** ✅ COMPLETE — all implementable profile-page portions done, committed + pushed to Gitea
 
 **Description:** Fully built out the profile page per the NIPs for identity verification, profile descriptions, banners, lightning addresses, external identities, and badges. Implemented across 6 commits (`8c68b7e` → `32d7f78`).
@@ -226,7 +196,7 @@ This document tracks all bugs, issues, and problems that need fixing.
 
 ---
 
-### 10. Search Feature — Paste Identifier → Profile (IMPLEMENTED 2026-08-11)
+### 11. Search Feature — Paste Identifier → Profile (IMPLEMENTED 2026-08-11)
 **Status:** ✅ COMPLETE — committed + pushed to Gitea
 
 **Description:** Replaced the "Search coming soon" stub with a SearchDialog that accepts a pasted Nostr identifier (npub, nprofile, nsec, raw hex pubkey, or `nostr:` URI) and opens the matching user's profile. Implemented across 4 commits (`dbe67a8` → `eddaf8a`).
@@ -322,17 +292,26 @@ Successfully implemented enhanced video playback controls with the following fea
 ### Network/SSH - Remote repository access via SSH (192.168.5.134:222) is intermittent
 
 ### Code Quality
-- [ ] Several flake8 errors in existing code (E722, F841, F541, E501)
+- [x] flake8 errors zeroed out (2026-08-29, commit `0fa6468`) — tree is flake8-clean at max-line-length=120
 - [ ] No comprehensive test coverage for UI components
 - [ ] No type hints in most files
 
 ### Documentation
-- [ ] README lacks detailed build/run instructions
-- [ ] No contribution guidelines
+- [x] README build/run instructions current (2026-08-29) — read-only claim and uridecodebin prereq corrected
+- [x] CONTRIBUTING.md added (2026-08-29) — build, conventions, meson install contract, DOX
 
 ---
 
 ## Progress Log
+
+### 2026-08-29 (hygiene + guard pass)
+- ✅ **Chronic red test fixed.** `test_codec_support.py::test_load_and_play_success` (the "pre-existing failure" across 4 workstreams) asserted the pre-lazy-load contract (`set_state(PLAYING)` at build). Replaced with two tests against the current contract: build leaves the pipeline PAUSED (lazy start), `autoplay=True` reaches PLAYING. Added an autouse fixture resetting the shared conftest gi mocks + the class-level `VideoPlayer._cache` between tests — call counts were accumulating across tests, making `assert_called_once` order-dependent. Commit `b113e06`.
+- ✅ **flake8 zeroed: 14 → 0** (E741 x3, F841 x4, F541 x3, E501 x3, F811 x1). Notable: `post_widget.mk_met` named its label `l` and returned it — renamed to `lbl` consistently (`return lbl, btn`); main.py's shadowing local `LoginDialog` import dropped. Commit `0fa6468`.
+- ✅ **Meson install-list contract guard** — `tests/test_meson_install_contract.py` parses every `meson.build` under `src/`: every `src/gnostr/*.py` in the root `install_data`, every sub-package `.py` in its own, every `.py`-bearing subdir declared via `subdir()`. Regression class fix for `c4f182d` (profile_nips missing → Flatpak-only import crash). Verified green + red on planted probes. Commit `e086e31`.
+- ✅ **Black debt cleared** — tree fully black-clean (was 3 files); CI's advisory `black --check || true` can now only go red on new breakage. Commits `713e9fb`, `f95d97e`.
+- ✅ **README corrected + CONTRIBUTING.md** — removed false "read-only" claim, `uridecodebin` → `playbin3` prereq, added feature summary and contribution guidelines. Commit `70498fb`.
+- ✅ **TRACKING.md hygiene** — resolved stale Pending sections (#4 test imports, #6 package structure, #7 GTK4 API, #8 GStreamer plugins, #9 fixture scope — all closed 2026-07); fixed duplicate `### 5` numbering; closed the code-quality/documentation checkboxes above.
+- Suite: **88 passed, 0 failed**; flake8 clean; black clean.
 
 ### 2026-07-11
 - Cloned repository successfully
@@ -512,4 +491,5 @@ flake8 src/ tests/ --max-line-length=120
 1. ✅ Performance optimization: downscale 4K frames to 1280px before texture conversion (done 2026-07-31)
 2. ✅ Suppress GStreamer CRITICAL stderr noise: use `==` type checks instead of bitwise `&` (done 2026-07-31)
 3. ✅ Gate debug 🎬 logging behind `_DEBUG_VIDEO` flag (done 2026-07-31)
-4. 🔶 Add unit tests for VideoPlayer controls
+4. ✅ Add unit tests for VideoPlayer lazy-start/autoplay contract (2026-08-29, `b113e06`)
+5. 🔶 Feed pruning design: `Clamp(maximum_size=600)` + `window.event_widgets` never evict (biggest remaining leak); `switch_feed` wipe-and-resubscribe → merge-only refresh
