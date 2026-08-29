@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 def main():
-    repo_path = os.environ.get("REPO_PATH", "VelocityNet/gnostr")
+    repo_path = os.environ.get("REPO_PATH", "")
     branch = os.environ.get("BRANCH", "main")
     commit_sha = os.environ.get("COMMIT_SHA", "unknown")
 

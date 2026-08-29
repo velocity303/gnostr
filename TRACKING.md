@@ -286,7 +286,7 @@ Successfully implemented enhanced video playback controls with the following fea
 
 ## Issue Encountered
 
-### Network/SSH - Remote repository access via SSH (192.168.5.134:222) is intermittent
+### Network/SSH - Remote repository access via SSH to the self-hosted Gitea is intermittent
 
 ### Code Quality
 - [x] flake8 errors zeroed out (2026-08-29, commit `0fa6468`) — tree is flake8-clean at max-line-length=120

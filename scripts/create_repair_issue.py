@@ -21,10 +21,10 @@ def create_repair_issue(repo_path, branch, commit_sha, test_report):
 
     # Read Gitea credentials from environment
     gitea_token = os.environ.get("GITEA_TOKEN")
-    gitea_host = os.environ.get("GITEA_HOST", "192.168.5.134:2222")
+    gitea_host = os.environ.get("GITEA_HOST")
 
-    if not gitea_token:
-        print("GITEA_TOKEN not set")
+    if not gitea_token or not gitea_host:
+        print("GITEA_TOKEN/GITEA_HOST not set")
         return False
 
     # Construct issue content
