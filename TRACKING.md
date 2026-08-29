@@ -4,6 +4,34 @@ This document tracks all bugs, issues, and problems that need fixing.
 
 ## Current Workstream
 
+### 0. Feed Pruning: Sliding Window + Cursor Pagination (NEW FEATURE — designed 2026-08-29)
+**Status:** Design agreed, not yet implemented
+
+**Goal (user-defined UX):** a bounded window of the newest posts; scrolling to the end pulls older posts from the DB; scrolled-past posts drop off the top and are re-pulled from the DB on scroll-up; the refresh button jumps to top and pulls in new posts. Fixes the two 🔶 leaks from 2026-07-31: unbounded `event_widgets`/posts_box retention and `switch_feed` wipe-and-resubscribe.
+
+**Architecture decision (recorded): Option A — bounded Gtk.Box window with vadjustment-driven eviction — NOT Option B (Gtk.ListView).**
+- Rationale: PostWidget is a stateful, variable-height, async ad-wrapped composite (image loads, quote-card registries, video handles, gestures). ListView's row recycling re-binds widgets to new events — every in-flight async callback becomes a wrong-content bug — and its performance advantage only exists for uniform-height rows. Feed scale (window ~30, hard cap ~50 widgets) is trivially handled by A. PostWidget is also used by thread_view (5 shapes) and profile_view; B would fork it into two maintenance tracks.
+- B stays *possible* later: keep the data layer widget-agnostic. Introduce a `FeedModel` (ordered event-id list + created_at cursor state + DB pagination) that knows nothing about widgets; the widget window is just one renderer of it.
+- C (VirtualListView) ruled out by user — uniform-height only.
+
+**Contracts:**
+1. **Anchor stability:** after any eviction/refetch/prepend, restore scroll so the topmost-visible post's event id stays in place (anchor event id + pixel offset captured before mutation, restored after).
+2. **Cursor pagination:** `get_feed_following(owner, before_created_at, before_id, limit)` — `WHERE created_at < ? ORDER BY created_at DESC LIMIT ?` on the existing `idx_events_feed`; never OFFSET (degrades + double-serves rows when new events arrive mid-scroll).
+3. **Widget state from data, never from the widget:** recreation must re-resolve like-state (`db.user_reaction`) and metrics labels (`client.metrics`) — the dropped widget must not be the only holder of any state.
+4. **Live prepend policy:** while scroll offset > top, incoming live events do NOT prepend — buffer them and show a "N new posts" pill; tapping the pill (or refresh) jumps to top and applies them. Refresh button = jump-to-top + fetch new since last-seen.
+5. **End-of-DB sentinel:** when a page returns < limit, mark exhausted; stop re-querying the bottom until a refresh resets it. Loading affordance on pull-up.
+6. **Window sizes:** render ~30 rows, hard cap ~50 widgets (evict beyond cap from whichever end is away from the viewport). `event_widgets` entries evicted with their widgets; anything needing later lookup re-resolves from the DB (contract 3).
+
+**Tasks (each a commit):**
+1. `database.get_feed_following` cursor-pagination variant + tests (in-memory SQLite, assert no OFFSET, assert index usage via EXPLAIN QUERY PLAN).
+2. `FeedModel` in `src/gnostr/service/` — event-id window, cursor state, load_older()/reset(), no GTK imports; unit tests.
+3. FeedView scroll plumbing: expose vadjustment, near-bottom + near-top signals, anchor capture/restore helpers.
+4. Eviction + re-pull: wire FeedModel to posts_box (prepend/append widgets, evict far-end beyond cap), end-of-DB sentinel + loading row.
+5. Live-prepend policy + "N new posts" pill + refresh semantics (jump-to-top, fetch new since last-seen).
+6. `switch_feed` uses FeedModel (no more wipe-and-resubscribe on refresh); DOX pass (ui/AGENTS.md, service/AGENTS.md, root AGENTS.md child index if a new module ships — remember the meson install-list guard).
+
+---
+
 ### 1. Like Button + Relay Feedback (RESOLVED 2026-08-08)
 **Status:** ✅ COMPLETE — verified working on-device
 
