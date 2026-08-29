@@ -170,7 +170,6 @@ def extract_followed_pubkeys(event_json):
 
 def get_thread_root(tags):
     """Finds the root event ID from tags based on NIP-10."""
-    root_id = None
     first_e = None
 
     for t in tags:
@@ -213,7 +212,6 @@ def tagged_hash(tag, data):
 def schnorr_sign_with_key(msg_bytes, sk):
     curve = sk.curve
     n = curve.order
-    p = curve.curve.p()
     G_point = curve.generator
     d0 = sk.privkey.secret_multiplier
 

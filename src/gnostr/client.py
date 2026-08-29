@@ -68,7 +68,7 @@ class NostrRelay(GObject.Object):
                         self.snapshot_ids.remove(sub_id)
                 elif d[0] == "NOTICE":
                     print(f"NOTICE [{self.url}]: {d[1]}")
-            except Exception as e:
+            except Exception:
                 print(f"❌ ERROR [{self.url}] Message Handler Failed:")
                 print(f"   Msg: {m[:100]}...")
                 traceback.print_exc()

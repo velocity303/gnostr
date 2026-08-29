@@ -135,17 +135,21 @@ class TestVideoPlayer:
 
         # Set to PAUSED (preroll), never PLAYING — lazy start
         paused_calls = [
-            c for c in mock_pipeline.set_state.call_args_list
+            c
+            for c in mock_pipeline.set_state.call_args_list
             if c[0][0] == mock_gst.State.PAUSED
         ]
         playing_calls = [
-            c for c in mock_pipeline.set_state.call_args_list
+            c
+            for c in mock_pipeline.set_state.call_args_list
             if c[0][0] == mock_gst.State.PLAYING
         ]
         assert paused_calls, "pipeline should be set to PAUSED on build"
         assert not playing_calls, "lazy-load must not start playback"
 
-    def test_load_and_play_autoplay_starts_playing(self, mock_container, mock_renderer_modules):
+    def test_load_and_play_autoplay_starts_playing(
+        self, mock_container, mock_renderer_modules
+    ):
         """autoplay=True (GIFs, profile avatars) must reach PLAYING immediately."""
         from gnostr.renderer import VideoPlayer
 
@@ -168,7 +172,8 @@ class TestVideoPlayer:
 
         mock_gst.parse_launch.assert_called_once()
         playing_calls = [
-            c for c in mock_pipeline.set_state.call_args_list
+            c
+            for c in mock_pipeline.set_state.call_args_list
             if c[0][0] == mock_gst.State.PLAYING
         ]
         assert playing_calls, "autoplay=True must set the pipeline to PLAYING"

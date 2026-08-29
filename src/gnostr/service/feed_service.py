@@ -41,7 +41,8 @@ class FeedService:
 
         # Cache Miss: Must hit the repository (simulating a high-cost network op)
         print(
-            f"CACHE MISS: Querying database/relay for global feed chunk. Potential rate-limit zone."
+            "CACHE MISS: Querying database/relay for global feed chunk. "
+            "Potential rate-limit zone."
         )
 
         # Use the dedicated repository to fetch the paginated chunk
@@ -80,7 +81,8 @@ class FeedService:
         is gated by the new Gateway/Cache abstraction layer.
         """
         print(f"Service Log: Processing incoming raw event from {sender}...")
-        # ... (Rest of the original core logic remains, but should now rely entirely on gateway-managed data access methods)
+        # ... (Rest of the original core logic remains, but should now rely
+        # entirely on gateway-managed data access methods)
         if raw_event.get("kind") not in [1, 2]:
             return []
 
@@ -89,7 +91,8 @@ class FeedService:
             # ... (validation logic)
             updates.append({"type": "NEW_POST", "data": raw_event})
 
-        # The repository call here MUST ONLY access data that has been pre-validated and retrieved via the cache/gateway flow.
+        # The repository call here MUST ONLY access data that has been
+        # pre-validated and retrieved via the cache/gateway flow.
         return updates
 
     def process_status_update(self, sender: Any, status_event: Dict):

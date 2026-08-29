@@ -39,7 +39,7 @@ class RelayPreferencesWindow(Adw.PreferencesWindow):
 
     def on_import(self, b):
         self.client.fetch_user_relays()
-        self.add_toast(Adw.Toast(title=f"Requesting Relay List..."))
+        self.add_toast(Adw.Toast(title="Requesting Relay List..."))
 
     def on_add(self, b):
         u = self.entry.get_text().strip()

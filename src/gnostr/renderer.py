@@ -356,7 +356,7 @@ class ContentRenderer:
         lbl.set_max_width_chars(60)
         lbl.connect(
             "activate-link",
-            lambda l, url: ContentRenderer._on_mention_link(url, window_ref),
+            lambda _lbl, url: ContentRenderer._on_mention_link(url, window_ref),
         )
         return lbl
 
@@ -510,7 +510,7 @@ class ContentRenderer:
         if event:
             ContentRenderer._build_quote_content(quote_box, event, window)
         else:
-            lbl = Gtk.Label(label=f"Loading Quoted Event...", css_classes=["dim-label"])
+            lbl = Gtk.Label(label="Loading Quoted Event...", css_classes=["dim-label"])
             quote_box.append(lbl)
             window.client.request_once(f"quote_{match_val[:8]}", fetch_filter)
 
@@ -617,12 +617,12 @@ class ContentRenderer:
                     if i + 2 > len(raw_bytes):
                         break
                     t = raw_bytes[i]
-                    l = raw_bytes[i + 1]
-                    if i + 2 + l > len(raw_bytes):
+                    tlv_len = raw_bytes[i + 1]
+                    if i + 2 + tlv_len > len(raw_bytes):
                         break
-                    if t == 0 and l == 32:
-                        return raw_bytes[i + 2 : i + 2 + l].hex()
-                    i += 2 + l
+                    if t == 0 and tlv_len == 32:
+                        return raw_bytes[i + 2 : i + 2 + tlv_len].hex()
+                    i += 2 + tlv_len
         except Exception:
             pass
         return None

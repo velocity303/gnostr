@@ -73,9 +73,7 @@ def test_expired_cache_forces_refetch(feed_service, mock_event_repo, cache_manag
     mock_event_repo.find_paginated_events.return_value = []
 
     with patch("gnostr.service.feed_service.CACHE", cache_manager):
-        result = feed_service.get_paginated_global_feed(
-            current_cursor="initial", page_size=20
-        )
+        feed_service.get_paginated_global_feed(current_cursor="initial", page_size=20)
 
     mock_event_repo.find_paginated_events.assert_called()
 

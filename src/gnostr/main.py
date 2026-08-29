@@ -167,8 +167,6 @@ class MainWindow(Adw.ApplicationWindow):
         self.split_view.set_show_content(True)
 
     def on_login_clicked(self, btn):
-        from gnostr.dialogs import LoginDialog
-
         LoginDialog(self.client, self).present()
 
     def on_logout_clicked(self):

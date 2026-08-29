@@ -118,14 +118,14 @@ class PostWidget(Adw.Bin):
             b = Gtk.Box(spacing=6)
             img = Gtk.Image.new_from_icon_name(icon)
             b.append(img)
-            l = Gtk.Label(label=label, css_classes=["caption", "dim-label"])
-            b.append(l)
+            lbl = Gtk.Label(label=label, css_classes=["caption", "dim-label"])
+            b.append(lbl)
             btn.set_child(b)
             btn.set_css_classes(["flat"])
             # Keep the icon image reference on the button so _update_like_icon
             # can call set_from_icon_name directly (no fragile child-walk).
             btn.icon_img = img
-            return l, btn
+            return lbl, btn
 
         self.lbl_replies, self.btn_reply = mk_met("chat-bubble-symbolic", "0")
         self.lbl_reposts, self.btn_repost = mk_met(

@@ -16,7 +16,10 @@ def mock_key_store():
 
 class TestProfileMetadataService:
     def test_metadata_retrieval_success(self, mock_key_store):
-        mock_key_store.get_key.return_value = '{"pubkey": "testpub", "name": "Jane Doe", "bio": "DevOps enthusiast.", "picture_url": "http://pic.com/jane"}'
+        mock_key_store.get_key.return_value = (
+            '{"pubkey": "testpub", "name": "Jane Doe", "bio": "DevOps enthusiast.",'
+            ' "picture_url": "http://pic.com/jane"}'
+        )
 
         service = ProfileMetadataService(kv_repo=mock_key_store)
         profile = service.get_metadata("testpub")
