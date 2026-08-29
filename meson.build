@@ -39,4 +39,5 @@ if pytest_prog.found()
   test('test_following', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_following.py'], env: test_env, timeout: 120)
   test('test_nip_builders', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_nip_builders.py'], env: test_env, timeout: 120)
   test('test_publish_ack', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_publish_ack.py'], env: test_env, timeout: 120)
+  test('test_feed_pagination', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_feed_pagination.py'], env: test_env, timeout: 120)
   endif

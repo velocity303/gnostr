@@ -14,6 +14,7 @@ Test suite for gnostr — pytest-based with xvfb for GTK rendering. Covers servi
 - `test_nostr_types.py` — NIP-19/NIP-21 bech32 decoding (naddr/nevent/nprofile against spec examples) + `database.get_event_by_a` addressable-coordinate lookup — imports real `nostr_utils` (GTK-free) and the mocked-GLib Database
 - `test_publish_ack.py` — NIP-01 OK ack parsing — imports real `nostr_utils.parse_ok_message` and covers accepted/rejected/string-bool/not-OK/short paths
 - `test_following.py` — follow/unfollow DB persistence + `user_reaction` like-toggle query
+- `test_feed_pagination.py` — following-feed keyset pagination (`database.get_feed_following`): first page, full coverage exactly-once, stability under new events mid-scroll, equal-created_at tiebreak, short-page end-of-DB, no-OFFSET source guard, EXPLAIN QUERY PLAN index usage — imports the mocked-GLib Database
 - `test_profile_db.py` — profiles table persistence: full NIP-01/NIP-24 field round-trip, deprecated-field handling, schema migration, NIP-39 external identities + NIP-58 badges + badge-definition storage — imports the mocked-GLib Database
 - `test_profile_nips.py` — profile NIP protocol helpers: NIP-05 verification (mocked urllib), NIP-39 external identities, NIP-58 profile badges, LUD-16 resolution — imports real `profile_nips` (GTK-free)
 - `test_search_resolver.py` — search identifier resolver: npub/nprofile/nsec/hex/nostr: → pubkey — imports real `nostr_utils` (GTK-free)

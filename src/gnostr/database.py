@@ -417,20 +417,42 @@ class Database:
             )
             return self._rows_to_events(cursor.fetchall())
 
-    def get_feed_following(self, owner_pubkey, limit=50):
+    def get_feed_following(self, owner_pubkey, limit=50, before=None):
+        """Feed events from authors the owner follows, newest first.
+
+        `before=None` fetches the first page. Pass `before=(created_at, id)`
+        of the last event from the previous page to fetch the next page:
+        keyset pagination on `(created_at, id)` — never OFFSET, which both
+        degrades with depth and double-serves rows when new events arrive
+        mid-scroll. The `id` tiebreaker keeps pages stable when two events
+        share a created_at. A page shorter than `limit` signals end-of-DB.
+        """
         if not self.conn:
             return []
         with self.lock:
             cursor = self.conn.cursor()
-            cursor.execute(
-                """
-                SELECT e.* FROM events e
-                INNER JOIN following f ON e.pubkey = f.followed_pubkey
-                WHERE f.owner_pubkey = ? AND e.kind = 1
-                ORDER BY e.created_at DESC LIMIT ?
-            """,
-                (owner_pubkey, limit),
-            )
+            if before is None:
+                cursor.execute(
+                    """
+                    SELECT e.* FROM events e
+                    INNER JOIN following f ON e.pubkey = f.followed_pubkey
+                    WHERE f.owner_pubkey = ? AND e.kind = 1
+                    ORDER BY e.created_at DESC, e.id DESC LIMIT ?
+                """,
+                    (owner_pubkey, limit),
+                )
+            else:
+                before_created_at, before_id = before
+                cursor.execute(
+                    """
+                    SELECT e.* FROM events e
+                    INNER JOIN following f ON e.pubkey = f.followed_pubkey
+                    WHERE f.owner_pubkey = ? AND e.kind = 1
+                      AND (e.created_at, e.id) < (?, ?)
+                    ORDER BY e.created_at DESC, e.id DESC LIMIT ?
+                """,
+                    (owner_pubkey, before_created_at, before_id, limit),
+                )
             return self._rows_to_events(cursor.fetchall())
 
     def save_contacts(self, owner_pubkey, followed_pubkeys):
