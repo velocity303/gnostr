@@ -66,9 +66,7 @@ def test_every_package_dir_has_a_meson_build():
 def test_all_core_modules_are_in_install_list():
     """Every src/gnostr/*.py must appear in the root install_data list."""
     installed = _installed_py_files(os.path.join(SRC_DIR, "meson.build"))
-    on_disk = {
-        f for f in sorted(os.listdir(SRC_DIR)) if f.endswith(".py")
-    }
+    on_disk = {f for f in sorted(os.listdir(SRC_DIR)) if f.endswith(".py")}
     missing = on_disk - installed
     assert not missing, (
         f"modules present in src/gnostr/ but missing from install_data in "
