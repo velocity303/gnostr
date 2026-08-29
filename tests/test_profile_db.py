@@ -111,8 +111,12 @@ def test_migration_adds_columns_to_existing_table(tmp_path, monkeypatch):
 def test_external_identities_round_trip(tmp_path, monkeypatch):
     db = _make_db(tmp_path, monkeypatch)
     ids = [
-        {"platform": "github", "identity": "semisol", "proof": "gist1",
-         "url": "https://github.com/semisol"}
+        {
+            "platform": "github",
+            "identity": "semisol",
+            "proof": "gist1",
+            "url": "https://github.com/semisol",
+        }
     ]
     db.save_external_identities("pk1", ids)
     assert db.get_external_identities("pk1") == ids

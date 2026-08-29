@@ -151,7 +151,11 @@ class Database:
             nip05 = data.get("nip05", "")
             lud16 = data.get("lud16", "")
             bot = 1 if data.get("bot") else 0
-            birthday = json.dumps(data["birthday"]) if isinstance(data.get("birthday"), dict) else ""
+            birthday = (
+                json.dumps(data["birthday"])
+                if isinstance(data.get("birthday"), dict)
+                else ""
+            )
 
             with self.lock:
                 cursor = self.conn.cursor()
