@@ -8,7 +8,9 @@ Gnostr is a native Linux Nostr client designed specifically for the GNOME Deskto
 
 *   **Adaptive UI:** Utilizes `Adw.NavigationSplitView` for a sidebar layout on desktop and a navigation stack on mobile, ensuring a consistent and intuitive experience across different screen sizes.
 *   **Secure Storage:** Private keys (nsec) are stored securely in the system keyring using `libsecret`, preventing exposure of sensitive data in plain text.
-*   **Nostr Protocol:** Connects to relays via WebSockets to fetch and publish events. (Currently focused on read-only functionality).
+*   **Nostr Protocol:** Connects to relays via WebSockets to fetch and publish events — read and write: post, reply, like (NIP-25), repost (NIP-18), follow (kind-3 contact lists), and profile editing (kind-0), with NIP-01 OK-ack feedback per publish.
+*   **Rich Content:** Inline images and video playback (`playbin3` + `gtk4paintablesink`), quote cards for `nostr:` references (NIP-19/NIP-21: npub, note, nevent, naddr long-form articles), thread view with reply trees.
+*   **Profiles:** Full NIP-01/24 metadata (banner, bio, website), NIP-05 identity verification, LUD-16 lightning addresses, NIP-39 external identities, NIP-58 badges.
 *   **GNOME Integration:** Built with GNOME technologies for seamless integration with the desktop environment.
 
 ## Getting Started
@@ -17,7 +19,7 @@ Gnostr is a native Linux Nostr client designed specifically for the GNOME Deskto
 
 *   Python 3.11+
 *   GTK4, libadwaita-1
-*   GStreamer 1.0 with plugins (uridecodebin, gtk4paintablesink)
+*   GStreamer 1.0 with plugins (`playbin3`, `gtk4paintablesink`)
 *   pytest, black, flake8 (for development)
 
 ### Building
@@ -51,6 +53,11 @@ flake8 src/ tests/ --max-line-length=120
 ```
 
 Prebuilt flatpaks are available within the repo for Arm and x86.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for build conventions, the test/lint
+gate, and the DOX documentation contract.
 
 ## Buy me a beer
 
