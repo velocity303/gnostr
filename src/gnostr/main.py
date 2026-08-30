@@ -255,10 +255,24 @@ class MainWindow(Adw.ApplicationWindow):
 
         # If we are on the feed and this post belongs here, add it
         if self.content_nav.get_visible_page() == self.feed_view:
-            # Dedup against posts already rendered: switch_feed loads the DB cache,
-            # then the live subscription re-delivers the same events (they
-            # persisted from a prior session, so they're not in seen_events and
-            # would otherwise render twice).
+            # Model-driven feed: the client persisted this event to the DB
+            # before emitting (client.py saves, then emits), so hydrate the
+            # full row and let FeedModel decide: buffer for the "N new
+            # posts" pill, or flush inline when the user is at the top.
+            if self.feed_view.feed_model is not None:
+                row = self.db.get_event_by_id(eid)
+                if row is not None:
+                    inserted = self.feed_view.feed_model.prepend_new([row])
+                    if inserted:
+                        if self.feed_view.feed_model.at_top:
+                            self.feed_view.flush_new()
+                        else:
+                            self.feed_view.buffered_new(inserted)
+                return
+            # Legacy inline feed (global / me): dedup against posts already
+            # rendered: the live subscription re-delivers DB-backfilled
+            # events (persisted from a prior session) that would otherwise
+            # render twice.
             child = self.feed_view.posts_box.get_first_child()
             while child is not None:
                 if getattr(child, "event_id", None) == eid:
@@ -400,20 +414,23 @@ class MainWindow(Adw.ApplicationWindow):
 
     def switch_feed(self, feed_type):
         self.active_feed_type = feed_type
-        # Clear existing posts
-        while self.feed_view.posts_box.get_first_child():
-            self.feed_view.posts_box.remove(self.feed_view.posts_box.get_first_child())
-
-        cached = []
+        # Model-driven "following" feed: FeedModel owns the window, cursor,
+        # and live buffer. Other feeds keep the legacy inline render.
         if feed_type == "following" and self.pub_key:
-            cached = self.db.get_feed_following(self.pub_key)
             contacts = self.db.get_following_list(self.pub_key)
             if contacts:
                 self.client.subscribe(
                     "sub_following",
                     {"kinds": [1], "authors": contacts[:300], "limit": 50},
                 )
-        elif feed_type == "global":
+            self.feed_view.end_feed()
+            self.feed_view.start_model_feed()
+            return
+
+        self.feed_view.end_feed()
+        self.feed_view.clear_posts()
+        cached = []
+        if feed_type == "global":
             self.client.subscribe(
                 "sub_global", {"kinds": [1], "limit": 20}, snapshot=True
             )
@@ -422,7 +439,6 @@ class MainWindow(Adw.ApplicationWindow):
             self.client.subscribe(
                 "sub_me", {"kinds": [1], "authors": [self.pub_key], "limit": 20}
             )
-
         for ev in cached:
             w = PostWidget(
                 self,
@@ -435,6 +451,25 @@ class MainWindow(Adw.ApplicationWindow):
             # cached is newest-first (ORDER BY created_at DESC) — append builds
             # newest→oldest top-to-bottom. No per-item sorted rebuild needed.
             self.feed_view.posts_box.append(w)
+
+    def make_post_widget(self, event_id):
+        """Hydrate a PostWidget for a window id from the DB (the DB is the
+        source of truth — FeedModel stores ids, not content). No-op when
+        the widget already exists or the row is missing (e.g. a global/me
+        event evicted from a feed that doesn't persist it)."""
+        if event_id in self.event_widgets:
+            return
+        ev = self.db.get_event_by_id(event_id)
+        if ev is None:
+            return
+        PostWidget(
+            self,
+            ev["pubkey"],
+            ev["content"],
+            ev["id"],
+            ev.get("tags", []),
+            created_at=ev.get("created_at"),
+        )
 
 
 class GnostrApp(Adw.Application):

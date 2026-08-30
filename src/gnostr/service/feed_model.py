@@ -101,7 +101,8 @@ class FeedModel:
             self.exhausted = True
         self.cursor = self._tail_cursor()
         # The top is unchanged by appending older posts, but the window
-        # grew at the bottom — bound by evicting the NEWEST overflow.
+        # grew at the bottom — bound by evicting the NEWEST overflow (the
+        # rows scrolled off the top when the user is near the bottom).
         self._bound_window(end="newest")
         self.top_key = self._head_cursor()
         return added
@@ -129,8 +130,8 @@ class FeedModel:
             # A short page means we reached the absolute newest.
             self.at_top = True
         self.top_key = self._head_cursor()
-        # The window grew at the top — bound by evicting the OLDEST
-        # overflow (the end away from the viewport when scrolling up).
+        # The window grew at the top — bound by evicting the OLDEST overflow
+        # (the rows scrolled off the bottom when the user is near the top).
         self._bound_window(end="oldest")
         self.cursor = self._tail_cursor()
         return added
@@ -262,12 +263,35 @@ class FeedModel:
         """Prepend a re-pulled row to the window top (re-pulled pages
         arrive newest-first, strictly newer than the current top — the
         caller must pass them reversed so the newest lands at index 0
-        LAST). Dedups. Returns True when the id was new."""
+        LAST). Dedups. Returns True when the id was new.
+
+        A row that was BUFFERED as a live event (in ``new_ids``) is
+        promoted here at its correct position instead of being dropped:
+        the re-pull page is ordered, so the live event lands exactly
+        where it belongs and leaves the buffer.
+        """
         if row["id"] in self._rows:
+            if row["id"] in self.new_ids:
+                self.new_ids.remove(row["id"])
+                self._insert_row_sorted(row)
             return False
         self._rows[row["id"]] = row
         self.event_ids.insert(0, row["id"])
         return True
+
+    def _insert_row_sorted(self, row):
+        """Insert a row into the window at its sorted (newest-first)
+        position. Used when a buffered live event is re-pulled from the
+        DB: the re-pull page is strictly newer than the current top, so
+        the event lands at the top, and the buffer loses it."""
+        pos = 0
+        for i, eid in enumerate(self.event_ids):
+            if self._is_newer(row, self._rows[eid]):
+                pos = i
+                break
+        else:
+            pos = len(self.event_ids)
+        self.event_ids.insert(pos, row["id"])
 
     def _bound_window(self, end="newest"):
         """Keep the window at most ``max_window`` rows by evicting the

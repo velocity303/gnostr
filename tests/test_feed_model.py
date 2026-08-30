@@ -404,3 +404,39 @@ class TestBidirectionalRepull:
         m.evict_newest(1)
         assert m.at_top is False  # 'a' evicted -> newer posts to re-pull
         assert m.can_load_newer() is True
+
+    def test_repulled_live_event_promoted_to_window(self):
+        # p1..p4 in the DB; p5 arrives live AFTER load_first (so it's not in
+        # the window) but IS persisted, so a later re-pull page contains it.
+        rows = [_mk("p1", 100), _mk("p2", 99), _mk("p3", 98), _mk("p4", 97)]
+        db, _ = _db_bidir(rows, limit=10)
+        m = FeedModel(owner_pubkey="me", database=db, page_size=10, max_window=4)
+        m.load_first()
+        assert m.event_ids == ["p1", "p2", "p3", "p4"]
+        assert m.exhausted  # 4 < 10 (page_size) — p5 arrived after load
+
+        # live arrival: buffered (deduped against the window)
+        buffered = m.prepend_new([_mk("p5", 101)])
+        assert buffered == ["p5"]
+        assert m.new_ids == ["p5"]
+
+        # p5 persisted on the relay side — the mock list is captured by
+        # reference, so inserting it (newest-first) makes it visible to
+        # future fetches only.
+        rows.insert(0, _mk("p5", 101))
+
+        # scroll down: evict the 3 newest; top_key now (97,p4)
+        m.evict_newest(3)
+        assert m.event_ids == ["p4"]
+
+        # scroll up: re-pull newer than (97,p4) -> p5(101), p1(100), p2(99),
+        # p3(98). p5 is buffered -> promoted into the window at its sorted
+        # position and removed from the buffer; the others are prepended.
+        added = m.load_newer()
+        assert m.new_ids == []
+        # window newest-first, bounded to 4 (p4 evicted off the bottom)
+        assert m.event_ids == ["p5", "p1", "p2", "p3"]
+        assert m.at_top is True
+        # 'added' = ids actually prepended from the page; p5 came from the
+        # live buffer (promotion), so it's excluded
+        assert added == ["p1", "p2", "p3"]
