@@ -417,21 +417,39 @@ class Database:
             )
             return self._rows_to_events(cursor.fetchall())
 
-    def get_feed_following(self, owner_pubkey, limit=50, before=None):
+    def get_feed_following(self, owner_pubkey, limit=50, before=None, after=None):
         """Feed events from authors the owner follows, newest first.
 
-        `before=None` fetches the first page. Pass `before=(created_at, id)`
-        of the last event from the previous page to fetch the next page:
-        keyset pagination on `(created_at, id)` — never OFFSET, which both
-        degrades with depth and double-serves rows when new events arrive
-        mid-scroll. The `id` tiebreaker keeps pages stable when two events
-        share a created_at. A page shorter than `limit` signals end-of-DB.
+        `before=None, after=None` fetches the first (newest) page. Pass
+        `before=(created_at, id)` of the last event from the previous page
+        to fetch the next page OLDER: keyset pagination on `(created_at,
+        id)` — never OFFSET, which both degrades with depth and double-
+        serves rows when new events arrive mid-scroll. The `id` tiebreaker
+        keeps pages stable when two events share a created_at. A page
+        shorter than `limit` signals end-of-DB.
+
+        Pass `after=(created_at, id)` to fetch the page NEWER than a
+        given event (the reverse direction, used for the sliding window's
+        re-pull when the user scrolls back up to the top). Mutually
+        exclusive with `before`; if both are set, `after` wins.
         """
         if not self.conn:
             return []
         with self.lock:
             cursor = self.conn.cursor()
-            if before is None:
+            if after is not None:
+                after_created_at, after_id = after
+                cursor.execute(
+                    """
+                    SELECT e.* FROM events e
+                    INNER JOIN following f ON e.pubkey = f.followed_pubkey
+                    WHERE f.owner_pubkey = ? AND e.kind = 1
+                      AND (e.created_at, e.id) > (?, ?)
+                    ORDER BY e.created_at DESC, e.id DESC LIMIT ?
+                """,
+                    (owner_pubkey, after_created_at, after_id, limit),
+                )
+            elif before is None:
                 cursor.execute(
                     """
                     SELECT e.* FROM events e

@@ -47,6 +47,32 @@ def _db(pages, limit=50):
     return db, calls
 
 
+def _db_bidir(rows, limit=50):
+    """Mock Database over a single newest-first row list, honouring the
+    keyset (created_at, id) before=/after= semantics like the real query.
+
+    ``rows`` must already be sorted newest-first. Returns (db, calls) where
+    each call records {'owner', 'limit', 'before', 'after'}.
+    """
+
+    db = Mock()
+    calls = []
+
+    def _fetch(owner, limit, before=None, after=None):
+        calls.append({"owner": owner, "limit": limit, "before": before, "after": after})
+        out = list(rows)
+        if after is not None:
+            a_ca, a_id = after
+            out = [r for r in out if (r["created_at"], r["id"]) > (a_ca, a_id)]
+        elif before is not None:
+            b_ca, b_id = before
+            out = [r for r in out if (r["created_at"], r["id"]) < (b_ca, b_id)]
+        return out[:limit]
+
+    db.get_feed_following = _fetch
+    return db, calls
+
+
 class TestLoadFirst:
     def test_loads_first_page_and_sets_cursor(self):
         page = [_mk("e3", 300), _mk("e2", 200), _mk("e1", 100)]
@@ -135,12 +161,17 @@ class TestEviction:
         db, _ = _db([page], limit=10)
         m = FeedModel(owner_pubkey="me", database=db, max_window=8)
         m.load_first()
+        # first page: viewport at top -> bound by evicting the 2 OLDEST
         assert len(m.event_ids) == 8
-        # oldest (cursor anchor) kept; the 2 newest evicted off the top
-        assert "e10" not in m.event_ids
-        assert "e9" not in m.event_ids
-        assert m.event_ids == ["e8", "e7", "e6", "e5", "e4", "e3", "e2", "e1"]
-        assert m.cursor == (1, "e1")
+        assert m.event_ids == ["e10", "e9", "e8", "e7", "e6", "e5", "e4", "e3"]
+        assert "e1" not in m.event_ids
+        assert "e2" not in m.event_ids
+        assert m.cursor == (3, "e3")
+        # the 2 newest were evicted by explicit evict_newest
+        evicted = m.evict_newest(2)
+        assert evicted == ["e10", "e9"]
+        # oldest (cursor anchor) untouched
+        assert m.cursor == (3, "e3")
 
     def test_eviction_on_load_older_keeps_oldest_anchor(self):
         # page1: e1..e10, created 99..90, newest-first
@@ -264,9 +295,9 @@ class TestBoundaries:
         db, _ = _db([page], limit=2)
         m = FeedModel(owner_pubkey="me", database=db, max_window=1)
         m.load_first()
-        # eviction drops the newest, so only the OLDEST survives the bound
-        assert m.event_ids == ["e1"]
-        assert m.cursor == (100, "e1")
+        # first page keeps the NEWEST: only e2 survives the bound of 1
+        assert m.event_ids == ["e2"]
+        assert m.cursor == (200, "e2")
 
     def test_page_size_one(self):
         db, calls = _db([[_mk("e1", 100)], [_mk("e0", 50)]], limit=1)
@@ -279,3 +310,97 @@ class TestBoundaries:
         # page2 (1) == page_size(1) -> full -> still not exhausted
         assert not m.exhausted
         assert m.event_ids == ["e1", "e0"]
+
+
+class TestBidirectionalRepull:
+    """Contract 6: viewport-relative eviction + re-pull on scroll-up.
+
+    The window slides down (load_older evicts the newest end) then back
+    up (load_newer re-pulls the evicted top, evicting the oldest end).
+    """
+
+    def _full_feed(self, n=10):
+        # newest-first: p1(100) .. p10(91)
+        return [_mk(f"p{i}", 100 - (i - 1)) for i in range(1, n + 1)]
+
+    def test_load_first_is_at_top(self):
+        db, _ = _db_bidir(self._full_feed(), limit=10)
+        m = FeedModel(owner_pubkey="me", database=db, page_size=5, max_window=10)
+        m.load_first()
+        assert m.at_top
+        assert m.can_load_newer() is False
+        assert m.top_key == (100, "p1")
+        assert m.cursor == (96, "p5")
+
+    def test_load_newer_is_noop_at_top(self):
+        db, calls = _db_bidir(self._full_feed(), limit=10)
+        m = FeedModel(owner_pubkey="me", database=db, page_size=5, max_window=10)
+        m.load_first()
+        assert m.load_newer() is None
+        # no extra fetch
+        assert len(calls) == 1
+
+    def test_repull_after_top_eviction(self):
+        rows = self._full_feed()
+        db, calls = _db_bidir(rows, limit=10)
+        m = FeedModel(owner_pubkey="me", database=db, page_size=5, max_window=4)
+        m.load_first()
+        # window p1..p4; p5 (oldest) evicted off the bottom; at the top
+        assert m.event_ids == ["p1", "p2", "p3", "p4"]
+        assert m.at_top is True
+        assert m.cursor == (97, "p4")
+
+        # scroll down: the view evicts the 2 newest off the top
+        evicted = m.evict_newest(2)
+        assert evicted == ["p1", "p2"]
+        assert m.event_ids == ["p3", "p4"]
+        assert m.at_top is False
+        assert m.can_load_newer() is True
+
+        # scroll up: re-pull newer than top_key (98,p3) -> p2(99), p1(100)
+        added = m.load_newer()
+        assert added == ["p1", "p2"]
+        # window p1..p4 again, bounded to 4; back at the absolute top
+        assert m.event_ids == ["p1", "p2", "p3", "p4"]
+        assert m.at_top is True
+        assert m.cursor == (97, "p4")
+        # re-fetch used top_key as `after`
+        assert calls[1] == {
+            "owner": "me", "limit": 5, "before": None, "after": (98, "p3")
+        }
+
+    def test_repull_reaches_absolute_top(self):
+        rows = self._full_feed(5)  # p1..p5
+        db, _ = _db_bidir(rows, limit=5)
+        # page_size 2, max_window 2: load_first -> p1,p2 ; at_top True (full page)
+        m = FeedModel(owner_pubkey="me", database=db, page_size=2, max_window=2)
+        m.load_first()
+        assert m.at_top  # p1,p2 is the newest page
+        # evict the newest to simulate scrolling down
+        m.evict_newest(2)
+        assert m.event_ids == []
+        # re-pull: after=top_key(None) -> nothing to re-pull (window empty)
+        assert m.load_newer() is None
+
+    def test_evict_oldest_reopens_exhausted(self):
+        # build an exhausted feed, then evict the oldest end to reopen it
+        rows = [_mk("a", 50), _mk("b", 40), _mk("c", 30)]
+        db, _ = _db_bidir(rows, limit=5)
+        m = FeedModel(owner_pubkey="me", database=db, page_size=5, max_window=5)
+        m.load_first()
+        assert m.exhausted  # 3 < 5 -> end of DB
+        m.evict_oldest(1)
+        # dropping the oldest means older posts may exist -> not exhausted
+        assert m.exhausted is False
+        assert m.event_ids == ["a", "b"]
+        assert m.cursor == (40, "b")
+
+    def test_evict_newest_flags_not_at_top(self):
+        rows = [_mk("a", 50), _mk("b", 40), _mk("c", 30)]
+        db, _ = _db_bidir(rows, limit=5)
+        m = FeedModel(owner_pubkey="me", database=db, page_size=5, max_window=5)
+        m.load_first()
+        assert m.at_top is True
+        m.evict_newest(1)
+        assert m.at_top is False  # 'a' evicted -> newer posts to re-pull
+        assert m.can_load_newer() is True
