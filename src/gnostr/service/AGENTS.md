@@ -5,6 +5,7 @@ Service layer for feed and profile data — fetches, caches, and serves Nostr ev
 
 ## Ownership
 - `feed_service.py` — FeedService: manages feed event lists, filtering, caching
+- `feed_model.py` — FeedModel: widget-agnostic bounded feed window, keyset cursor state, eviction + live-prepend buffer (workstream #0)
 - `profile_service.py` — ProfileService: profile lookups and caching
 - `profile_metadata_service.py` — ProfileMetadataService: metadata extraction from profiles
 
@@ -14,6 +15,7 @@ Service layer for feed and profile data — fetches, caches, and serves Nostr ev
 - FeedService maintains the in-memory event list for the active feed
 - ProfileService caches profile data to avoid redundant relay lookups
 - ProfileMetadataService extracts display_name, picture, banner from profile events
+- FeedModel is GTK-free: it owns only event ids + a `(created_at, id)` keyset cursor, and depends on a Database-like object. It never touches GTK, so it is unit-testable headless. Ordering mirrors `database.get_feed_following` (`created_at DESC, id DESC`). `cursor` is always the OLDEST in-window row; `evict_newest(n)` drops the top (newest) overflow and never touches the cursor.
 
 ## Work Guidance
 - Services operate on data already stored in Database — they're cache/query layers, not persistence layers
