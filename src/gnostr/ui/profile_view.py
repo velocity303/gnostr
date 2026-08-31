@@ -150,15 +150,17 @@ class ProfileView(Adw.Bin):
         header.append(self.badges_box)
         self._render_badges()
 
-        # Follower/following counts
-        counts_row = Gtk.Box(spacing=16, halign=Gtk.Align.CENTER)
+        # Following count — tappable, opens the Follows list for this pubkey
+        # (own or foreign — the list is owner-keyed).
         following = self.main_window.db.get_following_list(pubkey)
-        lbl_following = Gtk.Label(
-            label=f"Following {len(following)}",
-            css_classes=["caption", "dim-label"],
+        btn_following = Gtk.Button(
+            label=f"Following {len(following)}", css_classes=["flat"]
         )
-        counts_row.append(lbl_following)
-        header.append(counts_row)
+        btn_following.set_halign(Gtk.Align.CENTER)
+        btn_following.connect(
+            "clicked", lambda b: self.main_window.show_follows(pubkey)
+        )
+        header.append(btn_following)
 
         # Follow/Unfollow toggle — hidden on your own profile
         my_pubkey = self.main_window.pub_key
@@ -174,13 +176,21 @@ class ProfileView(Adw.Bin):
             self.btn_follow.connect("clicked", lambda b: self.toggle_follow())
             header.append(self.btn_follow)
         elif my_pubkey and pubkey == my_pubkey:
-            # Own profile — Edit Profile button instead of Follow toggle
+            # Own profile — Edit Profile + Sync Follows instead of Follow
+            # toggle. Sync re-publishes the DB following list (kind-3) —
+            # the behavior the old sidebar 'Follow Sync' row had.
             btn_edit = Gtk.Button(
                 label="Edit Profile", css_classes=["pill", "suggested-action"]
             )
             btn_edit.set_halign(Gtk.Align.CENTER)
             btn_edit.connect("clicked", lambda b: self.open_edit_dialog())
             header.append(btn_edit)
+
+            btn_sync = Gtk.Button(label="Sync Follows", css_classes=["pill"])
+            btn_sync.set_halign(Gtk.Align.CENTER)
+            btn_sync.set_tooltip_text("Push follows to relays")
+            btn_sync.connect("clicked", lambda b: self.main_window.sync_follows())
+            header.append(btn_sync)
 
         self.layout.append(header)
 
