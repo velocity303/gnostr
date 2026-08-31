@@ -4,8 +4,31 @@ This document tracks all bugs, issues, and problems that need fixing.
 
 ## Current Workstream
 
+### 12. Follows List + Feed Renames (NEW FEATURE — implemented 2026-08-31)
+**Status:** ✅ COMPLETE — code + tests shipped (5 commits); DOX pass pending approval
+
+**Goal (user-defined):** the sidebar "Follow Sync" row becomes a "Follows" list showing who you follow; the list is reusable for ANY profile (click their profile → see who they follow); on your own profile there's a Sync button that mimics today's Follow Sync behavior. Feed rows renamed "Following"→"My Feed", "Global"→"Global Feed".
+
+**Design decisions:**
+- The `following` table is already owner-keyed (`owner_pubkey, followed_pubkey`) — no schema change. Kind-3 ingestion generalized from own-pubkey-only to ANY author: the relay's newest kind-3 reconciles that author's rows (`save_contacts(owner, …)`), so foreign lists populate without extra storage machinery.
+- `contacts-updated` signal carries the pubkey; an open `FollowersListView` reloads when it matches its owner.
+- Sync behavior extracted to `MainWindow.sync_follows()` — shared by the own-profile button and the own Follows list sync button (same toasts + Relay Activity confirmation as the old row).
+- Sidebar ids `following`/`global` unchanged (they're the FeedModel feed types); only display labels renamed.
+
+**Implemented:**
+- ✅ `client.fetch_contacts_for(pubkey)` — fetch any user's kind-3 (own `fetch_contacts` delegates).
+- ✅ `_handle_event` kind-3 branch: reconciles ANY author's list into that owner's rows; activity-pane log line stays own-pubkey-only; relay-hint merge stays own-pubkey-only.
+- ✅ `ui/followers_list_view.py` — `FollowersListView(main_window, owner_pubkey, is_own)`: avatar/name/npub rows, Refresh (fetch from relays), Sync button (own only, → `main.sync_follows()`), row tap → `show_profile`; added to `ui/meson.build` install list.
+- ✅ Sidebar: `follow_sync` row removed → `followers` "Follows"; "My Feed" / "Global Feed" labels. `main.show_follows(owner_pubkey)` pushes the list page.
+- ✅ ProfileView: "Following N" is now a tappable button → that pubkey's Follows list; own profile gains "Sync Follows" beside Edit Profile.
+- ✅ Tests: `test_follow_sync.py` extended (fetch_contacts_for, foreign-kind-3 reconciliation contract flip, own-log regression); new `tests/test_follows_view.py` (ast-extraction logic tests: reload per pubkey, owner-matched self-refresh, refresh → fetch_contacts_for, row activation, title wording).
+
+**Deferred (carried from #2):** automatic periodic sync (manual + startup only); relay-hint-targeted kind-3 fetch; foreign-profile follower count (reverse lookup).
+
+---
+
 ### 0. Feed Pruning: Sliding Window + Cursor Pagination (NEW FEATURE — designed 2026-08-29)
-**Status:** Design agreed, not yet implemented
+**Status:** ✅ COMPLETE — implemented 2026-08-29, all 6 tasks shipped (see git log: `FeedModel`, keyset re-pull, model-driven FeedView, anchor restore)
 
 **Goal (user-defined UX):** a bounded window of the newest posts; scrolling to the end pulls older posts from the DB; scrolled-past posts drop off the top and are re-pulled from the DB on scroll-up; the refresh button jumps to top and pulls in new posts. Fixes the two 🔶 leaks from 2026-07-31: unbounded `event_widgets`/posts_box retention and `switch_feed` wipe-and-resubscribe.
 
@@ -328,6 +351,13 @@ Successfully implemented enhanced video playback controls with the following fea
 ---
 
 ## Progress Log
+
+### 2026-08-31 (follows list + feed renames workstream, #12)
+- ✅ **Any-author kind-3 reconciliation** — `_handle_event` kind-3 branch now saves ANY author's list into that owner's `following` rows (owner-keyed table, no schema change); activity-pane log + relay-hint merge stay own-pubkey-only. `contacts-updated` carries the pubkey. `client.fetch_contacts_for(pubkey)` fetches any user's list (own `fetch_contacts` delegates).
+- ✅ **`FollowersListView`** (`ui/followers_list_view.py`) — reusable follows list (own or foreign owner), avatar/name/npub rows, Refresh from relays, own-only Sync button, row tap → profile; in the `ui/meson.build` install list (contract test enforces).
+- ✅ **Sidebar** — "Follow Sync" row → "Follows" row (opens own list); feed labels "Following"→"My Feed", "Global"→"Global Feed" (ids unchanged). `MainWindow.sync_follows()` / `show_follows(owner)` extracted — shared by own-profile + own-list surfaces.
+- ✅ **ProfileView** — "Following N" tappable → that user's Follows list; own profile gains "Sync Follows" (same toasts + Relay Activity confirmation as the old sidebar row).
+- ✅ **Tests** — `test_follow_sync.py`: fetch tests + contract flip (foreign kind-3 now reconciles to that owner; own-kind-3 log regression). New `test_follows_view.py` (ast-extraction pattern, same as `test_follow_sync.py` — the gi mocks make the imported widget class a Mock). Suite: **136 passed**.
 
 ### 2026-08-29 (follower sync workstream)
 - ✅ **Pull:** first-relay-CONNECTED now triggers `fetch_contacts` (kind-3 own-pubkey, limit 1); `_handle_event` kind-3 branch logs the reconciliation count to the Relay Activity pane.
