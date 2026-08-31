@@ -164,14 +164,33 @@ class MainWindow(Adw.ApplicationWindow):
                 self.show_profile(self.pub_key)
         elif r_id == "search":
             self.show_search_dialog()
-        elif r_id == "follow_sync":
-            if not self.client.sync_followers():
-                self.add_toast(Adw.Toast(title="Follow Sync: not logged in"))
-            else:
-                self.add_toast(
-                    Adw.Toast(title="Follow Sync published — watch Relay Activity")
-                )
+        elif r_id == "followers":
+            if self.pub_key:
+                self.show_follows(self.pub_key)
         self.split_view.set_show_content(True)
+
+    def sync_follows(self):
+        """Push the DB following list to relays (kind-3) — the behavior the
+        old sidebar 'Follow Sync' row had. Shared by own-profile surfaces
+        (ProfileView button + FollowsListView sync button)."""
+        if not self.client.sync_followers():
+            self.add_toast(Adw.Toast(title="Follow Sync: not logged in"))
+        else:
+            self.add_toast(
+                Adw.Toast(title="Follow Sync published — watch Relay Activity")
+            )
+
+    def show_follows(self, owner_pubkey):
+        """Open the Follows list for any owner (own or foreign profile)."""
+        try:
+            from gnostr.ui.followers_list_view import FollowersListView
+        except ImportError:
+            from .ui.followers_list_view import FollowersListView
+
+        is_own = owner_pubkey == self.pub_key
+        view = FollowersListView(self, owner_pubkey, is_own=is_own)
+        page = Adw.NavigationPage(title="Follows", child=view)
+        self.content_nav.push(page)
 
     def on_login_clicked(self, btn):
         LoginDialog(self.client, self).present()

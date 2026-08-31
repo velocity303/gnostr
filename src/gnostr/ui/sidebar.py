@@ -27,11 +27,11 @@ class Sidebar(Gtk.Box):
 
         self.rows = {}
         items = [
-            ("following", "Following", "system-users"),
-            ("global", "Global", "network-server"),
+            ("following", "My Feed", "system-users"),
+            ("global", "Global Feed", "network-server"),
             ("profile", "Profile", "avatar-default"),
             ("search", "Search User", "system-search"),
-            ("follow_sync", "Follow Sync", "network-transmit-receive"),
+            ("followers", "Follows", "network-transmit-receive"),
         ]
 
         for r_id, title, icon in items:
