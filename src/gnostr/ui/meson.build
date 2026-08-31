@@ -7,6 +7,7 @@ install_data(
     'post_widget.py',
     'profile_view.py',
     'thread_view.py',
+    'followers_list_view.py',
   ],
   install_dir: pkgdatadir / pkg_name / 'ui'
 )
