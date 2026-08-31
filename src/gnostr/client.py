@@ -669,8 +669,15 @@ class NostrClient(GObject.Object):
 
     def fetch_contacts(self):
         if self.my_pubkey:
+            self.fetch_contacts_for(self.my_pubkey)
+
+    def fetch_contacts_for(self, pubkey):
+        """Fetch any user's newest kind-3 contact list (kind-3 is
+        replaceable — one event is the whole list)."""
+        if pubkey:
             self.subscribe(
-                "sub_contacts", {"kinds": [3], "authors": [self.my_pubkey], "limit": 1}
+                f"sub_contacts_{pubkey[:8]}",
+                {"kinds": [3], "authors": [pubkey], "limit": 1},
             )
 
     def fetch_profile(self, pubkey, ttl=600):

@@ -185,3 +185,38 @@ def test_push_sync_requires_keys(client):
     client.my_privkey = None
     assert sync(client) is False
     assert not client.published
+
+
+def test_fetch_contacts_for_targets_given_author(client):
+    """fetch_contacts_for(pubkey) subscribes for that author's kind-3 list."""
+    client.subscribed = []
+    client.subscribe = lambda sub_id, filters, snapshot=False: client.subscribed.append(
+        (sub_id, filters)
+    )
+    fetch = _unbound("fetch_contacts_for")
+    fetch(client, "c" * 64)
+    assert len(client.subscribed) == 1
+    assert client.subscribed[0][1] == {"kinds": [3], "authors": ["c" * 64], "limit": 1}
+
+
+def test_fetch_contacts_delegates_to_own_pubkey(client):
+    """fetch_contacts() is the own-pubkey convenience wrapper."""
+    client.subscribed = []
+    client.subscribe = lambda sub_id, filters, snapshot=False: client.subscribed.append(
+        (sub_id, filters)
+    )
+    fetch = _unbound("fetch_contacts")
+    fetch(client)
+    assert len(client.subscribed) == 1
+    assert client.subscribed[0][1]["authors"] == [client.my_pubkey]
+
+
+def test_fetch_contacts_skips_without_keys(client):
+    client.my_pubkey = None
+    client.subscribed = []
+    client.subscribe = lambda sub_id, filters, snapshot=False: client.subscribed.append(
+        (sub_id, filters)
+    )
+    fetch = _unbound("fetch_contacts")
+    fetch(client)
+    assert not client.subscribed
