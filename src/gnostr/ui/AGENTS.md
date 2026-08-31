@@ -12,7 +12,7 @@ GTK widget components — all reusable UI elements for displaying Nostr data. Ea
 
 ## Local Contracts
 - Widgets render data that's already cached; when a needed piece is missing (author profile, reply parent, quote event) they may trigger a fetch via the client — they never decide what to show beyond that
-- FeedView.posts_box is a Gtk.Box that PostWidget instances are prepended to
+- FeedView.posts_box mirrors the FeedModel window (newest-first): `_sync_window` hydrates a PostWidget per in-window id via `main_window.make_post_widget`, reuses widgets by event id (content is never re-rendered), drops widgets evicted out of the window, and appends the "You're all caught up" sentinel last. The model owns the bounded window + keyset cursor + live buffer; the view owns only geometry (scroll zones, anchor restore, auto-continuation while pinned at a boundary)
 - PostWidget stores event_id, pubkey, content, and tracks metrics labels; shows a compact relative-time caption (now/Nm/Nh/Nd/date) at the top-right of the header, resolved from the DB when not passed in
 - PostWidget has `.quote_widgets` for nostr event quote cards and `.inline_mention_labels` for inline @mention text labels
 - Profile @mentions render inline in the text flow (small bold `@name` Pango links); clicking opens the profile view via `activate-link`. Inline avatar-in-mention is a follow-up (needs a Gtk.FlowBox render rework)
