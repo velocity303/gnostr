@@ -15,7 +15,7 @@ Service layer for feed and profile data — fetches, caches, and serves Nostr ev
 - FeedService maintains the in-memory event list for the active feed
 - ProfileService caches profile data to avoid redundant relay lookups
 - ProfileMetadataService extracts display_name, picture, banner from profile events
-- FeedModel is GTK-free: it owns only event ids + a `(created_at, id)` keyset cursor, and depends on a Database-like object. It never touches GTK, so it is unit-testable headless. Ordering mirrors `database.get_feed_following` (`created_at DESC, id DESC`). `cursor` is always the OLDEST in-window row; `evict_newest(n)` drops the top (newest) overflow and never touches the cursor.
+- FeedModel is GTK-free: it owns only event ids + a `(created_at, id)` keyset cursor, and depends on a Database-like object. It never touches GTK, so it is unit-testable headless. Ordering mirrors `database.get_feed_following` (`created_at DESC, id DESC`). `cursor` is always the OLDEST in-window row; `evict_newest(n)` drops the top (newest) overflow and never touches the cursor. `load_older`/`load_newer` are the bidirectional re-pull (keyset `before`/`after`); a short page sets `exhausted` (older) or `at_top` (newer). The model self-bounds to `max_window` after each load and promotes buffered `new_ids` into the window at their sorted position (leaving the buffer) on re-pull, so live events reach the window without the view reaching into internals.
 
 ## Work Guidance
 - Services operate on data already stored in Database — they're cache/query layers, not persistence layers

@@ -4,7 +4,7 @@
 GTK widget components — all reusable UI elements for displaying Nostr data. Each widget is a self-contained GTK composite that receives data and renders it.
 
 ## Ownership
-- `feed_view.py` — FeedView: scrollable post list with post_box container
+- `feed_view.py` — FeedView: model-driven scrollable feed for the "following" feed. Owns the scroll-trigger plumbing (near-top re-pull, near-bottom load-older, "N new posts" pill, end-of-DB sentinel, anchor capture/restore, auto-continuation while pinned at a boundary) over `service.feed_model.FeedModel`; `posts_box` mirrors the model window
 - `post_widget.py` — PostWidget: individual event card with interactive like/repost/reply buttons (icon + count)
 - `profile_view.py` — ProfileView: user profile display with avatar, name, bio, banner, website, nip05, lightning, external identities, badges, counts
 - `thread_view.py` — ThreadView: event thread with reply tree
