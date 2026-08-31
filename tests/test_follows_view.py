@@ -8,6 +8,7 @@ a lightweight fake self — exercising the actual code without the mocked
 GTK machinery. Real rendering is verified on-device (and by the tier-2
 real-GTK harness pattern).
 """
+
 import ast
 import os
 from unittest.mock import MagicMock, Mock
@@ -32,8 +33,9 @@ def _unbound(method_name):
     src = open(_VIEW_PATH, encoding="utf-8").read()
     tree = ast.parse(src)
     cls = next(
-        n for n in tree.body if isinstance(n, ast.ClassDef)
-        and n.name == "FollowersListView"
+        n
+        for n in tree.body
+        if isinstance(n, ast.ClassDef) and n.name == "FollowersListView"
     )
     fn = next(
         n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == method_name

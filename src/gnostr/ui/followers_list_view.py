@@ -10,6 +10,7 @@ Refresh: client.fetch_contacts_for(owner_pubkey); when the author's
 kind-3 lands the client emits contacts-updated(pubkey) and this view
 reloads if it matches. Row tap opens that user's profile.
 """
+
 import gi
 
 gi.require_version("Gtk", "4.0")
@@ -76,7 +77,11 @@ class FollowersListView(Gtk.Box):
         return prof.get("name") or prof.get("display_name") or self.owner_pubkey[:8]
 
     def _title(self, count=None):
-        base = "You're following" if self.is_own else f"{self._display_name()} is following"
+        base = (
+            "You're following"
+            if self.is_own
+            else f"{self._display_name()} is following"
+        )
         return f"{base} — {count}" if count is not None else base
 
     def reload(self):

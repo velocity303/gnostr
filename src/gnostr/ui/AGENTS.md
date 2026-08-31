@@ -8,7 +8,8 @@ GTK widget components — all reusable UI elements for displaying Nostr data. Ea
 - `post_widget.py` — PostWidget: individual event card with interactive like/repost/reply buttons (icon + count)
 - `profile_view.py` — ProfileView: user profile display with avatar, name, bio, banner, website, nip05, lightning, external identities, badges, counts
 - `thread_view.py` — ThreadView: event thread with reply tree
-- `sidebar.py` — Sidebar: navigation menu (global/following/profile/search/follow-sync) + Relay Activity pane
+- `sidebar.py` — Sidebar: navigation menu (global/following/profile/search/follows) + Relay Activity pane
+- `followers_list_view.py` — FollowersListView: reusable follows list for any owner (own pubkey, is_own=True, carries the Sync button, or a foreign profile). Rows = db.get_following_list(owner) (owner-keyed table); Refresh calls `client.fetch_contacts_for(owner)`; row tap → `main_window.show_profile`
 
 ## Local Contracts
 - Widgets render data that's already cached; when a needed piece is missing (author profile, reply parent, quote event) they may trigger a fetch via the client — they never decide what to show beyond that
@@ -16,7 +17,7 @@ GTK widget components — all reusable UI elements for displaying Nostr data. Ea
 - PostWidget stores event_id, pubkey, content, and tracks metrics labels; shows a compact relative-time caption (now/Nm/Nh/Nd/date) at the top-right of the header, resolved from the DB when not passed in
 - PostWidget has `.quote_widgets` for nostr event quote cards and `.inline_mention_labels` for inline @mention text labels
 - Profile @mentions render inline in the text flow (small bold `@name` Pango links); clicking opens the profile view via `activate-link`. Inline avatar-in-mention is a follow-up (needs a Gtk.FlowBox render rework)
-- Sidebar emits menu signals that MainWindow handles for feed switching. Nav rows: following, global, profile, search, follow_sync (`Follow Sync` — pushes the DB following list to relays via `client.sync_followers()`, confirmed in the Relay Activity pane)
+- Sidebar emits menu signals that MainWindow handles for feed switching. Nav rows: following ("My Feed"), global ("Global Feed"), profile, search, followers (`Follows` — opens the own Follows list via `main.show_follows(own_pubkey)`; the old `Follow Sync` row was removed in favor of the list + its own Sync button)
 - Sidebar Relay Activity pane: `Adw.ExpanderRow` with a scrolled monospace `Gtk.Label` (newest at top, selectable); `append_relay_log(line)` prepends a line. `main.py` connects `relay-log-updated` → `append_relay_log`, so publish/OK/connect activity is visible persistently (not just toasts)
 - ThreadView fetches thread data via client.fetch_thread(), not inline
 - ThreadView has a Refresh Thread button: re-fetches root/replies/reactions, then re-renders the hero, replies_box, and metric labels from the DB / client.metrics
