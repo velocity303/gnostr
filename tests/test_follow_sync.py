@@ -128,10 +128,23 @@ def test_pull_reconciles_db_from_relay_kind3(client):
     assert any("reconciled" in line for line in client.relay_log)
 
 
-def test_pull_ignores_other_authors_kind3(client):
-    ev = _kind3("f" * 64, ["c" * 64])
+def test_pull_reconciles_foreign_kind3_to_that_owner(client):
+    """Kind-3 from ANY author reconciles THAT author's following rows —
+    the table is owner-keyed, so other users' lists populate their own
+    rows (this is how the Follows list gets data for other profiles)."""
+    other = "f" * 64
+    ev = _kind3(other, ["c" * 64, "d" * 64])
     _run_handle(client, ev)
-    client.db.save_contacts.assert_not_called()
+
+    client.db.save_contacts.assert_called_once_with(other, ["c" * 64, "d" * 64])
+    # Activity-pane log line is own-pubkey-only (foreign lists are quieter).
+    assert not any("reconciled" in line for line in client.relay_log)
+
+
+def test_pull_own_kind3_still_logs_reconciliation(client):
+    ev = _kind3(client.my_pubkey, ["c" * 64])
+    _run_handle(client, ev)
+    assert any("reconciled" in line for line in client.relay_log)
 
 
 def test_push_sync_republishes_db_list_as_kind3(client):

@@ -337,7 +337,10 @@ class MainWindow(Adw.ApplicationWindow):
             if self.pub_key:
                 GLib.idle_add(self.client.fetch_contacts)
 
-    def on_contacts_updated(self, client):
+    def on_contacts_updated(self, client, pubkey):
+        # An owner's following list was reconciled (own or foreign kind-3).
+        # Open FollowsListView widgets self-refresh via the signal; nothing
+        # else needs updating here.
         pass
 
     def on_profile_updated(self, client, pubkey):

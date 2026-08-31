@@ -187,7 +187,7 @@ class NostrClient(GObject.Object):
         # 30000-39999 and never hit event-received).
         "quote-event-received": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         "profile-updated": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
-        "contacts-updated": (GObject.SignalFlags.RUN_FIRST, None, ()),
+        "contacts-updated": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         "status-changed": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         "relay-list-updated": (GObject.SignalFlags.RUN_FIRST, None, ()),
         "metrics-updated": (GObject.SignalFlags.RUN_FIRST, None, (str, int, int, int)),
@@ -534,7 +534,7 @@ class NostrClient(GObject.Object):
             self.publish(signed)
             self._track_publish(signed, label)
             self.db.save_contacts(self.my_pubkey, following)
-            GLib.idle_add(self.emit, "contacts-updated")
+            GLib.idle_add(self.emit, "contacts-updated", self.my_pubkey)
 
     def get_ref_id(self, tags):
         for t in tags:
@@ -618,14 +618,16 @@ class NostrClient(GObject.Object):
             self.db.save_badge_definition(ev)
 
         elif kind == 3:
+            # PULL reconciliation for ANY author: the newest kind-3 is that
+            # author's authoritative contact list — save_contacts replaces
+            # that owner's following rows wholesale (the table is
+            # owner-keyed, so foreign lists populate their own rows).
+            c = gnostr.nostr_utils.extract_followed_pubkeys(ev)
+            self.db.save_contacts(pubkey, c)
             if pubkey == self.my_pubkey:
-                # PULL reconciliation: the newest kind-3 from the relays is the
-                # authoritative contact list — save_contacts replaces the DB
-                # rows wholesale, so the DB ends up matching what relays have.
-                c = gnostr.nostr_utils.extract_followed_pubkeys(ev)
-                self.db.save_contacts(self.my_pubkey, c)
                 self._log_relay(f"kind-3 received: {len(c)} follows reconciled")
-                GLib.idle_add(self.emit, "contacts-updated")
+                # Relay-hint merging is own-pubkey-only: foreign kind-3
+                # content is not ours to merge.
                 try:
                     if ev["content"]:
                         rj = json.loads(ev["content"])
@@ -633,6 +635,7 @@ class NostrClient(GObject.Object):
                             self._merge_relays(rj.keys())
                 except Exception:
                     pass
+            GLib.idle_add(self.emit, "contacts-updated", pubkey)
 
         elif kind == 10002:
             if pubkey == self.my_pubkey:
