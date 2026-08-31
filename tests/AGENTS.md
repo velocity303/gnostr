@@ -21,7 +21,8 @@ Test suite for gnostr — pytest-based with xvfb for GTK rendering. Covers servi
 - `test_profile_nips.py` — profile NIP protocol helpers: NIP-05 verification (mocked urllib), NIP-39 external identities, NIP-58 profile badges, LUD-16 resolution — imports real `profile_nips` (GTK-free)
 - `test_search_resolver.py` — search identifier resolver: npub/nprofile/nsec/hex/nostr: → pubkey — imports real `nostr_utils` (GTK-free)
 - `test_search_dialog.py` — SearchDialog construction smoke test (mocked gi)
-- `test_follow_sync.py` — follower sync: kind-3 pull reconciliation (`_handle_event` → `save_contacts`) + `sync_followers` push (DB list → kind-3, OK-ack tracked). NostrClient subclasses mocked GObject (imported class is a Mock), so tests extract the real methods from client.py via ast and bind them to a FakeClient
+- `test_follow_sync.py` — follower sync: kind-3 pull reconciliation (`_handle_event` → `save_contacts`, ANY author reconciles that owner's rows) + `sync_followers` push (DB list → kind-3, OK-ack tracked) + `fetch_contacts_for` (any author's kind-3 sub). NostrClient subclasses mocked GObject (imported class is a Mock), so tests extract the real methods from client.py via ast and bind them to a FakeClient
+- `test_follows_view.py` — FollowersListView logic: ast-extracts the real methods from followers_list_view.py (the gi mocks make the imported widget class a Mock) and binds them to a FakeView — reload builds one row per followed pubkey, owner-matched `contacts-updated` self-refresh (foreign owners ignored), refresh → `fetch_contacts_for(owner)`, row activation → `show_profile`, own-vs-foreign title wording
 - `test_simple.py` — basic import/smoke tests
 
 ## Local Contracts
