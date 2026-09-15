@@ -2,6 +2,10 @@
 
 This document tracks all bugs, issues, and problems that need fixing.
 
+> **Tracking migration (2026-09-15):** new feature work is tracked as Gitea issues
+> (VelocityNet/gnostr). Onboarding & key management: #14 (P1 NIP-49), #15 (P2 NIP-46),
+> #16 (P3 optional) — design spec at `docs/onboarding-key-management.md`.
+
 ## Current Workstream
 
 ### 12. Follows List + Feed Renames (NEW FEATURE — implemented 2026-08-31)
