@@ -503,10 +503,6 @@ class GnostrApp(Adw.Application):
         )
 
     def do_activate(self):
-        win = self.props.active_window
-        if not win:
-            win = MainWindow(application=self)
-        win.present()
         # Initialize GStreamer for video/GIF support
         try:
             from gi.repository import Gst
@@ -514,21 +510,25 @@ class GnostrApp(Adw.Application):
             Gst.init(None)
         except Exception as e:
             print(f"GStreamer init failed: {e}")
-        # Register the liked-state accent rule (idempotent per provider load).
+        # Register CSS BEFORE presenting so the first window layout pass sees
+        # the toast rule: narrow phones (e.g. Librem 5: 720 px panel at scale
+        # 2 = 360 logical px) cannot fit libadwaita's fixed 368 px toast
+        # (+margins = 384 px) and warn "AdwToastOverlay exceeds MainWindow
+        # width"; min-width:0 releases it (measured on-device: overlay min
+        # drops 384 -> 51). GTK CSS has no @media/max-width — plain min-width.
         css = Gtk.CssProvider()
         css.load_from_string(
             ".liked { color: @accent_color; }"
             ".liked image { color: @accent_color; }"
-            # Narrow phones (e.g. Librem 5: 720 px panel at scale 2 = 360 logical
-            # px) cannot fit libadwaita's fixed 368 px toast (+16 px margins =
-            # 384 px), so AdwToastOverlay warns "exceeds MainWindow width" and
-            # the toast clips. Cap toasts below the window width on small screens.
-            "@media (max-width: 400px) { .toast { min-width: 0; max-width: 320px; } }"
-            ".toast { min-width: 0; }"
+            ".toast { min-width: 0px; }"
         )
         Gtk.StyleContext.add_provider_for_display(
             Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
         )
+        win = self.props.active_window
+        if not win:
+            win = MainWindow(application=self)
+        win.present()
 
 
 def main(version):
