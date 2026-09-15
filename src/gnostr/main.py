@@ -517,7 +517,14 @@ class GnostrApp(Adw.Application):
         # Register the liked-state accent rule (idempotent per provider load).
         css = Gtk.CssProvider()
         css.load_from_string(
-            ".liked { color: @accent_color; }" ".liked image { color: @accent_color; }"
+            ".liked { color: @accent_color; }"
+            ".liked image { color: @accent_color; }"
+            # Narrow phones (e.g. Librem 5: 720 px panel at scale 2 = 360 logical
+            # px) cannot fit libadwaita's fixed 368 px toast (+16 px margins =
+            # 384 px), so AdwToastOverlay warns "exceeds MainWindow width" and
+            # the toast clips. Cap toasts below the window width on small screens.
+            "@media (max-width: 400px) { .toast { min-width: 0; max-width: 320px; } }"
+            ".toast { min-width: 0; }"
         )
         Gtk.StyleContext.add_provider_for_display(
             Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
