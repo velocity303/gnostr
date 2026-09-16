@@ -25,7 +25,7 @@ Unsettled — do not depend on:
 
 Non-negotiable copy rule: identities are unrecoverable. New-key flows must state *"If you lose this key, your account is gone forever"* and the backup gate must be un-skippable before entering the app.
 
-## P1 — Create account + backup gate + NIP-49 (settled standards, self-contained)
+## P1 — Create account + backup gate + NIP-49 (settled standards, self-contained) — ✅ IMPLEMENTED 2026-09-15 (Gitea #14)
 
 ### Flows
 

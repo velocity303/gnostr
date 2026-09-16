@@ -9,6 +9,7 @@ GTK widget components — all reusable UI elements for displaying Nostr data. Ea
 - `profile_view.py` — ProfileView: user profile display with avatar, name, bio, banner, website, nip05, lightning, external identities, badges, counts
 - `thread_view.py` — ThreadView: event thread with reply tree
 - `sidebar.py` — Sidebar: navigation menu (global/following/profile/search/follows) + Relay Activity pane
+- `onboarding.py` — CreateAccountWindow wizard (intro→gate→wrap→blob): un-skippable nsec type-back backup gate, optional NIP-49 wrap, commits key to libsecret only at finish, then opens EditProfileDialog (P1 #14)
 - `followers_list_view.py` — FollowersListView: reusable follows list for any owner (own pubkey, is_own=True, carries the Sync button, or a foreign profile). Rows = db.get_following_list(owner) (owner-keyed table); Refresh calls `client.fetch_contacts_for(owner)`; row tap → `main_window.show_profile`
 
 ## Local Contracts

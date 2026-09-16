@@ -45,6 +45,7 @@ Architecture:
 - `src/gnostr/database.py` — SQLite event/profile storage
 - `src/gnostr/dialogs.py` — login, compose, relay preference dialogs
 - `src/gnostr/key_manager.py` — nsec key storage via libsecret
+- `src/gnostr/nip49.py` — NIP-49 ncryptsec encrypted key backup (pure Python, stdlib-only)
 - `src/gnostr/nostr_utils.py` — Nostr protocol utilities (bech32, keys)
 - `src/gnostr/connection_status.py` — relay connection status tracking
 - `src/gnostr/gateway/` — relay connection gateway
@@ -97,4 +98,4 @@ Build system: Meson with Flatpak Builder. CI via Gitea Actions (`.gitea/workflow
 | `src/gnostr/ui/AGENTS.md` | GTK widgets: feed view, post widget, profile view, thread view, sidebar |
 | `src/gnostr/util/AGENTS.md` | Cache manager, connection state utilities |
 | `tests/AGENTS.md` | Testing conventions, mocking patterns, CI setup |
-| `docs/onboarding-key-management.md` | Design spec (proposed): new-user onboarding, NIP-49 backups, NIP-46 remote signing — P1/P2/P3 scope + module contracts |
+| `docs/onboarding-key-management.md` | Design spec: P1 (create-account + NIP-49) IMPLEMENTED 2026-09-15; P2 NIP-46 + P3 pending — tracked as Gitea issues #14/#15/#16 |

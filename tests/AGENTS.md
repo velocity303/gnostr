@@ -23,6 +23,9 @@ Test suite for gnostr — pytest-based with xvfb for GTK rendering. Covers servi
 - `test_search_dialog.py` — SearchDialog construction smoke test (mocked gi)
 - `test_follow_sync.py` — follower sync: kind-3 pull reconciliation (`_handle_event` → `save_contacts`, ANY author reconciles that owner's rows) + `sync_followers` push (DB list → kind-3, OK-ack tracked) + `fetch_contacts_for` (any author's kind-3 sub). NostrClient subclasses mocked GObject (imported class is a Mock), so tests extract the real methods from client.py via ast and bind them to a FakeClient
 - `test_follows_view.py` — FollowersListView logic: ast-extracts the real methods from followers_list_view.py (the gi mocks make the imported widget class a Mock) and binds them to a FakeView — reload builds one row per followed pubkey, owner-matched `contacts-updated` self-refresh (foreign owners ignored), refresh → `fetch_contacts_for(owner)`, row activation → `show_profile`, own-vs-foreign title wording
+- `test_onboarding_keys.py` — generate_keypair (SEC2 range, nsec round-trip, randomness) + `dialogs.resolve_login_input` (hex/nsec/ncryptsec/wrong-password) — pure pytest
+- `test_nip49.py` — NIP-49 ncryptsec: official NIP decryption vector, wrong-password/tamper raises, round-trip incl. unicode password — pure pytest
+- `test_onboarding_wizard.py` — CreateAccountWindow gate rule: ast-extracts `_on_gate_confirmed` (gi mocks make the class unconstructable) + FakeView; type-back gate must block/allow the stack advance
 - `test_simple.py` — basic import/smoke tests
 
 ## Local Contracts
