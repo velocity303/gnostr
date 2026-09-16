@@ -110,6 +110,9 @@ class MainWindow(Adw.ApplicationWindow):
             valign=Gtk.Align.CENTER,
         )
         bx.append(lb)
+        ca = Gtk.Button(label="Create account", css_classes=["pill"])
+        ca.connect("clicked", self.on_create_account_clicked)
+        bx.append(ca)
         self.login_page.set_child(bx)
 
         # 5. Assemble Stack
@@ -194,6 +197,11 @@ class MainWindow(Adw.ApplicationWindow):
 
     def on_login_clicked(self, btn):
         LoginDialog(self.client, self).present()
+
+    def on_create_account_clicked(self, btn):
+        from .ui.onboarding import CreateAccountWindow
+
+        CreateAccountWindow(self.client, self).present()
 
     def on_logout_clicked(self):
         KeyManager.delete_key()
