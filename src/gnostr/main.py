@@ -208,6 +208,11 @@ class MainWindow(Adw.ApplicationWindow):
         self.main_stack.set_visible_child_name("login")
         self.client.set_keys(None, None)
 
+    def on_export_key_clicked(self):
+        from .dialogs import ExportKeyDialog
+
+        ExportKeyDialog(self).present()
+
     def on_fab_post_clicked(self, button):
         from gnostr.dialogs import ComposeWindow
 

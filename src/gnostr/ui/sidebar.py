@@ -60,6 +60,11 @@ class Sidebar(Gtk.Box):
         self.relay_expander.add_row(sw)
         self.append(self.relay_expander)
 
+        # Back Up Key (NIP-49 export, P1 #14)
+        bb = Gtk.Button(label="Back Up Key", css_classes=["flat"])
+        bb.connect("clicked", self.on_backup_key_clicked)
+        self.append(bb)
+
         # Logout Button
         lb = Gtk.Button(label="Logout", css_classes=["flat"])
         lb.connect("clicked", self.on_logout_clicked)
@@ -87,6 +92,9 @@ class Sidebar(Gtk.Box):
 
     def on_logout_clicked(self, b):
         self.main_window.on_logout_clicked()
+
+    def on_backup_key_clicked(self, b):
+        self.main_window.on_export_key_clicked()
 
     def update_status(self, status_emoji):
         self.status_label.set_text(status_emoji)

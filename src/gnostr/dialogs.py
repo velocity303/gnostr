@@ -123,6 +123,56 @@ class LoginDialog(Adw.Window):
             self.close()
 
 
+class ExportKeyDialog(Adw.Window):
+    """Produce an NIP-49 ncryptsec backup of the keyring-stored key (P1 #14).
+
+    Closes the loop for users who logged in before the wizard existed: the
+    at-rest libsecret key is wrapped with a user password and shown for
+    copying. The plaintext key is never written to disk here."""
+
+    def __init__(self, parent):
+        super().__init__()
+        self.set_transient_for(parent)
+        self.set_modal(True)
+        self.set_title("Back Up Key (Encrypted)")
+        self.set_default_size(450, 360)
+        tb = Adw.ToolbarView()
+        self.set_content(tb)
+        tb.add_top_bar(Adw.HeaderBar())
+        page = Adw.PreferencesPage()
+        tb.set_content(page)
+        g = Adw.PreferencesGroup(title="Choose a backup password")
+        page.add(g)
+        self.pw1 = Adw.PasswordEntryRow(title="Password")
+        self.pw2 = Adw.PasswordEntryRow(title="Repeat password")
+        g.add(self.pw1)
+        g.add(self.pw2)
+        self.err = Gtk.Label(label="", css_classes=["error-label"])
+        g.add(self.err)
+        g2 = Adw.PreferencesGroup()
+        page.add(g2)
+        b = Gtk.Button(label="Encrypt", css_classes=["pill", "suggested-action"])
+        b.connect("clicked", self.on_encrypt)
+        g2.add(b)
+        self.result_label = Gtk.Label(
+            label="", wrap=True, selectable=True, css_classes=["monospace"]
+        )
+        g2.add(self.result_label)
+
+    def on_encrypt(self, btn):
+        p1 = self.pw1.get_text()
+        if len(p1) < 8 or p1 != self.pw2.get_text():
+            self.err.set_text("Use at least 8 characters, entered identically.")
+            return
+        nsec_hex = KeyManager.load_key()
+        if not nsec_hex:
+            self.err.set_text("No key in the keyring.")
+            return
+        from gnostr.nip49 import nip49_encrypt
+
+        self.result_label.set_text(nip49_encrypt(nsec_hex, p1))
+
+
 class ComposeWindow(Adw.Window):
     def __init__(self, parent, on_post_callback):
         super().__init__()
