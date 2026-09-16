@@ -60,6 +60,23 @@ class RelayPreferencesWindow(Adw.PreferencesWindow):
             self.relay_rows.append(r)
 
 
+def resolve_login_input(text, password):
+    """Map any accepted login secret (hex | nsec | ncryptsec) to a hex key.
+
+    Raises ValueError for ncryptsec with wrong password / corruption so the
+    dialog can show it. This is the single decision point the GTK layer
+    calls; unit-tested without widgets (tests/test_onboarding_keys.py).
+    """
+    text = text.strip()
+    if text.startswith("ncryptsec"):
+        from gnostr.nip49 import nip49_decrypt
+
+        return nip49_decrypt(text, password)
+    if text.startswith("nsec"):
+        return nostr_utils.nsec_to_hex(text)
+    return text
+
+
 class LoginDialog(Adw.Window):
     def __init__(self, client, parent):
         super().__init__()
@@ -77,20 +94,24 @@ class LoginDialog(Adw.Window):
         p.add(g)
         self.ent = Adw.PasswordEntryRow(title="Private Key")
         g.add(self.ent)
+        self.pw_ent = Adw.PasswordEntryRow(title="Password (ncryptsec only)")
+        g.add(self.pw_ent)
         bg = Adw.PreferencesGroup()
         p.add(bg)
+        self.error_label = Gtk.Label(label="", css_classes=["error-label"])
+        bg.add(self.error_label)
         b = Gtk.Button(label="Login", css_classes=["pill", "suggested-action"])
         b.connect("clicked", self.on_login)
         bg.add(b)
 
     def on_login(self, b):
-        k = self.ent.get_text()
-        h = None
-        if k:
-            if nostr_utils and k.startswith("nsec"):
-                h = nostr_utils.nsec_to_hex(k)
-            else:
-                h = k
+        try:
+            h = resolve_login_input(self.ent.get_text(), self.pw_ent.get_text())
+        except ValueError:
+            self.error_label.set_text(
+                "Could not decrypt — wrong password or corrupt key."
+            )
+            return
         if h and nostr_utils.get_public_key(h):
             KeyManager.save_key(h)
             self.client.set_keys(nostr_utils.get_public_key(h), h)
