@@ -215,9 +215,8 @@ class CreateAccountWindow(Adw.Window):
             page_box = self.view_stack.get_visible_child()
             err = Gtk.Label(
                 label=(
-                    "Could not save to the system keyring (keyring locked or "
-                    "prompt dismissed). Unlock the keyring and press Encrypt/"
-                    "Skip again — your new key is still held in memory."
+                    "Keyring save failed — key held in memory only. "
+                    "Retry after unlocking the keyring."
                 ),
                 wrap=True,
                 xalign=0,

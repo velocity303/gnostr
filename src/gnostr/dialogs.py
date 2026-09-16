@@ -118,9 +118,7 @@ class LoginDialog(Adw.Window):
             # "user interaction failed" from gnome-keyring was ignored).
             if not KeyManager.save_key(h):
                 self.error_label.set_text(
-                    "Could not save the key to the system keyring. Unlock "
-                    "your login keyring (or dismiss the prompt and retry) — "
-                    "logging in without saving would not survive a restart."
+                    "Keyring save failed — key not persisted."
                 )
                 return
             self.client.set_keys(nostr_utils.get_public_key(h), h)
