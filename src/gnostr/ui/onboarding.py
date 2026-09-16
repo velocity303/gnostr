@@ -208,7 +208,23 @@ class CreateAccountWindow(Adw.Window):
 
     # ---- finish: commit to keyring + login + bootstrap -------------------
     def _finish(self):
-        KeyManager.save_key(self._priv_hex)
+        if not KeyManager.save_key(self._priv_hex):
+            # Surface the failure but keep the user on the wrap page so the
+            # generated key is not lost: they can retry after unlocking.
+            self.view_stack.set_visible_child_name("wrap")
+            page_box = self.view_stack.get_visible_child()
+            err = Gtk.Label(
+                label=(
+                    "Could not save to the system keyring (keyring locked or "
+                    "prompt dismissed). Unlock the keyring and press Encrypt/"
+                    "Skip again — your new key is still held in memory."
+                ),
+                wrap=True,
+                xalign=0,
+                css_classes=["error-label"],
+            )
+            page_box.append(err)
+            return
         self.main_window.perform_login(self._priv_hex)
         self.close()
         # Profile bootstrap: never land a new user on a blank identity.

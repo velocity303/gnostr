@@ -113,7 +113,16 @@ class LoginDialog(Adw.Window):
             )
             return
         if h and nostr_utils.get_public_key(h):
-            KeyManager.save_key(h)
+            # A failed keyring save must NOT silently log in — the session
+            # would work once and evaporate on restart (Librem 5 field bug:
+            # "user interaction failed" from gnome-keyring was ignored).
+            if not KeyManager.save_key(h):
+                self.error_label.set_text(
+                    "Could not save the key to the system keyring. Unlock "
+                    "your login keyring (or dismiss the prompt and retry) — "
+                    "logging in without saving would not survive a restart."
+                )
+                return
             self.client.set_keys(nostr_utils.get_public_key(h), h)
             self.client.fetch_user_relays()
             self.client.fetch_contacts()
