@@ -1,4 +1,5 @@
 """NIP-49 ncryptsec — pure pytest, no GTK. Vectors from the NIP itself."""
+
 import pytest
 
 from gnostr.nip49 import nip49_decrypt, nip49_encrypt

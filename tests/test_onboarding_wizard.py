@@ -2,6 +2,7 @@
 unusable for instantiation (same problem as followers_list_view), so we
 ast-extract the real methods from onboarding.py and bind them to a FakeView.
 """
+
 import ast
 import textwrap
 from unittest.mock import MagicMock
@@ -21,9 +22,7 @@ def _extract(method_names):
     out = {}
     for name in method_names:
         fn = next(
-            f
-            for f in cls.body
-            if isinstance(f, ast.FunctionDef) and f.name == name
+            f for f in cls.body if isinstance(f, ast.FunctionDef) and f.name == name
         )
         ns = {"gate_passed": gate_passed}
         exec(compile(ast.Module([fn], []), SRC, "exec"), ns)

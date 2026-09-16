@@ -137,7 +137,9 @@ def _scrypt32(pw, salt, log_n):
     so the limit must be raised explicitly — on the Flatpak runtime too.
     """
     mem = 128 * (1 << log_n) * 8  # scrypt working set
-    return hashlib.scrypt(pw, salt=salt, n=1 << log_n, r=8, p=1, dklen=32, maxmem=mem + (1 << 20))
+    return hashlib.scrypt(
+        pw, salt=salt, n=1 << log_n, r=8, p=1, dklen=32, maxmem=mem + (1 << 20)
+    )
 
 
 _CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"

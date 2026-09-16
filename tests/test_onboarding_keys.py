@@ -1,4 +1,5 @@
 """Onboarding key primitives — pure pytest, no GTK (conftest mocks gi anyway)."""
+
 import re
 
 import pytest

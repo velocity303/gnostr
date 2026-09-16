@@ -93,7 +93,9 @@ class CreateAccountWindow(Adw.Window):
 
     def _build_gate_widgets(self):
         self._gate_box.append(
-            Gtk.Label(label="Write this down NOW. It is shown only once.", wrap=True, xalign=0)
+            Gtk.Label(
+                label="Write this down NOW. It is shown only once.", wrap=True, xalign=0
+            )
         )
         self._nsec_label = Gtk.Label(
             label="•" * 24, wrap=True, selectable=True, css_classes=["monospace"]
@@ -150,7 +152,9 @@ class CreateAccountWindow(Adw.Window):
         )
         encrypt_btn.connect("clicked", self._on_encrypt_backup)
         page.append(encrypt_btn)
-        skip = Gtk.Button(label="Skip — my written copy is enough", css_classes=["flat"])
+        skip = Gtk.Button(
+            label="Skip — my written copy is enough", css_classes=["flat"]
+        )
         skip.connect("clicked", lambda b: self._finish())
         page.append(skip)
         self.view_stack.add_named(page, "wrap")
@@ -180,7 +184,9 @@ class CreateAccountWindow(Adw.Window):
                 xalign=0,
             )
         )
-        lbl = Gtk.Label(label=blob, wrap=True, selectable=True, css_classes=["monospace"])
+        lbl = Gtk.Label(
+            label=blob, wrap=True, selectable=True, css_classes=["monospace"]
+        )
         page.append(lbl)
         copy = Gtk.Button(label="Copy to clipboard")
         copy.connect("clicked", lambda b: self._copy(blob))
