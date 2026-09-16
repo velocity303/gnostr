@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import time
 
 import ecdsa
@@ -157,6 +158,22 @@ def get_public_key(priv_key_hex):
     except Exception as e:
         print(f"Key derivation error: {e}")
         return None
+
+
+def generate_keypair():
+    """Return (priv_hex, pub_hex) for a fresh random keypair.
+
+    Rejection-samples until the scalar is in [1, curve_order) per SEC2.
+    Callers convert to bech32 with hex_to_nsec()/hex_to_npub() as needed.
+    """
+    order = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
+    while True:
+        priv = os.urandom(32)
+        if 0 < int.from_bytes(priv, "big") < order:
+            priv_hex = priv.hex()
+            pub_hex = get_public_key(priv_hex)
+            if pub_hex:
+                return priv_hex, pub_hex
 
 
 def extract_followed_pubkeys(event_json):

@@ -3,6 +3,7 @@ install_data(
   [
     '__init__.py',
     'sidebar.py',
+    'onboarding.py',
     'feed_view.py',
     'post_widget.py',
     'profile_view.py',
