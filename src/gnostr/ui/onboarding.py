@@ -222,7 +222,7 @@ class CreateAccountWindow(Adw.Window):
 
         display = Gdk.Display.get_default()
         if display:
-            Gdk.Clipboard(display).set(text)
+            display.get_clipboard().set_text(text)
 
     # ---- finish: commit to keyring + login + bootstrap -------------------
     def _finish(self):

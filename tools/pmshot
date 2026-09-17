@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# pmshot — capture a fullscreen screenshot from the Plasma Mobile Librem 5
+# (postmarketOS, 192.168.5.183). KWin wlroots there exposes neither the zwlr
+# screencopy protocol (grim fails) nor org.kde.kwin.Screenshot, and X11 root
+# capture (scrot via Xwayland) sees only Xwayland clients. Spectacle's -b
+# flag captures the real compositor. This helper runs it remotely, pulls the
+# file down, and saves it locally.
+#
+# Usage: pmshot [OUT.png]   (default: ./pmshot-<ts>.png)
+set -euo pipefail
+HOST="${PMSHOT_HOST:-librem5-pm}"
+TS=$(date +%H%M%S)
+OUT="${1:-pmshot-$TS.png}"
+ssh "$HOST" 'export XDG_RUNTIME_DIR=/run/user/10000 WAYLAND_DISPLAY=wayland-0; \
+  for d in /run/user/10000/bus /tmp/dbus-*; do \
+    [ -S "$d" ] && export DBUS_SESSION_BUS_ADDRESS=unix:path=$d && break; done; \
+  timeout 25 spectacle -b -n -o /tmp/pmshot.png >/dev/null 2>&1'
+scp "$HOST:/tmp/pmshot.png" "$OUT"
+echo "saved $OUT"

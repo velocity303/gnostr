@@ -185,7 +185,9 @@ class ExportKeyDialog(Adw.Window):
 
         display = Gdk.Display.get_default()
         if display:
-            Gdk.Clipboard(display).set(self.result_label.get_text())
+            # Must use the display's default clipboard; constructing
+            # Gdk.Clipboard(display) makes a fresh one nothing pastes from.
+            display.get_clipboard().set_text(self.result_label.get_text())
         btn.set_label("Copied!")
 
     def on_encrypt(self, btn):
