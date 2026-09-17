@@ -106,6 +106,7 @@ class MainWindow(Adw.ApplicationWindow):
         lb.connect("clicked", self.on_login_clicked)
         bx = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL,
+            spacing=18,
             halign=Gtk.Align.CENTER,
             valign=Gtk.Align.CENTER,
         )

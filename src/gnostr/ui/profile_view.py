@@ -15,6 +15,15 @@ class ProfileView(Adw.Bin):
         self.main_window = main_window
         self.pubkey = pubkey
 
+        # The WHOLE page scrolls (banner, header, follow button, posts) in one
+        # ScrolledWindow — field bug: a large banner inside a non-scrolling
+        # header pushed the Follow button and posts off-screen on portrait
+        # phones with no way to reach them.
+        self._scroll = Gtk.ScrolledWindow()
+        self._scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self._scroll.set_hscrollbar_policy(Gtk.PolicyType.NEVER)
+        self.set_child(self._scroll)
+
         self.layout = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL,
             spacing=12,
@@ -23,7 +32,7 @@ class ProfileView(Adw.Bin):
             margin_start=12,
             margin_end=12,
         )
-        self.set_child(self.layout)
+        self._scroll.set_child(self.layout)
 
         # Header with back button, avatar, npub
         header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
@@ -55,14 +64,17 @@ class ProfileView(Adw.Bin):
             else pubkey[:8]
         )
 
-        # Banner — wide background image at the top (NIP-24 `banner`, ~1024x768)
+        # Banner — wide background image at the top (NIP-24 `banner`, ~1024x768).
+        # Height-capped: portrait/oversized banners used to eat the whole screen
+        # and bury the Follow button below the fold. COVER crops to fill the
+        # capped slot instead of scaling the full image down the page.
         if prof and prof.get("banner"):
             self.banner_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             self.banner_container.set_size_request(-1, 160)
             self.banner_container.set_halign(Gtk.Align.FILL)
             self.layout.append(self.banner_container)
             ImageLoader.load_image_into_widget(
-                prof["banner"], self.banner_container, None
+                prof["banner"], self.banner_container, None, max_height=200
             )
 
         # Avatar - supports animated GIFs/videos
@@ -194,15 +206,12 @@ class ProfileView(Adw.Bin):
 
         self.layout.append(header)
 
-        # Posts List with scrolling
-        scroll = Gtk.ScrolledWindow()
-        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        c = Adw.Clamp(maximum_size=600)
+        # Posts List — plain box; the whole page already scrolls in _scroll.
+        # (A nested ScrolledWindow here fought the outer one for touch events.)
         self.posts_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        c = Adw.Clamp(maximum_size=600)
         c.set_child(self.posts_box)
-        scroll.set_child(c)
-        scroll.set_vexpand(True)
-        self.layout.append(scroll)
+        self.layout.append(c)
 
         # Load posts from DB
         posts = self.main_window.db.get_feed_for_user(pubkey)

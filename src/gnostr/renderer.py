@@ -665,7 +665,9 @@ class ImageLoader:
         ImageLoader._request_image(url, callback, size=(64, 64))
 
     @staticmethod
-    def load_image_into_widget(url, container, spinner, window_ref=None):
+    def load_image_into_widget(
+        url, container, spinner, window_ref=None, max_height=None
+    ):
         def on_ready(texture):
             if spinner and spinner.get_parent() == container:
                 container.remove(spinner)
@@ -684,11 +686,17 @@ class ImageLoader:
                         available_width = 600
 
                 req_height = int(available_width / ratio)
+                if max_height:
+                    # Banner-style slot: cap the height and cover-crop so a
+                    # tall portrait banner can't eat the whole screen.
+                    req_height = min(req_height, max_height)
                 container.set_size_request(-1, req_height)
 
                 p = Gtk.Picture.new_for_paintable(texture)
                 p.set_can_shrink(True)
-                p.set_content_fit(Gtk.ContentFit.CONTAIN)
+                p.set_content_fit(
+                    Gtk.ContentFit.COVER if max_height else Gtk.ContentFit.CONTAIN
+                )
                 p.set_halign(Gtk.Align.FILL)
 
                 container.append(p)
