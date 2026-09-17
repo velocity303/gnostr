@@ -147,7 +147,11 @@ class ExportKeyDialog(Adw.Window):
         self.set_content(tb)
         tb.add_top_bar(Adw.HeaderBar())
         page = Adw.PreferencesPage()
-        tb.set_content(page)
+        # Scrollable: on a portrait phone the wrapped blob + buttons exceed
+        # the screen height; without this the Copy button is unreachable.
+        scroll = Gtk.ScrolledWindow(vexpand=True)
+        scroll.set_child(page)
+        tb.set_content(scroll)
         g = Adw.PreferencesGroup(title="Choose a backup password")
         page.add(g)
         self.pw1 = Adw.PasswordEntryRow(title="Password")
@@ -161,6 +165,9 @@ class ExportKeyDialog(Adw.Window):
         b = Gtk.Button(label="Encrypt", css_classes=["pill", "suggested-action"])
         b.connect("clicked", self.on_encrypt)
         g2.add(b)
+        self.copy_btn = Gtk.Button(label="Copy to clipboard", visible=False)
+        self.copy_btn.connect("clicked", self.on_copy)
+        g2.add(self.copy_btn)
         # WORD_CHAR: the ncryptsec blob is one long token; WORD wrap would
         # never break it and the row overflows a portrait phone screen.
         self.result_label = Gtk.Label(
@@ -172,9 +179,6 @@ class ExportKeyDialog(Adw.Window):
             xalign=0,
         )
         g2.add(self.result_label)
-        self.copy_btn = Gtk.Button(label="Copy to clipboard", visible=False)
-        self.copy_btn.connect("clicked", self.on_copy)
-        g2.add(self.copy_btn)
 
     def on_copy(self, btn):
         from gi.repository import Gdk

@@ -34,6 +34,13 @@ def _page():
     return box
 
 
+def _scrolled(box):
+    """Pages with wrapped key blobs can exceed portrait height; make them scroll."""
+    sw = Gtk.ScrolledWindow(vexpand=True)
+    sw.set_child(box)
+    return sw
+
+
 class CreateAccountWindow(Adw.Window):
     def __init__(self, client, main_window):
         super().__init__()
@@ -89,7 +96,7 @@ class CreateAccountWindow(Adw.Window):
     # ---- page: backup gate ----------------------------------------------
     def _build_gate(self):
         self._gate_box = _page()
-        self.view_stack.add_named(self._gate_box, "gate")
+        self.view_stack.add_named(_scrolled(self._gate_box), "gate")
 
     def _build_gate_widgets(self):
         self._gate_box.append(
@@ -162,7 +169,8 @@ class CreateAccountWindow(Adw.Window):
         )
         skip.connect("clicked", lambda b: self._finish())
         page.append(skip)
-        self.view_stack.add_named(page, "wrap")
+        self._wrap_box = page
+        self.view_stack.add_named(_scrolled(page), "wrap")
 
     def _on_encrypt_backup(self, btn):
         p1 = self._pw1.get_text()
@@ -206,7 +214,7 @@ class CreateAccountWindow(Adw.Window):
         )
         done.connect("clicked", lambda b: self._finish())
         page.append(done)
-        self.view_stack.add_named(page, "blob")
+        self.view_stack.add_named(_scrolled(page), "blob")
         self.view_stack.set_visible_child_name("blob")
 
     def _copy(self, text):
@@ -222,7 +230,7 @@ class CreateAccountWindow(Adw.Window):
             # Surface the failure but keep the user on the wrap page so the
             # generated key is not lost: they can retry after unlocking.
             self.view_stack.set_visible_child_name("wrap")
-            page_box = self.view_stack.get_visible_child()
+            page_box = self._wrap_box
             err = Gtk.Label(
                 label=(
                     "Keyring save failed — key held in memory only. "
