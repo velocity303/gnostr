@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# pmshot — capture a fullscreen screenshot from the Plasma Mobile Librem 5
-# (postmarketOS, 192.168.5.183). KWin wlroots there exposes neither the zwlr
-# screencopy protocol (grim fails) nor org.kde.kwin.Screenshot, and X11 root
-# capture (scrot via Xwayland) sees only Xwayland clients. Spectacle's -b
-# flag captures the real compositor. This helper runs it remotely, pulls the
-# file down, and saves it locally.
+# pmshot — fullscreen screenshot from the Plasma Mobile Librem 5 (librem5-pm).
 #
-# Usage: pmshot [OUT.png]   (default: ./pmshot-<ts>.png)
+# This KWin wlroots build exposes neither zwlr-screencopy (grim fails) nor the
+# legacy org.kde.kwin.Screenshot API (gone); portal Screenshot requests get
+# accepted but never answered. Working path: `spectacle -b -n -o` — BUT it
+# returns a stale frozen frame while the session is locked (identical bytes
+# for any content). Screen lock must be OFF (System Settings → or it was
+# disabled on this device 2026-09-17). Verify freshness: consecutive shots
+# should differ (a ticking clock suffices).
 set -euo pipefail
-HOST="${PMSHOT_HOST:-librem5-pm}"
-TS=$(date +%H%M%S)
-OUT="${1:-pmshot-$TS.png}"
-ssh "$HOST" 'export XDG_RUNTIME_DIR=/run/user/10000 WAYLAND_DISPLAY=wayland-0; \
-  for d in /run/user/10000/bus /tmp/dbus-*; do \
-    [ -S "$d" ] && export DBUS_SESSION_BUS_ADDRESS=unix:path=$d && break; done; \
-  timeout 25 spectacle -b -n -o /tmp/pmshot.png >/dev/null 2>&1'
-scp "$HOST:/tmp/pmshot.png" "$OUT"
+OUT=${1:?usage: pmshot <local-path>}
+ssh librem5-pm "
+export XDG_RUNTIME_DIR=/run/user/10000 WAYLAND_DISPLAY=wayland-0
+export DBUS_SESSION_BUS_ADDRESS=unix:path=\$(ls /tmp/dbus-* | head -1)
+timeout 25 spectacle -b -n -o /tmp/pmshot.png
+"
+scp librem5-pm:/tmp/pmshot.png "$OUT" >/dev/null
 echo "saved $OUT"
