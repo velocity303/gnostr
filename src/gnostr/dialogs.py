@@ -2,7 +2,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, Adw
+from gi.repository import Gtk, Adw, Pango
 from gnostr.key_manager import KeyManager
 import gnostr.nostr_utils as nostr_utils
 
@@ -161,10 +161,28 @@ class ExportKeyDialog(Adw.Window):
         b = Gtk.Button(label="Encrypt", css_classes=["pill", "suggested-action"])
         b.connect("clicked", self.on_encrypt)
         g2.add(b)
+        # WORD_CHAR: the ncryptsec blob is one long token; WORD wrap would
+        # never break it and the row overflows a portrait phone screen.
         self.result_label = Gtk.Label(
-            label="", wrap=True, selectable=True, css_classes=["monospace"]
+            label="",
+            wrap=True,
+            wrap_mode=Pango.WrapMode.WORD_CHAR,
+            selectable=True,
+            css_classes=["monospace"],
+            xalign=0,
         )
         g2.add(self.result_label)
+        self.copy_btn = Gtk.Button(label="Copy to clipboard", visible=False)
+        self.copy_btn.connect("clicked", self.on_copy)
+        g2.add(self.copy_btn)
+
+    def on_copy(self, btn):
+        from gi.repository import Gdk
+
+        display = Gdk.Display.get_default()
+        if display:
+            Gdk.Clipboard(display).set(self.result_label.get_text())
+        btn.set_label("Copied!")
 
     def on_encrypt(self, btn):
         p1 = self.pw1.get_text()
@@ -178,6 +196,7 @@ class ExportKeyDialog(Adw.Window):
         from gnostr.nip49 import nip49_encrypt
 
         self.result_label.set_text(nip49_encrypt(nsec_hex, p1))
+        self.copy_btn.set_visible(True)
 
 
 class ComposeWindow(Adw.Window):

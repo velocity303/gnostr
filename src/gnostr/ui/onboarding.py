@@ -10,7 +10,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gtk
+from gi.repository import Adw, Gtk, Pango
 
 from .. import nostr_utils
 from ..key_manager import KeyManager
@@ -98,7 +98,12 @@ class CreateAccountWindow(Adw.Window):
             )
         )
         self._nsec_label = Gtk.Label(
-            label="•" * 24, wrap=True, selectable=True, css_classes=["monospace"]
+            label="•" * 24,
+            wrap=True,
+            wrap_mode=Pango.WrapMode.WORD_CHAR,
+            selectable=True,
+            css_classes=["monospace"],
+            xalign=0,
         )
         self._gate_box.append(self._nsec_label)
         reveal = Gtk.Button(label="Reveal")
@@ -185,7 +190,12 @@ class CreateAccountWindow(Adw.Window):
             )
         )
         lbl = Gtk.Label(
-            label=blob, wrap=True, selectable=True, css_classes=["monospace"]
+            label=blob,
+            wrap=True,
+            wrap_mode=Pango.WrapMode.WORD_CHAR,
+            selectable=True,
+            css_classes=["monospace"],
+            xalign=0,
         )
         page.append(lbl)
         copy = Gtk.Button(label="Copy to clipboard")
