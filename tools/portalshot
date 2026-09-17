@@ -1,0 +1,21 @@
+#!/bin/sh
+# portalshot: trigger portal Screenshot and save the result to $1
+OUT=$1
+export XDG_RUNTIME_DIR=/run/user/10000
+export DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/dbus-ORIY2gzYqR
+TMP=/tmp/portalshot-$$.out
+dbus-monitor "interface='org.freedesktop.portal.Request'" > "$TMP" 2>&1 &
+MONPID=$!
+sleep 1
+busctl --user call org.freedesktop.portal.Desktop /org/freedesktop/portal/desktop org.freedesktop.portal.Screenshot Screenshot "sa{sv}" "pmtest" 1 "interactive" "b" "false" 2>&1 | head -1
+i=0
+URI=
+while [ $i -lt 20 ]; do
+  URI=$(grep -o 'file://[^"]*' "$TMP" | tail -1)
+  [ -n "$URI" ] && break
+  sleep 1; i=$((i+1))
+done
+kill $MONPID 2>/dev/null
+if [ -z "$URI" ]; then echo "no URI in:"; tail -5 "$TMP"; exit 1; fi
+SRC=$(echo "$URI" | sed 's|file://||')
+cp "$SRC" "$OUT" && echo "saved $OUT from $SRC"
