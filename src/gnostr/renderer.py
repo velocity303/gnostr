@@ -1,5 +1,6 @@
 import re
 import html
+import os
 from collections import OrderedDict
 import gi
 import urllib.request
@@ -23,8 +24,13 @@ from gi.repository import Gtk, Adw, GLib, Gdk, GdkPixbuf, Pango, Gst, GstApp, Gi
 
 from . import nostr_utils
 
-# Set to True to enable verbose 🎬 debug logging
-_DEBUG_VIDEO = False
+# Set to True to enable verbose 🎬 debug logging. Now env-driven so the whole
+# verbose picture (sink/caps setup, state changes, QOS, per-video [PERF] line)
+# can be captured in one session on a low-end device without a code edit:
+#   GNOSTR_VIDEO_LOG=1 flatpak run tech.livingonlinux.gnostr
+# The [PERF] line in _inspect_pipeline always prints (separate plain print).
+_DEBUG_VIDEO = os.environ.get("GNOSTR_VIDEO_LOG") == "1"
+
 
 # Task 10 (measured): videos decode at up to 1080p into a ~600px feed widget.
 # Cap the frame size delivered to the sink so decodebin3 scales to fit this box
