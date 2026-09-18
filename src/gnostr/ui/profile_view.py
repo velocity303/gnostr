@@ -21,7 +21,6 @@ class ProfileView(Adw.Bin):
         # phones with no way to reach them.
         self._scroll = Gtk.ScrolledWindow()
         self._scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        self._scroll.set_hscrollbar_policy(Gtk.PolicyType.NEVER)
         self.set_child(self._scroll)
 
         self.layout = Gtk.Box(
