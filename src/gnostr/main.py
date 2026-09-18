@@ -58,9 +58,14 @@ class MainWindow(Adw.ApplicationWindow):
         self.main_stack = Adw.ViewStack()
         self.toast_overlay.set_child(self.main_stack)
 
-        # FAB Button — place on the split view's content page via its own overlay
+        # FAB Button — place on the split view's content page via its own overlay.
+        # "edit-create-symbolic" is NOT in Adwaita/Phosh (verified: absent from
+        # symbolic/actions/), so the FAB rendered with the wrong/fallback glyph.
+        # Standard compose-new glyph in GNOME is the pencil-on-paper
+        # document-edit-symbolic; document-new-symbolic is the + fallback.
         self.fab_post = Gtk.Button(
-            icon_name="edit-create-symbolic", css_classes=["suggested-action", "pill"]
+            icon_name=self._resolve_fab_icon(),
+            css_classes=["suggested-action", "pill"],
         )
         self.fab_post.set_valign(Gtk.Align.END)
         self.fab_post.set_halign(Gtk.Align.END)
@@ -213,6 +218,31 @@ class MainWindow(Adw.ApplicationWindow):
         from .dialogs import ExportKeyDialog
 
         ExportKeyDialog(self).present()
+
+    @staticmethod
+    def _resolve_fab_icon():
+        """Pick the compose-FAB icon against the ACTIVE icon theme.
+
+        edit-create-symbolic (the old hard-coded name) does not exist in
+        Adwaita/Phosh, so the button fell back to the theme's broken/missing
+        glyph. Preference order, first hit wins (same pattern as
+        PostWidget._resolve_icon_name):
+          document-edit-symbolic  — pencil-on-paper, GNOME's compose glyph
+          document-new-symbolic   — plus-on-paper
+          list-add-symbolic       — guaranteed-present fallback
+        """
+        candidates = (
+            "document-edit-symbolic",
+            "document-new-symbolic",
+            "list-add-symbolic",
+        )
+        display = Gdk.Display.get_default()
+        if display is not None:
+            theme = Gtk.IconTheme.get_for_display(display)
+            for name in candidates:
+                if theme.has_icon(name):
+                    return name
+        return candidates[-1]
 
     def on_fab_post_clicked(self, button):
         from gnostr.dialogs import ComposeWindow
