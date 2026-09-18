@@ -31,6 +31,37 @@ flatpak-builder --force-clean --repo=repo build_dir tech.livingonlinux.gnostr.js
 flatpak build-bundle repo gnostr.flatpak tech.livingonlinux.gnostr
 ```
 
+Prebuilt flatpaks are available within the repo for Arm and x86.
+
+### Hardware-Accelerated Video (VA-API)
+
+**No environment variables are required in the default setup.** GStreamer's
+`playbin3` auto-detects a working VA-API driver at runtime, and the Flatpak
+manifest already grants GPU access (`--device=dri`). You only need to set a
+variable when you are making a deliberate choice — hybrid GPUs, an unusual
+driver stack, or a software-fallback problem you are diagnosing:
+
+| Situation | What to set |
+|---|---|
+| Intel integrated (HD/UHD) or AMD on older Mesa: wrong driver picked | `LIBVA_DRIVER_NAME=i965` (Intel Gen7–9), `crocus` (Intel on older Mesa), `radeonsi` (AMD) |
+| AMD RDNA2 or newer (RX 5000+) | Nothing — recent Mesa selects the Vulkan video path automatically; do **not** force `radeonsi` |
+| NVIDIA | Nothing inside Gnostr, but the Flatpak needs the NVIDIA driver: `flatpak install nvidia` (and the matching Platform extension if prompted) |
+| Hybrid graphics (iGPU + dGPU): pin which GPU decodes | `GST_VAAPI_DRM_DEVICE=/dev/dri/renderD128` (iGPU) or `/dev/dri/renderD129` (dGPU) — check with `ls /dev/dri/renderD*` |
+| gst-vaapi refuses to load a non-default driver | `GST_VAAPI_ALL_DRIVERS=1` |
+
+Because Gnostr ships as a Flatpak, these must be passed through Flatpak, not your
+shell:
+
+```bash
+flatpak run --env=GST_VAAPI_DRM_DEVICE=/dev/dri/renderD128 tech.livingonlinux.gnostr
+# make it permanent:
+flatpak override --user --env=GST_VAAPI_DRM_DEVICE=/dev/dri/renderD128 tech.livingonlinux.gnostr
+```
+
+To confirm hardware decode is actually in use, run with
+`GST_DEBUG=vaapidecode*:4,avdec_*:4` — you want to see `vaapidecode` selected;
+`avdec_h264` means GStreamer fell back to software decoding.
+
 ### Running Tests
 
 ```bash
@@ -51,8 +82,6 @@ isort src/ tests/
 # Check linting
 flake8 src/ tests/ --max-line-length=120
 ```
-
-Prebuilt flatpaks are available within the repo for Arm and x86.
 
 ## Contributing
 
