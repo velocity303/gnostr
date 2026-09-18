@@ -20,8 +20,10 @@ class ProfileView(Adw.Bin):
         # header pushed the Follow button and posts off-screen on portrait
         # phones with no way to reach them.
         self._scroll = Gtk.ScrolledWindow()
+        # set_policy covers BOTH axes — GTK4 removed the GTK3 per-axis
+        # set_hscrollbar_policy, and calling it raised AttributeError in
+        # __init__, so ProfileView never opened (whole profile nav dead).
         self._scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        self._scroll.set_hscrollbar_policy(Gtk.PolicyType.NEVER)
         self.set_child(self._scroll)
 
         self.layout = Gtk.Box(
