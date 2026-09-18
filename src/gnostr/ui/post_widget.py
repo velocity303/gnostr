@@ -113,25 +113,39 @@ class PostWidget(Adw.Bin):
         # sequence-state check then DENIES the card's gesture for that press.
         footer = Gtk.Box(spacing=20, margin_top=8)
 
-        def mk_met(icon, label):
+        def mk_met(icon, fallbacks, label):
             btn = Gtk.Button()
             b = Gtk.Box(spacing=6)
-            img = Gtk.Image.new_from_icon_name(icon)
+            # Resolve against the active theme so the icon never renders
+            # blank on a fresh install (chat-bubble-symbolic is absent from
+            # Adwaita/Phosh — that's the "broken icon" bug). The like button
+            # already did this via _update_like_icon; do it here for ALL three
+            # so a missing theme glyph falls back to a theme-present icon.
+            img = Gtk.Image.new_from_icon_name(
+                self._resolve_icon_name(icon, fallbacks)
+            )
             b.append(img)
             lbl = Gtk.Label(label=label, css_classes=["caption", "dim-label"])
             b.append(lbl)
             btn.set_child(b)
             btn.set_css_classes(["flat"])
-            # Keep the icon image reference on the button so _update_like_icon
-            # can call set_from_icon_name directly (no fragile child-walk).
             btn.icon_img = img
             return lbl, btn
 
-        self.lbl_replies, self.btn_reply = mk_met("chat-bubble-symbolic", "0")
-        self.lbl_reposts, self.btn_repost = mk_met(
-            "media-playlist-repeat-symbolic", "0"
+        # Reply: mail-reply-sender-symbolic is the classic curved reply arrow
+        # (present in Adwaita); chat-bubble-symbolic is absent so it falls
+        # back — but never blank.
+        self.lbl_replies, self.btn_reply = mk_met(
+            "chat-bubble-symbolic",
+            ("mail-reply-sender-symbolic", "chat-message-new-symbolic"),
+            "0",
         )
-        self.lbl_likes, self.btn_like = mk_met("star-symbolic", "0")
+        self.lbl_reposts, self.btn_repost = mk_met(
+            "media-playlist-repeat-symbolic",
+            ("view-refresh-symbolic",),
+            "0",
+        )
+        self.lbl_likes, self.btn_like = mk_met("star-symbolic", (), "0")
 
         footer.append(self.btn_reply)
         footer.append(self.btn_repost)
@@ -204,10 +218,16 @@ class PostWidget(Adw.Bin):
         self.main_window.show_thread(event_id, pubkey, content, tags)
 
     @staticmethod
-    def _resolve_icon_name(name):
+    def _resolve_icon_name(name, fallbacks=()):
         """Confirm an icon resolves in the active icon theme; if not, walk a
-        known-good fallback list so the like button never renders blank.
-        GTK4 Gtk.IconTheme exposes has_icon(); has_icon_pixbuf is GTK2/3."""
+        caller-supplied fallback list (then the generic star list) so a footer
+        button never renders blank. GTK4 Gtk.IconTheme exposes has_icon();
+        has_icon_pixbuf is GTK2/3.
+
+        `fallbacks` is a tuple of theme-safe alternates, in preference order —
+        each footer button passes its own (the like button relies on the
+        default star list below).
+        """
         theme = (
             Gtk.IconTheme.get_for_display(Gdk.Display.get_default())
             if Gdk.Display.get_default()
@@ -217,7 +237,8 @@ class PostWidget(Adw.Bin):
             return name
         if theme.has_icon(name):
             return name
-        for alt in ("emblem-favorite-symbolic", "starred-symbolic", "star-symbolic"):
+        generic = ("emblem-favorite-symbolic", "starred-symbolic", "star-symbolic")
+        for alt in (*fallbacks, *generic):
             if theme.has_icon(alt):
                 return alt
         return name
