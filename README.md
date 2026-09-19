@@ -45,9 +45,9 @@ driver stack, or a software-fallback problem you are diagnosing:
 |---|---|
 | Intel integrated (HD/UHD) or AMD on older Mesa: wrong driver picked | `LIBVA_DRIVER_NAME=i965` (Intel Gen7–9), `crocus` (Intel on older Mesa), `radeonsi` (AMD) |
 | AMD RDNA2 or newer (RX 5000+) | Nothing — recent Mesa selects the Vulkan video path automatically; do **not** force `radeonsi` |
-| NVIDIA | Nothing inside Gnostr, but the Flatpak needs the NVIDIA driver: `flatpak install nvidia` (and the matching Platform extension if prompted) |
+| NVIDIA | The Flatpak already bundles software decode (`org.freedesktop.Platform.ffmpeg-full`), so video always works; for NVDEC hardware decode install the optional extension `flatpak install flathub org.freedesktop.Platform.VAAPI.nvidia` (no env var) |
 | Hybrid graphics (iGPU + dGPU): pin which GPU decodes | `GST_VAAPI_DRM_DEVICE=/dev/dri/renderD128` (iGPU) or `/dev/dri/renderD129` (dGPU) — check with `ls /dev/dri/renderD*` |
-| gst-vaapi refuses to load a non-default driver | `GST_VAAPI_ALL_DRIVERS=1` |
+| gst-vaapi refuses to load a non-default driver (*from-source / distro install only* — the Flatpak manifest already bakes this in via `--env`) | `GST_VAAPI_ALL_DRIVERS=1` |
 
 Because Gnostr ships as a Flatpak, these must be passed through Flatpak, not your
 shell:
