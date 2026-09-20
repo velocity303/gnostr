@@ -1,5 +1,21 @@
 # Contributing to Gnostr
 
+## Dev environment (SOP — every contributor and every agent box)
+
+Don't install into system Python. One command bootstraps an identical venv on
+any machine, including PEP 668 "externally-managed" distros (Fedora/Nobara etc.)
+where bare `pip install` fails:
+
+```bash
+uv venv .venv && uv pip install -r requirements-dev.txt   # uv preferred
+# fallback without uv:
+python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+```
+
+`requirements-dev.txt` is the single source of truth for the toolchain
+(pytest, black, isort, flake8 + runtime deps). If you add a dev dependency,
+add it there in the same PR — CI and every other box stay in sync through it.
+
 ## Build & Run
 
 Gnostr is built with Flatpak Builder:

@@ -1,0 +1,17 @@
+# Dev/test environment for gnostr. Bootstrap (any machine, incl. PEP 668 distros):
+#   uv venv .venv && uv pip install -r requirements-dev.txt
+# or:  python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+# Run tests:  xvfb-run .venv/bin/pytest tests/
+# System prereq (not pip-installable): xvfb-run (xorg-server-xvfb / xvfb package).
+
+# Runtime deps (mirrors pyproject [project.dependencies] so the venv is complete)
+ecdsa
+websocket-client
+
+# Tests
+pytest
+
+# Lint/format gate (mirrors CI: black -> isort -> flake8)
+black
+isort
+flake8

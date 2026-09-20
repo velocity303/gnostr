@@ -72,6 +72,7 @@ Build system: Meson with Flatpak Builder. CI via Gitea Actions (`.gitea/workflow
 
 ## Verification
 
+- Bootstrap env first (SOP, see CONTRIBUTING.md): `uv venv .venv && uv pip install -r requirements-dev.txt` — never system Python; `requirements-dev.txt` owns the toolchain
 - `pytest tests/` — all tests pass under xvfb
 - `black src/ tests/` — formatting check
 - `isort src/ tests/` — import ordering
