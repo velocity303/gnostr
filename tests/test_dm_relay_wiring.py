@@ -17,15 +17,15 @@ gateway is exercised against a real SQLiteDMGateway on an isolated temp DB.
 """
 
 import ast
-import ecdsa
 import os
 import threading
 import time
 from unittest.mock import MagicMock, patch
 
-import gnostr.nip44 as nip44
+import ecdsa
 import pytest
 
+import gnostr.nip44 as nip44
 
 _CLIENT_PATH = os.path.normpath(
     os.path.join(
@@ -122,6 +122,9 @@ def gateway(tmp_path, monkeypatch, client):
 
     gw = SQLiteDMGateway()
     gw.set_our_pubkey(client.my_pubkey)
+    # Wire the real gateway into the client so _handle_event routes kind-4
+    # rumors through it (not a second gateway on a second DB).
+    client.set_dm_gateway(gw)
     return gw
 
 
@@ -268,6 +271,7 @@ def test_kind4_routes_through_dm_service_for_decryption(client, gateway):
     # Encrypt a plaintext to the peer with NIP-44 so the rumor content is a
     # valid encrypted payload for our conversation key.
     import ecdsa
+
     from gnostr.nip44 import encrypt, get_conversation_key
 
     peer_priv = ecdsa.SigningKey.generate(curve=ecdsa.SECP256k1)
@@ -350,8 +354,9 @@ def test_fake_relay_kind4_with_decrypt_error_surfaces_error(client, gateway):
     """A kind-4 rumor that fails to decrypt (wrong key -> MAC mismatch) is
     surfaced via the dm-decrypt-error signal rather than crashing."""
     # Encrypt to a DIFFERENT peer so our conversation key won't match.
-    from gnostr.nip44 import encrypt
     import ecdsa
+
+    from gnostr.nip44 import encrypt
 
     other_priv = ecdsa.SigningKey.generate(curve=ecdsa.SECP256k1)
     other_pub = other_priv.get_verifying_key().pubkey.point.x().to_bytes(32, "big").hex()
