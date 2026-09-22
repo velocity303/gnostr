@@ -5,6 +5,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw, GLib, Pango, Gdk
 from ..renderer import ContentRenderer, ImageLoader
+from ..util.scroll_gate import ScrollGate
 
 
 class PostWidget(Adw.Bin):
@@ -177,7 +178,7 @@ class PostWidget(Adw.Bin):
             ctrl.connect(
                 "released",
                 lambda c, n, x, y: self._on_card_clicked(
-                    event_id, pubkey, content, tags, x, y
+                    event_id, pubkey, content, tags, x, y, n
                 ),
             )
             self.add_controller(ctrl)
@@ -196,7 +197,44 @@ class PostWidget(Adw.Bin):
             self.add_controller(lp)
             ctrl.group(lp)
 
-    def _on_card_clicked(self, event_id, pubkey, content, tags, x, y):
+    def _activation_gated(self, gesture_node=None):
+        """Return True if this card tap is inside the post-scroll cooldown AND
+        originated from a touch source.
+
+        Unlike the renderer's static helper (which only has the window ref), we
+        can inspect the real click here: ``gesture_node.get_current_event_device``
+        gives the device that fired the sequence, so we classify it directly
+        instead of guessing off the scroll stamp. Falls back to the touch-origin
+        scroll stamp when no device info is available (keeps touch devices gated).
+        """
+        gate = getattr(self.main_window, "scroll_gate", None)
+        if gate is None or not gate.in_cooldown():
+            return False
+        # Prefer the actual click device; fall back to the last-scroll class.
+        source = None
+        try:
+            if gesture_node is not None and gesture_node.get_current_event_device():
+                dev = gesture_node.get_current_event_device()
+                src = dev.get_source_device() if dev else None
+                if src is not None:
+                    source = ScrollGate.is_touch_source(src.get_input_source())
+        except Exception:
+            source = None
+        if source is not None:
+            return bool(source)
+        # No device info — trust the scroll's recorded class so a touch feed stays
+        # protected even before the last event was classified.
+        return gate.last_scroll_was_touch
+
+    def _on_card_clicked(self, event_id, pubkey, content, tags, x, y, n=None):
+        # Touch-activation cooldown: during the post-scroll glide window a press
+        # on the card is almost certainly a swipe, not a deliberate tap. Swallow
+        # it so an incidental flick doesn't open the thread. The gate records the
+        # last-scroll device class, so only touch-originated scrolls cool down
+        # (a desktop wheel scroll must not block a mouse click). First statement
+        # because opening the thread is cheap but spurious here.
+        if self._activation_gated(n):
+            return
         # Open the thread on a normal click, UNLESS the click landed on one of
         # the footer action buttons (like/repost/reply). Those buttons have
         # their own clicked handlers; opening the thread too would be wrong.

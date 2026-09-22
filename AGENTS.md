@@ -51,7 +51,7 @@ Architecture:
 - `src/gnostr/gateway/` — relay connection gateway
 - `src/gnostr/service/` — feed/profile metadata services
 - `src/gnostr/ui/` — GTK widgets (feed view, post widget, profile view, thread view, sidebar)
-- `src/gnostr/util/` — cache manager, connection state
+- `src/gnostr/util/` — cache manager, connection state utilities, scroll gate (ScrollGate)
 - `tests/` — pytest test suite with xvfb for GTK rendering
 - `data/` — desktop file, icons, GSettings schema, metainfo
 - `po/` — translations
@@ -96,7 +96,7 @@ Build system: Meson with Flatpak Builder. CI via Gitea Actions (`.gitea/workflow
 | `src/gnostr/gateway/AGENTS.md` | Relay connection, WebSocket gateway |
 | `src/gnostr/service/AGENTS.md` | Feed service, profile service, metadata service |
 | `src/gnostr/ui/AGENTS.md` | GTK widgets: feed view, post widget, profile view, thread view, sidebar |
-| `src/gnostr/util/AGENTS.md` | Cache manager, connection state utilities |
+| `src/gnostr/util/AGENTS.md` | Cache manager, connection state utilities, scroll gate (ScrollGate) |
 | `tests/AGENTS.md` | Testing conventions, mocking patterns, CI setup |
 | `tools/AGENTS.md` | Phone dev helpers: pmshot capture pitfalls, PM deploy, build workarounds |
 | `docs/onboarding-key-management.md` | Design spec: P1 (create-account + NIP-49) IMPLEMENTED 2026-09-15; P2 NIP-46 + P3 pending — tracked as Gitea issues #14/#15/#16 |

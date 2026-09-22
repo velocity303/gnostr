@@ -5,6 +5,7 @@ install_data(
     'profile_metadata_service.py',
     'feed_service.py',
     'feed_model.py',
+    'dm_service.py',
   ],
   install_dir: pkgdatadir / pkg_name / 'service'
 )

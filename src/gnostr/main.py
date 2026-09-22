@@ -91,6 +91,12 @@ class MainWindow(Adw.ApplicationWindow):
         self.split_view.set_sidebar(self.sidebar_page)
 
         self.feed_view = FeedView(self)
+        # Expose the feed's touch-activation cooldown to widgets via the window
+        # ref so renderer/post_widget can consult it with a getattr guard (None
+        # on non-feed pages keeps their handlers inert). Reset on feed switch.
+        self.scroll_gate = None
+        self.feed_view._scroll_gate.reset()
+        self.scroll_gate = self.feed_view._scroll_gate
         self.content_nav = Adw.NavigationView()
 
         # Overlay wraps the navigation view, FAB floats on top

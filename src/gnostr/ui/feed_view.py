@@ -24,6 +24,8 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw, GLib
 
+from ..util.scroll_gate import ScrollGate
+
 # Scroll thresholds in pixels. NEAR_BOTTOM_PX triggers load-older when
 # the user is within this distance of the end of the feed. NEAR_TOP_PX
 # triggers the re-pull / buffer flush when the user is within this
@@ -105,6 +107,52 @@ class FeedView(Adw.NavigationPage):
         # Scroll plumbing.
         self._vadj = self._scrolled.get_vadjustment()
         self._vadj.connect("changed", self.on_scroll_changed)
+        # Touch-activation cooldown after scroll momentum. Stamped on the vadj's
+        # "value-changed" (not "changed") so the kinetic glide phase naturally
+        # starts the grace window at motion stop, not finger-up. A separate
+        # handler from on_scroll_changed: programmatic anchor moves fire neither
+        # and must never cool down an at-rest feed.
+        self._scroll_gate = ScrollGate()
+        self._scroll_gate.reset()
+        self._vadj.connect(
+            "value-changed",
+            lambda adj: self._mark_scroll_stamp(adj),
+        )
+
+    def _mark_scroll_stamp(self, adjustment):
+        """Stamp the scroll gate on a genuine value-changing scroll.
+
+        Skip while syncing: programmatic anchor moves (restore, scroll-to-top)
+        move the vadjustment but are not user gestures — they must not cool down
+        activations so a deliberate tap right after auto-scroll still works.
+        """
+        if self._syncing:
+            return
+        # Record whether this scroll was a touch drag or a wheel/pointer scroll
+        # so pointer activation can bypass the cooldown (desktop edge case).
+        is_touch = self._last_scroll_was_touch()
+        self._scroll_gate.mark_scroll(is_touch=is_touch)
+
+    def _last_scroll_was_touch(self):
+        """Return whether the last scroll was touch-originated.
+
+        Peek at the ScrolledWindow's last event to classify the scroll: a touch
+        drag vs a wheel tick. Falls back to True (gate it) when unknown so a
+        touch device stays protected; slice 1 measures on-device before tuning.
+        """
+        try:
+            last = self._scrolled.get_last_event()
+            if last is None:
+                return True
+            device = last.get_device()
+            source = device.get_source_device() if device else None
+            if source is None:
+                # No device info yet (e.g. very first event) — assume touch so a
+                # touch device stays gated rather than un-gated by accident.
+                return True
+            return ScrollGate.is_touch_source(source.get_input_source())
+        except Exception:
+            return True
 
     # ------------------------------------------------------------------
     # Scroll plumbing
