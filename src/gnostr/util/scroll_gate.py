@@ -70,18 +70,39 @@ class ScrollGate:
 
         GTK-free until called with a real device: ``Gdk`` is imported lazily so
         this module stays importable in headless CI (no display needed). The
-        unit tests never reach this path, so the pure gate remains testable
-        without a display. Returns False on any failure or unknown source so
-        callers default to "not gated" rather than swallowing a deliberate tap.
+        enum is resolved from the source value's own module — the real
+        ``Gdk.InputSource`` in production, the test stub's enum under the
+        conftest gi mocks — so the comparison is against the same enum object
+        the caller's device came from. Returns False on any failure or unknown
+        source so callers default to "not gated" rather than swallowing a
+        deliberate tap.
         """
-        try:
-            from gi.repository import Gdk
-        except Exception:
-            return False
         try:
             if source is None:
                 return False
             input_type = source.get_input_source()
-            return input_type == Gdk.EventType.TOUCHSCREEN
+            # gi enum members are int-compatible, so an int comparison works
+            # against the real device enum in production AND against plain-int
+            # stubs under the test suite's gi mocks (where two MagicMock
+            # attributes never compare equal).
+            return int(input_type) == _touchscreen_value()
         except Exception:
             return False
+
+
+def _touchscreen_value():
+    """Return the int value of ``Gdk.InputSource.TOUCHSCREEN``.
+
+    GTK4's real enum is ``Gdk.InputSource.TOUCHSCREEN`` (int 3). The
+    similarly-named enums do not exist in GTK4's introspection — referencing
+    one raises AttributeError, the except swallowed it, and the gate silently
+    never engaged on the phone (issue #22 review, bug 1). Falls back to the
+    stable ABI value 3 when Gdk is unimportable or mocked beyond ``int()``
+    (the conftest gi mocks), so the classification still works headless.
+    """
+    try:
+        from gi.repository import Gdk
+
+        return int(Gdk.InputSource.TOUCHSCREEN)
+    except Exception:
+        return 3

@@ -217,7 +217,7 @@ class PostWidget(Adw.Bin):
                 dev = gesture_node.get_current_event_device()
                 src = dev.get_source_device() if dev else None
                 if src is not None:
-                    source = ScrollGate.is_touch_source(src.get_input_source())
+                    source = ScrollGate.is_touch_source(src)
         except Exception:
             source = None
         if source is not None:
@@ -234,6 +234,7 @@ class PostWidget(Adw.Bin):
         # (a desktop wheel scroll must not block a mouse click). First statement
         # because opening the thread is cheap but spurious here.
         if self._activation_gated(n):
+            print("[scroll-gate] swallowed card activation")
             return
         # Open the thread on a normal click, UNLESS the click landed on one of
         # the footer action buttons (like/repost/reply). Those buttons have
@@ -293,6 +294,12 @@ class PostWidget(Adw.Bin):
             self.btn_like.add_css_class("liked")
 
     def _on_like(self, btn):
+        # Touch-activation cooldown (slice 2): footer buttons have no gesture
+        # device, so _activation_gated(None) falls back to the touch-origin
+        # scroll stamp — a flick during the glide can't fire a reaction.
+        if self._activation_gated(None):
+            print("[scroll-gate] swallowed like activation")
+            return
         client = self.main_window.client
         my_pk = self.main_window.pub_key
         if not my_pk:
@@ -309,6 +316,9 @@ class PostWidget(Adw.Bin):
         self.lbl_likes.set_label(str(cur + (1 if self._liked else -1)))
 
     def _on_repost(self, btn):
+        if self._activation_gated(None):
+            print("[scroll-gate] swallowed repost activation")
+            return
         client = self.main_window.client
         if client.publish_repost(
             self.event_id, self.pubkey, target_kind=1, original_event=None
@@ -318,6 +328,9 @@ class PostWidget(Adw.Bin):
             self.main_window.add_toast(Adw.Toast(title="Failed to repost"))
 
     def _on_reply(self, btn):
+        if self._activation_gated(None):
+            print("[scroll-gate] swallowed reply activation")
+            return
         from gnostr.dialogs import ComposeWindow
 
         def handle_post(text):
