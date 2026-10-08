@@ -12,9 +12,7 @@ from gnostr import key_health
 @pytest.fixture
 def health_store(tmp_path, monkeypatch):
     """Point key_health's state file at a temp dir (GLib is mocked in conftest)."""
-    monkeypatch.setattr(
-        key_health.GLib, "get_user_data_dir", lambda: str(tmp_path)
-    )
+    monkeypatch.setattr(key_health.GLib, "get_user_data_dir", lambda: str(tmp_path))
     return tmp_path
 
 
@@ -53,15 +51,14 @@ def test_format_last_backup(health_store):
 # conftest mocks gi, so the Sidebar class is unconstructable; extract the
 # real method via ast and bind it to a FakeView (pattern from test_follows_view).
 
+
 def _extract_method(name):
     """Compile one FunctionDef out of sidebar.py (gi is mocked, class is
     unconstructable — same ast pattern as test_follows_view.py)."""
     src = open("src/gnostr/ui/sidebar.py").read()
     tree = ast.parse(src)
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef))
-    fn = next(
-        n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == name
-    )
+    fn = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == name)
     mod = ast.Module(body=[fn], type_ignores=[])
     # __package__ lets the method's `from .. import key_health` resolve to
     # the real gnostr.key_health module (the one the fixture patches).

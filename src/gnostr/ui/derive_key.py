@@ -10,11 +10,10 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, Adw
+from gi.repository import Adw, Gtk
 
-from .. import nip06
+from .. import nip06, nostr_utils
 from ..key_manager import KeyManager
-from .. import nostr_utils
 
 WARNING_TEXT = (
     "NIP-06 seed-phrase derivation is unrecommended for normal users — "
@@ -56,7 +55,9 @@ class DeriveKeyDialog(Adw.Window):
         page.add(bg)
         self.error_label = Gtk.Label(label="", css_classes=["error-label"], wrap=True)
         bg.add(self.error_label)
-        b = Gtk.Button(label="Derive and log in", css_classes=["pill", "suggested-action"])
+        b = Gtk.Button(
+            label="Derive and log in", css_classes=["pill", "suggested-action"]
+        )
         b.connect("clicked", self.on_derive)
         bg.add(b)
 

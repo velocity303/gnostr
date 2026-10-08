@@ -85,8 +85,8 @@ def _ckd_priv(k, c, index):
         data = b"\x00" + k.to_bytes(32, "big") + _ser32(index)
     else:
         data = _compress(k * G) + _ser32(index)
-    I = hmac.new(c, data, hashlib.sha512).digest()
-    IL, IR = int.from_bytes(I[:32], "big"), I[32:]
+    digest = hmac.new(c, data, hashlib.sha512).digest()
+    IL, IR = int.from_bytes(digest[:32], "big"), digest[32:]
     if IL >= N:
         raise ValueError("IL >= N")
     ki = (IL + k) % N
@@ -100,8 +100,8 @@ def bip32_derive(seed, path):
 
     Hardened segments end with ' or h.
     """
-    I = hmac.new(b"Bitcoin seed", seed, hashlib.sha512).digest()
-    k, c = int.from_bytes(I[:32], "big"), I[32:]
+    digest = hmac.new(b"Bitcoin seed", seed, hashlib.sha512).digest()
+    k, c = int.from_bytes(digest[:32], "big"), digest[32:]
     for part in path.split("/")[1:]:
         hardened = part.endswith(("h", "'"))
         idx = int(part.rstrip("h'"))
