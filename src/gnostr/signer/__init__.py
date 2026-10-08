@@ -13,6 +13,7 @@ remote-signing protocol. The layer it exposes:
 
 from .backend import LocalKeyBackend, SignerBackend
 from .bunker import BunkerBackend, BunkerError, KIND_NIP46, parse_bunker_uri
+from .connect import new_bunker_backend, reconnect_from_session, session_blob
 
 __all__ = [
     "SignerBackend",
@@ -21,4 +22,7 @@ __all__ = [
     "BunkerError",
     "KIND_NIP46",
     "parse_bunker_uri",
+    "new_bunker_backend",
+    "reconnect_from_session",
+    "session_blob",
 ]

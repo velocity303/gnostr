@@ -41,7 +41,13 @@ class FakeClient:
 
 class MockSigner:
     """The remote signer. `serve()` runs a daemon loop that answers every new
-    kind-24133 request the client publishes, in order."""
+    kind-24133 request the client publishes, in order.
+
+    It can serve several backends at once (connect helpers build their own
+    backend instances): `follow(backend)` registers another one, and each
+    request is routed by its `p` tag — the client pubkey the request was
+    addressed to — so the ECDH conversation always matches the requester.
+    """
 
     def __init__(self, backend, user_priv, signer_priv=None, deny=False):
         self.signer_priv, self.signer_pub = (
@@ -51,12 +57,18 @@ class MockSigner:
         )
         self.user_priv = user_priv
         self.user_pub = nostr_utils.get_public_key(user_priv)
-        self.backend = backend
+        self.backends = {}
+        self.follow(backend)
         self.deny = deny
         self.methods = []
-        self._seen = 0
+        self._seen = {}
+        self._handled = set()
         self._stop = threading.Event()
         self._thread = None
+
+    def follow(self, backend):
+        """Also answer requests published by this backend."""
+        self.backends[backend.client_pub] = backend
 
     def serve(self):
         self._thread = threading.Thread(target=self._loop, daemon=True)
@@ -69,19 +81,30 @@ class MockSigner:
 
     def _loop(self):
         while not self._stop.is_set():
-            events = self.backend._client.published
-            while self._seen < len(events):
-                self._answer(events[self._seen])
-                self._seen += 1
+            for backend in list(self.backends.values()):
+                events = backend._client.published
+                seen = self._seen.get(id(backend._client), 0)
+                while seen < len(events):
+                    self._answer(events[seen])
+                    seen += 1
+                self._seen[id(backend._client)] = seen
             time.sleep(0.01)
 
     def _answer(self, req_ev):
         if req_ev.get("kind") != 24133:
             return
-        if req_ev.get("pubkey") != self.backend.client_pub:
+        # A kind-24133 REQUEST is p-tagged to the signer; the requester is the
+        # event's pubkey (the client keypair). Several backends can share one
+        # FakeClient in tests, so dedupe on the request id.
+        if req_ev.get("id") in self._handled:
             return
+        client_pub = req_ev.get("pubkey")
+        backend = self.backends.get(client_pub)
+        if backend is None:
+            return
+        self._handled.add(req_ev.get("id"))
         conv = nip44.get_conversation_key(
-            bytes.fromhex(self.signer_priv), bytes.fromhex(self.backend.client_pub)
+            bytes.fromhex(self.signer_priv), bytes.fromhex(client_pub)
         )
         try:
             req = json.loads(nip44.decrypt(req_ev["content"], conv))
@@ -112,9 +135,9 @@ class MockSigner:
             nip44.encrypt(
                 json.dumps({"id": req["id"], "result": result, "error": error}), conv
             ),
-            [["p", self.backend.client_pub]],
+            [["p", client_pub]],
         )
-        self.backend.handle_event(nostr_utils.sign_event(resp, self.signer_priv))
+        backend.handle_event(nostr_utils.sign_event(resp, self.signer_priv))
 
 
 def _pair(secret="s3cr3t", deny=False, **backend_kw):
@@ -325,3 +348,97 @@ def test_handle_event_ignores_foreign_authors_and_garbage():
         [["p", other]],
     )
     backend.handle_event(nostr_utils.sign_event(ev2, backend.signer_pubkey))
+
+
+# --- connect session logic (P2 connect UX, issue #15) -------------------------
+
+
+def _capture_backends(monkeypatch, signer):
+    """connect.py builds its own BunkerBackend instances; capture each one and
+    register it with the mock signer so it answers that client's requests."""
+    from gnostr.signer import connect as connect_mod
+
+    built = []
+    real = connect_mod.BunkerBackend
+
+    class Capturing(real):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            built.append(self)
+            signer.follow(self)
+
+    monkeypatch.setattr(connect_mod, "BunkerBackend", Capturing)
+    return built
+
+
+def test_new_bunker_backend_connects_and_blobs(monkeypatch):
+    from gnostr.signer import new_bunker_backend, session_blob
+
+    client, proto, signer = _pair()
+    signer.serve()
+    built = _capture_backends(monkeypatch, signer)
+    uri = f"bunker://{proto.signer_pubkey}?relay={RELAY}&secret=s3cr3t"
+    backend = new_bunker_backend(client, uri)
+    signer.stop()
+    assert backend.connected
+    assert backend.get_public_key() == signer.user_pub
+    blob = json.loads(session_blob(backend))
+    assert blob["uri"] == uri
+    assert blob["signer_pubkey"] == proto.signer_pubkey
+    assert blob["relays"] == [RELAY]
+    assert blob["secret"] == "s3cr3t"
+    assert blob["user_pubkey"] == signer.user_pub
+
+
+def test_reconnect_from_session_restores_same_identity(monkeypatch):
+    from gnostr.signer import new_bunker_backend, reconnect_from_session, session_blob
+
+    client, proto, signer = _pair()
+    signer.serve()
+    built = _capture_backends(monkeypatch, signer)
+    backend = new_bunker_backend(
+        client, f"bunker://{proto.signer_pubkey}?relay={RELAY}&secret=s3cr3t"
+    )
+    session = json.loads(session_blob(backend))
+    backend.disconnect()
+
+    # A fresh client + backend re-runs the handshake from the saved session.
+    client2 = FakeClient()
+    restored = reconnect_from_session(client2, session)
+    signer.stop()
+    assert restored.get_public_key() == signer.user_pub
+    assert restored._client is client2
+
+
+def test_reconnect_refuses_changed_signer_identity(monkeypatch):
+    from gnostr.signer import reconnect_from_session
+
+    client, backend, signer = _pair()
+    signer.serve()
+    backend.connect()
+    _capture_backends(monkeypatch, signer)  # the reconnect builds a fresh backend
+    session = {
+        "uri": backend._uri,
+        "signer_pubkey": backend.signer_pubkey,
+        "relays": backend.relays,
+        "secret": backend.secret,
+        "user_pubkey": "b" * 64,  # session saved for a DIFFERENT identity
+    }
+    signer.stop()
+    with pytest.raises(BunkerError):
+        reconnect_from_session(client, session)
+
+
+@pytest.mark.parametrize("session", [None, {}, {"nope": 1}])
+def test_reconnect_requires_uri(session):
+    from gnostr.signer import reconnect_from_session
+
+    with pytest.raises(BunkerError):
+        reconnect_from_session(FakeClient(), session)
+
+
+def test_new_bunker_backend_rejects_garbage_uri():
+    from gnostr.signer import new_bunker_backend
+
+    with pytest.raises(ValueError):
+        new_bunker_backend(FakeClient(), "not-a-bunker-uri")

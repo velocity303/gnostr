@@ -89,6 +89,7 @@ class BunkerBackend(SignerBackend):
         timeout=30.0,
     ):
         self._client = client
+        self._uri = bunker_uri.strip()
         self.signer_pubkey, self.relays, self.secret = parse_bunker_uri(bunker_uri)
         # Disposable client keypair — NIP-46 §1. Never the user's key.
         self.client_priv, self.client_pub = nostr_utils.generate_keypair()

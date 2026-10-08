@@ -129,6 +129,9 @@ class MainWindow(Adw.ApplicationWindow):
         ca = Gtk.Button(label="Create account", css_classes=["pill"])
         ca.connect("clicked", self.on_create_account_clicked)
         bx.append(ca)
+        cs = Gtk.Button(label="Connect Signer (bunker)", css_classes=["pill"])
+        cs.connect("clicked", self.on_connect_signer_clicked)
+        bx.append(cs)
         self.login_page.set_child(bx)
 
         # 5. Assemble Stack
@@ -141,6 +144,7 @@ class MainWindow(Adw.ApplicationWindow):
             self.perform_login(saved)
         else:
             self.main_stack.set_visible_child_name("login")
+            self._try_restore_bunker_session()
 
         GLib.idle_add(self.client.connect_all)
         GLib.timeout_add_seconds(300, self.on_auto_refresh)
@@ -268,6 +272,108 @@ class MainWindow(Adw.ApplicationWindow):
 
     def on_login_clicked(self, btn):
         LoginDialog(self.client, self).present()
+
+    def on_connect_signer_clicked(self, btn):
+        from .dialogs import ConnectSignerWindow
+
+        ConnectSignerWindow(self.client, self).present()
+
+    def _try_restore_bunker_session(self):
+        """Startup restore (P2 #15): a saved bunker session reconnects without
+        user interaction. Runs on a worker thread — the handshake needs live
+        relays, and relays connect asynchronously. Failure is silent: the
+        login view simply stays up."""
+        from .key_manager import BunkerSessionManager
+
+        session = BunkerSessionManager.load_session()
+        if not session:
+            return
+
+        def _worker():
+            from .signer import reconnect_from_session
+
+            try:
+                backend = reconnect_from_session(
+                    self.client,
+                    session,
+                    on_sign_request=self.confirm_sign_request,
+                    timeout=20.0,
+                )
+            except Exception as e:
+                print(f"⚠️ bunker session restore failed: {e}")
+                return
+            GLib.idle_add(self.perform_bunker_login, backend)
+
+        import threading
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def perform_bunker_login(self, backend, session_saved=True):
+        """Switch to the app view with a connected BunkerBackend (P2 #15)."""
+        self.priv_key = None
+        self.pub_key = backend.get_public_key()
+        self.client.set_signer(backend)
+        self.main_stack.set_visible_child_name("app")
+        self.sidebar.update_status("🟢")
+        self.sidebar.set_signer_status(f"bunker {self.pub_key[:8]}…")
+        self.fab_post.set_visible(True)
+        GLib.idle_add(self.client.connect_all)
+        if not session_saved:
+            self.add_toast(
+                Adw.Toast(title="Signed in — session NOT saved (keyring save failed)")
+            )
+
+    def on_disconnect_signer(self):
+        """Sidebar Disconnect: logout RPC + destroy session, back to login."""
+        backend = getattr(self.client, "signer", None)
+        from .signer import BunkerBackend
+
+        if isinstance(backend, BunkerBackend):
+            try:
+                backend.disconnect()
+            except Exception:
+                pass
+        from .key_manager import BunkerSessionManager
+
+        BunkerSessionManager.delete_session()
+        self.client.set_keys(None, None)
+        self.priv_key = None
+        self.pub_key = None
+        self.sidebar.set_signer_status(None)
+        self.main_stack.set_visible_child_name("login")
+
+    def confirm_sign_request(self, kind, preview):
+        """Per-sign-request approval (P2 #15), called from the signer worker
+        thread. Shows the prompt on the UI thread and blocks the worker until
+        the user answers. Default-deny: no answer within 60s rejects."""
+        import threading
+
+        answer = {"ok": False}
+        done = threading.Event()
+
+        def _show():
+            dialog = Adw.MessageDialog(
+                transient_for=self,
+                modal=True,
+                heading=f"Sign request: kind {kind}",
+                body=(preview or "(empty)")[:200] or "(empty)",
+            )
+            dialog.add_response("deny", "Deny")
+            dialog.add_response("allow", "Allow")
+            dialog.set_default_response("deny")
+            dialog.set_close_response("deny")
+
+            def _resp(d, r):
+                answer["ok"] = r == "allow"
+                done.set()
+
+            dialog.connect("response", _resp)
+            dialog.present()
+            return False
+
+        GLib.idle_add(_show)
+        done.wait(60.0)
+        return answer["ok"]
 
     def on_create_account_clicked(self, btn):
         from .ui.onboarding import CreateAccountWindow

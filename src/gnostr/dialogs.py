@@ -387,3 +387,151 @@ class SearchDialog(Adw.Window):
             return
         self.main_window.show_profile(pubkey)
         self.close()
+
+
+try:  # QR rendering for the bunker connect dialog (pure-python wheel)
+    import segno
+except ImportError:  # pragma: no cover — flatpak ships segno; degraded UX only
+    segno = None
+
+
+class ConnectSignerWindow(Adw.Window):
+    """NIP-46 'log in with a bunker' connect dialog (spec P2, issue #15).
+
+    Paste a bunker:// URI (or scan the QR with the signer app — the QR encodes
+    the SAME URI for signer apps that scan rather than paste). The handshake
+    runs on a worker thread so the UI never blocks on the relay round-trip;
+    on success the session is saved to libsecret and MainWindow switches to
+    the app view through the bunker backend.
+    """
+
+    def __init__(self, client, main_window):
+        super().__init__()
+        self.client = client
+        self.main_window = main_window
+        self._busy = False
+        self.set_title("Connect Signer")
+        self.set_default_size(420, 560)
+        self.set_transient_for(main_window)
+        self.set_modal(True)
+
+        toolbar = Adw.ToolbarView()
+        self.set_content(toolbar)
+        toolbar.add_top_bar(Adw.HeaderBar())
+
+        page = Adw.PreferencesPage()
+        toolbar.set_content(page)
+
+        g = Adw.PreferencesGroup(
+            title="Bunker URI",
+            description="Paste the bunker:// URI from your remote signer (Amber, nsec.app, …)",
+        )
+        page.add(g)
+        self.ent = Adw.EntryRow(title="bunker://…")
+        self.ent.connect("changed", self._on_uri_changed)
+        g.add(self.ent)
+
+        # QR of the URI so a phone signer can scan it instead of typing.
+        self.qr_area = Gtk.DrawingArea()
+        self.qr_area.set_size_request(220, 220)
+        self.qr_area.set_visible(False)
+        self.qr_area.set_halign(Gtk.Align.CENTER)
+        self.qr_area.connect("draw", self._draw_qr)
+        self._qr_matrix = None
+        qr_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        qr_box.append(self.qr_area)
+        if segno is None:
+            qr_box.append(
+                Gtk.Label(label="QR unavailable (segno not installed)", css_classes=["dim-label"])
+            )
+        g.add(qr_box)
+
+        bg = Adw.PreferencesGroup()
+        page.add(bg)
+        self.error_label = Gtk.Label(label="", css_classes=["error-label"], wrap=True)
+        bg.add(self.error_label)
+        self.connect_btn = Gtk.Button(label="Connect", css_classes=["pill", "suggested-action"])
+        self.connect_btn.connect("clicked", self.on_connect)
+        bg.add(self.connect_btn)
+
+    def _on_uri_changed(self, *_):
+        self._qr_matrix = None
+        self.qr_area.set_visible(False)
+        if segno is None:
+            return
+        try:
+            qr = segno.make(self.ent.get_text().strip(), error="M")
+            matrix = qr.matrix() if callable(qr.matrix) else qr.matrix
+        except Exception:
+            matrix = None
+        if matrix:
+            self._qr_matrix = matrix
+            self.qr_area.set_visible(True)
+            self.qr_area.queue_draw()
+
+    def _draw_qr(self, _area, cr, width, height):
+        """Render the segno boolean matrix with the cairo context GTK hands us
+        (no cairo import needed — only the passed context is used)."""
+        m = self._qr_matrix
+        if not m:
+            return False
+        n = len(m)
+        side = min(width, height)
+        cell = max(1, side // (n + 2))  # quiet zone of 1 cell
+        ox = (width - cell * n) // 2
+        oy = (height - cell * n) // 2
+        cr.set_source_rgb(1, 1, 1)
+        cr.rectangle(0, 0, width, height)
+        cr.fill()
+        cr.set_source_rgb(0, 0, 0)
+        for y, row in enumerate(m):
+            for x, dark in enumerate(row):
+                if dark:
+                    cr.rectangle(ox + x * cell, oy + y * cell, cell, cell)
+        cr.fill()
+        return False
+
+    def on_connect(self, _btn):
+        if self._busy:
+            return
+        uri = self.ent.get_text().strip()
+        self._busy = True
+        self.connect_btn.set_sensitive(False)
+        self.error_label.set_text("")
+
+        def _worker():
+            from gnostr.signer import new_bunker_backend, session_blob
+
+            try:
+                backend = new_bunker_backend(
+                    self.client,
+                    uri,
+                    on_sign_request=self.main_window.confirm_sign_request,
+                )
+            except Exception as e:
+                from gi.repository import GLib
+
+                GLib.idle_add(self._fail, str(e))
+                return
+            from gnostr.key_manager import BunkerSessionManager
+
+            ok = BunkerSessionManager.save_session(session_blob(backend))
+            from gi.repository import GLib
+
+            GLib.idle_add(self._succeed, backend, ok)
+
+        import threading
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _fail(self, msg):
+        self._busy = False
+        self.connect_btn.set_sensitive(True)
+        self.error_label.set_text(f"Connect failed: {msg}")
+        return False
+
+    def _succeed(self, backend, saved):
+        self._busy = False
+        self.main_window.perform_bunker_login(backend, session_saved=saved)
+        self.close()
+        return False
