@@ -46,7 +46,7 @@ class Sidebar(Gtk.Box):
         self.dm_badge = Gtk.Label(label="0")
         self.dm_badge.add_css_class("badge")
         self.dm_badge.add_css_class("accent")
-        self.dm_badge.set_no_show_all(True)
+        self.dm_badge.hide()
         self.rows["messages"].add_suffix(self.dm_badge)
 
         self.append(self.menu_list)

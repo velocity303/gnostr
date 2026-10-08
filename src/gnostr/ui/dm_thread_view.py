@@ -90,7 +90,7 @@ class DMThreadView(Gtk.Box):
         self.unread_pill.set_valign(Gtk.Align.END)
         self.unread_pill.set_halign(Gtk.Align.CENTER)
         self.unread_pill.set_margin_bottom(12)
-        self.unread_pill.set_no_show_all(True)
+        self.unread_pill.hide()
         self.unread_pill.connect("clicked", lambda b: self._scroll_to_bottom())
 
         overlay = Gtk.Overlay()
