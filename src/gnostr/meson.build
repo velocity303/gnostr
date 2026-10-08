@@ -18,6 +18,9 @@ install_data(
     'connection_status.py',
     'window.py',
     'nip44.py',
+    'nip06.py',
+    'key_health.py',
+    'bip39_wordlist_english.txt',
   ],
   install_dir: pkgdatadir / pkg_name
 )

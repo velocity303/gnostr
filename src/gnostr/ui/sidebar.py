@@ -94,6 +94,12 @@ class Sidebar(Gtk.Box):
         self.relay_expander.add_row(sw)
         self.append(self.relay_expander)
 
+        # Key-health (P3 #16): last backup verified + re-verify prompt.
+        self.key_health_label = Gtk.Label(label="", css_classes=["dim-label"], wrap=True)
+        self.key_health_label.set_xalign(0)
+        self.append(self.key_health_label)
+        self._refresh_key_health()
+
         # Back Up Key (NIP-49 export, P1 #14)
         bb = Gtk.Button(label="Back Up Key", css_classes=["flat"])
         bb.connect("clicked", self.on_backup_key_clicked)
@@ -128,6 +134,7 @@ class Sidebar(Gtk.Box):
         self.main_window.on_logout_clicked()
 
     def on_backup_key_clicked(self, b):
+        self._refresh_key_health()
         self.main_window.on_export_key_clicked()
 
     def on_disconnect_signer_clicked(self, b):
@@ -140,6 +147,21 @@ class Sidebar(Gtk.Box):
         else:
             self.signer_row.set_subtitle(label)
             self.signer_row.set_visible(True)
+
+    def _refresh_key_health(self):
+        """Key-health copy: last backup verified, or a re-verify prompt."""
+        from .. import key_health
+
+        ts = key_health.last_backup_verified()
+        if ts is None:
+            self.key_health_label.set_text(
+                "No backup verified yet — back up your key now."
+            )
+        else:
+            self.key_health_label.set_text(
+                "Backup verified: %s. Re-verify if unsure."
+                % key_health.format_last_backup(ts)
+            )
 
     def update_status(self, status_emoji):
         self.status_label.set_text(status_emoji)

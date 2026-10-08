@@ -13,6 +13,7 @@ install_data(
     'dm_recipient_view.py',
     'dm_thread_view.py',
     'icons.py',
+    'derive_key.py',
   ],
   install_dir: pkgdatadir / pkg_name / 'ui'
 )
