@@ -26,6 +26,7 @@ install_data(
 subdir('util')
 subdir('gateway')
 subdir('service')
+subdir('signer')
 subdir('ui')
 
 # Compile and install the GResource bundle (GTK UI files)

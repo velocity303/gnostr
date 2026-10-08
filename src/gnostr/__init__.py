@@ -12,6 +12,7 @@ from . import profile_nips
 
 # Import submodules to make them available as package attributes
 # This ensures that `from gnostr.gateway import gateway` works
+from . import nostr_utils
 from . import client
 from . import connection_status
 from . import database
@@ -19,7 +20,6 @@ from . import dialogs
 from . import gateway
 from . import key_manager
 from . import main
-from . import nostr_utils
 from . import renderer
 from . import window
 
