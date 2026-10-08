@@ -63,6 +63,19 @@ class AbstractDMGateway(abc.ABC):
     def mark_read(self, peer_pubkey: str) -> None:
         """Zero unread_count for a conversation (thread opened)."""
 
+    def update_content(self, event_id: str, plaintext: str) -> None:
+        """Replace a stored message's content with decrypted plaintext.
+
+        Non-abstract: the UI writes through after DMService emits
+        dm-decrypted so inbox previews and threads show plaintext instead of
+        the raw NIP-44 payload. Gateways that don't support rewrite may leave
+        this unimplemented (no-op default keeps older fakes working).
+        """
+
+    def total_unread(self) -> int:
+        """SUM(unread_count) across conversations — the sidebar badge query."""
+        return 0
+
     @abc.abstractmethod
     def close(self) -> None:
         """Close the underlying connection."""
@@ -147,6 +160,17 @@ class SQLiteDMGateway(AbstractDMGateway):
                 sender = event.get("pubkey")
                 is_inbound = sender != self._our_pubkey()
                 rumor_ts = int(event.get("created_at", 0))
+                # Outbound peer: our own rumor must live in the RECIPIENT's
+                # conversation (p-tag), not under our own pubkey — otherwise
+                # the thread view can't show our sent messages next to the
+                # peer's. Inbound keeps sender as peer. Falls back to sender
+                # when no p-tag is present (legacy rows / headless tests).
+                peer = sender
+                if not is_inbound:
+                    for tag in event.get("tags") or []:
+                        if isinstance(tag, (list, tuple)) and len(tag) >= 2 and tag[0] == "p":
+                            peer = tag[1]
+                            break
 
                 # Conversation row: upsert on peer_pk, roll up last activity.
                 # `is_inbound` is computed in Python (SQLite's `excluded`
@@ -164,7 +188,7 @@ class SQLiteDMGateway(AbstractDMGateway):
                             ELSE dm_conversations.unread_count END
                     """,
                     (
-                        sender,
+                        peer,
                         event.get("id"),
                         rumor_ts,
                         1 if is_inbound else 0,
@@ -181,7 +205,7 @@ class SQLiteDMGateway(AbstractDMGateway):
                     """,
                     (
                         event.get("id"),
-                        sender,
+                        peer,
                         sender,
                         event.get("content"),
                         rumor_ts,
@@ -199,14 +223,21 @@ class SQLiteDMGateway(AbstractDMGateway):
     # ------------------------------------------------------------------
 
     def get_conversations(self, limit: int) -> list:
-        """Return up to `limit` conversations, newest activity first."""
+        """Return up to `limit` conversations, newest activity first.
+
+        Each row carries a `preview` — the last message's stored content
+        (plaintext once DMService writes it back, raw payload until then).
+        """
         if not self.conn:
             return []
         with self.lock:
             cursor = self.conn.cursor()
             cursor.execute(
-                "SELECT peer_pk, last_event_id, last_ts, unread_count "
-                "FROM dm_conversations ORDER BY last_ts DESC, peer_pk LIMIT ?",
+                "SELECT c.peer_pk, c.last_event_id, c.last_ts, c.unread_count, "
+                "m.content "
+                "FROM dm_conversations c "
+                "LEFT JOIN dm_messages m ON m.id = c.last_event_id "
+                "ORDER BY c.last_ts DESC, c.peer_pk LIMIT ?",
                 (limit,),
             )
             return [
@@ -215,6 +246,7 @@ class SQLiteDMGateway(AbstractDMGateway):
                     "last_event_id": row[1],
                     "last_ts": row[2],
                     "unread_count": row[3],
+                    "preview": row[4] or "",
                 }
                 for row in cursor.fetchall()
             ]
@@ -275,6 +307,38 @@ class SQLiteDMGateway(AbstractDMGateway):
                 self.conn.commit()
             except Exception as e:
                 print(f"⚠️ DM Gateway Mark Read Error: {e}")
+
+    # ------------------------------------------------------------------
+    # update_content / total_unread
+    # ------------------------------------------------------------------
+
+    def update_content(self, event_id: str, plaintext: str) -> None:
+        """Overwrite a stored message's content with decrypted plaintext.
+
+        Called by the UI after dm-decrypted so previews/threads are readable.
+        No-op when the row is gone (race with a DB reset).
+        """
+        if not self.conn:
+            return
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute(
+                    "UPDATE dm_messages SET content = ? WHERE id = ?",
+                    (plaintext, event_id),
+                )
+                self.conn.commit()
+            except Exception as e:
+                print(f"⚠️ DM Gateway Update Content Error: {e}")
+
+    def total_unread(self) -> int:
+        """SUM(unread_count) across conversations — the sidebar badge query."""
+        if not self.conn:
+            return 0
+        with self.lock:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT COALESCE(SUM(unread_count), 0) FROM dm_conversations")
+            return int(cursor.fetchone()[0])
 
     # ------------------------------------------------------------------
     # helpers
