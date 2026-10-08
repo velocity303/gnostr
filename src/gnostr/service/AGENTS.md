@@ -8,6 +8,7 @@ Service layer for feed and profile data — fetches, caches, and serves Nostr ev
 - `feed_model.py` — FeedModel: widget-agnostic bounded feed window, keyset cursor state, eviction + live-prepend buffer (workstream #0)
 - `profile_service.py` — ProfileService: profile lookups and caching
 - `profile_metadata_service.py` — ProfileMetadataService: metadata extraction from profiles
+- `dm_service.py` — DMService (GObject.Object): NIP-44 v2 encrypt/decrypt for kind-4 rumors. Decryption runs on a worker thread and emits `dm-decrypted` on the main context (UI consumes signals only — never decrypt on the UI thread); after decrypt it writes the plaintext back through `gateway.update_content` so inbox previews/threads show readable text.
 
 ## Local Contracts
 - Services are instantiated by NostrClient and exposed to UI via the client reference
