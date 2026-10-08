@@ -193,6 +193,7 @@ class DMThreadView(Gtk.Box):
             meta.set_text("Not sent")
             retry = Gtk.Button(label="Retry")
             retry.add_css_class("flat")
+            retry.set_size_request(48, 48)  # contract: interactive nodes >=48px
             retry.set_halign(Gtk.Align.END if mine else Gtk.Align.START)
             retry.connect("clicked", lambda b, m=msg: self._retry(m))
             box.append(retry)
