@@ -3,7 +3,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gtk
+from gi.repository import Adw, Gtk, Pango
 
 
 class Sidebar(Gtk.Box):
@@ -55,16 +55,26 @@ class Sidebar(Gtk.Box):
         # Relay Activity — collapsible log of publish/OK/connect activity so
         # follows/likes/reposts are verifiable against relays, not just the DB.
         self.relay_expander = Adw.ExpanderRow(title="Relay Activity")
+        # wrap WORD_CHAR + max_width_chars=1: a long relay line (e.g.
+        # "wss://relay.example-very-long-domain.org:8443 publish OK ...") must
+        # wrap inside the row instead of forcing its natural width on the
+        # sidebar column (hscrollbar is NEVER on mobile). max_width_chars=1
+        # collapses the label's *natural* width so it fills the row and wraps;
+        # WORD_CHAR only breaks mid-token when one word alone exceeds the width.
         self.relay_log_label = Gtk.Label(
             label="No relay activity yet",
             css_classes=["monospace", "dim-label"],
             halign=Gtk.Align.START,
-            wrap=False,
+            wrap=True,
+            wrap_mode=Pango.WrapMode.WORD_CHAR,
+            max_width_chars=1,
+            hexpand=True,
         )
         self.relay_log_label.set_selectable(True)
         sw = Gtk.ScrolledWindow()
         sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         sw.set_max_content_height(180)
+        sw.set_hexpand(True)
         sw.set_child(self.relay_log_label)
         self.relay_expander.add_row(sw)
         self.append(self.relay_expander)

@@ -45,6 +45,7 @@ if pytest_prog.found()
   test('test_scroll_gate_wiring', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_scroll_gate_wiring.py'], env: test_env, timeout: 120)
   test('test_dm_relay_targeting', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_dm_relay_targeting.py'], env: test_env, timeout: 120)
   test('test_dm_gtk422_api', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_dm_gtk422_api.py'], env: test_env, timeout: 120)
+  test('test_relay_log_wrap', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_relay_log_wrap.py'], env: test_env, timeout: 120)
   endif
 
 # Real-GTK feed harness (tier 2): exercises ui.feed_view.FeedView against a

@@ -29,6 +29,7 @@ Test suite for gnostr — pytest-based with xvfb for GTK rendering. Covers servi
 - `test_onboarding_keys.py` — generate_keypair (SEC2 range, nsec round-trip, randomness) + `dialogs.resolve_login_input` (hex/nsec/ncryptsec/wrong-password) — pure pytest
 - `test_nip49.py` — NIP-49 ncryptsec: official NIP decryption vector, wrong-password/tamper raises, round-trip incl. unicode password — pure pytest
 - `test_onboarding_wizard.py` — CreateAccountWindow gate rule: ast-extracts `_on_gate_confirmed` (gi mocks make the class unconstructable) + FakeView; type-back gate must block/allow the stack advance
+- `test_relay_log_wrap.py` — Sidebar Relay Activity wrap regression (G13 mobile overflow): AST-reads the `relay_log_label` construction contract (wrap=True, wrap_mode WORD_CHAR, max_width_chars + hexpand, selectable, no ellipsis, ScrolledWindow NEVER/AUTOMATIC + max_content_height 180) and ast-extracts `append_relay_log` onto a fake self — a 100+ char relay line must append intact, newest on top
 - `test_simple.py` — basic import/smoke tests
 
 ## Local Contracts
