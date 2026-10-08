@@ -78,7 +78,9 @@ class DMInboxView(Gtk.Box):
         back_row.append(self.btn_refresh)
         self.append(back_row)
 
-        self.title_label = Gtk.Label(label="Messages", xalign=0, css_classes=["heading"])
+        self.title_label = Gtk.Label(
+            label="Messages", xalign=0, css_classes=["heading"]
+        )
         self.append(self.title_label)
 
         # ListBox inside an AdwClamp (contract) inside a ScrolledWindow.

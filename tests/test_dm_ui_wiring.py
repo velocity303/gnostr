@@ -66,7 +66,9 @@ def _class_method(path, class_name, method_name, extra_ns=None):
 def _module_func(path, func_name, extra_ns=None):
     src = open(path, encoding="utf-8").read()
     tree = ast.parse(src)
-    fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == func_name)
+    fn = next(
+        n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == func_name
+    )
     ns = {}
     if extra_ns:
         ns.update(extra_ns)
@@ -80,7 +82,9 @@ def _module_func(path, func_name, extra_ns=None):
 
 
 def test_format_relative_time_buckets():
-    fmt = _module_func(os.path.join(_UI_DIR, "dm_inbox_view.py"), "format_relative_time")
+    fmt = _module_func(
+        os.path.join(_UI_DIR, "dm_inbox_view.py"), "format_relative_time"
+    )
     now = time.time()
     assert fmt(now - 5) == "now"
     assert fmt(now - 120) == "2m"
@@ -124,25 +128,39 @@ class FakeInbox:
 
     def reload(self):
         fn = _class_method(
-            os.path.join(_UI_DIR, "dm_inbox_view.py"), "DMInboxView", "reload",
+            os.path.join(_UI_DIR, "dm_inbox_view.py"),
+            "DMInboxView",
+            "reload",
             extra_ns={"SKELETON_ROWS": 3},
         )
         return fn(self)
 
     def _make_row(self, conv):
         fn = _class_method(
-            os.path.join(_UI_DIR, "dm_inbox_view.py"), "DMInboxView", "_make_row",
-            extra_ns={"hex_to_npub": lambda h: "npub1" + h[:8], "AVATAR_SIZE": 40,
-                      "ROW_MIN_HEIGHT": 64, **_FMT_NS},
+            os.path.join(_UI_DIR, "dm_inbox_view.py"),
+            "DMInboxView",
+            "_make_row",
+            extra_ns={
+                "hex_to_npub": lambda h: "npub1" + h[:8],
+                "AVATAR_SIZE": 40,
+                "ROW_MIN_HEIGHT": 64,
+                **_FMT_NS,
+            },
         )
         return fn(self, conv)
 
     def _on_row_activated(self, lb, row):
-        fn = _class_method(os.path.join(_UI_DIR, "dm_inbox_view.py"), "DMInboxView", "_on_row_activated")
+        fn = _class_method(
+            os.path.join(_UI_DIR, "dm_inbox_view.py"),
+            "DMInboxView",
+            "_on_row_activated",
+        )
         return fn(self, lb, row)
 
     def _on_dm_updated(self, client, peer):
-        fn = _class_method(os.path.join(_UI_DIR, "dm_inbox_view.py"), "DMInboxView", "_on_dm_updated")
+        fn = _class_method(
+            os.path.join(_UI_DIR, "dm_inbox_view.py"), "DMInboxView", "_on_dm_updated"
+        )
         return fn(self, client, peer)
 
 
@@ -214,34 +232,52 @@ class FakeThread:
         self.unread_pill = MagicMock()
 
     def _on_entry_changed(self, entry):
-        fn = _class_method(os.path.join(_UI_DIR, "dm_thread_view.py"), "DMThreadView", "_on_entry_changed")
+        fn = _class_method(
+            os.path.join(_UI_DIR, "dm_thread_view.py"),
+            "DMThreadView",
+            "_on_entry_changed",
+        )
         return fn(self, entry)
 
     def _on_send(self):
-        fn = _class_method(os.path.join(_UI_DIR, "dm_thread_view.py"), "DMThreadView", "_on_send")
+        fn = _class_method(
+            os.path.join(_UI_DIR, "dm_thread_view.py"), "DMThreadView", "_on_send"
+        )
         return fn(self)
 
     def _send_text(self, text):
-        fn = _class_method(os.path.join(_UI_DIR, "dm_thread_view.py"), "DMThreadView", "_send_text")
+        fn = _class_method(
+            os.path.join(_UI_DIR, "dm_thread_view.py"), "DMThreadView", "_send_text"
+        )
         return fn(self, text)
 
     def _append_msg(self, msg, status=None):
-        fn = _class_method(os.path.join(_UI_DIR, "dm_thread_view.py"), "DMThreadView", "_append_msg")
+        fn = _class_method(
+            os.path.join(_UI_DIR, "dm_thread_view.py"), "DMThreadView", "_append_msg"
+        )
         return fn(self, msg, status)
 
     def _make_bubble(self, msg, status=None):
         fn = _class_method(
-            os.path.join(_UI_DIR, "dm_thread_view.py"), "DMThreadView", "_make_bubble",
+            os.path.join(_UI_DIR, "dm_thread_view.py"),
+            "DMThreadView",
+            "_make_bubble",
             extra_ns=dict(_FMT_NS),
         )
         return fn(self, msg, status)
 
     def _on_publish_result(self, client, eid, accepted, message, relay, label):
-        fn = _class_method(os.path.join(_UI_DIR, "dm_thread_view.py"), "DMThreadView", "_on_publish_result")
+        fn = _class_method(
+            os.path.join(_UI_DIR, "dm_thread_view.py"),
+            "DMThreadView",
+            "_on_publish_result",
+        )
         return fn(self, client, eid, accepted, message, relay, label)
 
     def _show_failed(self, msg):
-        fn = _class_method(os.path.join(_UI_DIR, "dm_thread_view.py"), "DMThreadView", "_show_failed")
+        fn = _class_method(
+            os.path.join(_UI_DIR, "dm_thread_view.py"), "DMThreadView", "_show_failed"
+        )
         return fn(self, msg)
 
     def _scroll_to_bottom(self, force=False):
@@ -326,7 +362,8 @@ def _client_globals():
 def _unbound_client(method_name):
     src = open(_CLIENT_PATH, encoding="utf-8").read()
     cls = next(
-        n for n in ast.parse(src).body
+        n
+        for n in ast.parse(src).body
         if isinstance(n, ast.ClassDef) and n.name == "NostrClient"
     )
     fn = next(
@@ -411,7 +448,8 @@ def test_publish_dm_stores_self_copy_under_recipient(client):
     gw.set_our_pubkey(client.my_pubkey)
     client.set_dm_gateway(gw)
 
-    peer = "c" * 64
+    # real curve point (secp256k1 generator x) — NIP-44 rejects off-curve keys
+    peer = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
     signed = client.publish_dm(peer, "secret hello")
     assert signed is not None
     assert signed["kind"] == 4
@@ -468,7 +506,9 @@ def test_sidebar_badge_shown_and_hidden():
     view = MagicMock()
     badge = MagicMock()
     view.dm_badge = badge
-    fn = _class_method(os.path.join(_UI_DIR, "sidebar.py"), "Sidebar", "update_dm_badge")
+    fn = _class_method(
+        os.path.join(_UI_DIR, "sidebar.py"), "Sidebar", "update_dm_badge"
+    )
     fn(view, 3)
     badge.set_text.assert_called_with("3")
     badge.show.assert_called()

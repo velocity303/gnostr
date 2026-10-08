@@ -775,7 +775,9 @@ class NostrClient(GObject.Object):
         if gw is not None:
             try:
                 gw.save_event(signed)
-                GLib.idle_add(self.emit, "dm-conversations-updated", peer_pubkey)
+                # publish_dm runs on the UI thread (composer action), so the
+                # inbox refresh can emit directly — no idle_add hop needed.
+                self.emit("dm-conversations-updated", peer_pubkey)
             except Exception as e:
                 print(f"❌ DM Gateway save (outbound) failed: {e}")
         self.publish(signed)

@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
-import sys
-import os
 import json
+import os
+import sys
 import time
-import gi
 import traceback
+
+import gi
+
 import gnostr
-from .key_manager import KeyManager
-from .database import Database
+
 from .client import NostrClient
-from .renderer import ContentRenderer, ImageLoader
+from .database import Database
 from .dialogs import LoginDialog, RelayPreferencesWindow
-from .ui.sidebar import Sidebar
+from .key_manager import KeyManager
+from .renderer import ContentRenderer, ImageLoader
 from .ui.feed_view import FeedView
 from .ui.post_widget import PostWidget
+from .ui.sidebar import Sidebar
 
 # Ensure package imports work when run as __main__
 if __name__ == "__main__":
@@ -24,7 +27,7 @@ if __name__ == "__main__":
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, Adw, GLib, Gio, Pango, Gdk
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango
 
 
 class MainWindow(Adw.ApplicationWindow):

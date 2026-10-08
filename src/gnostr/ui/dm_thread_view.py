@@ -264,11 +264,21 @@ class DMThreadView(Gtk.Box):
     def _send_text(self, text):
         signed = self.main_window.client.publish_dm(self.peer_pubkey, text)
         if signed is None:
-            self._show_failed({"id": None, "sender_pk": self.main_window.pub_key,
-                               "content": text, "rumor_ts": None})
+            self._show_failed(
+                {
+                    "id": None,
+                    "sender_pk": self.main_window.pub_key,
+                    "content": text,
+                    "rumor_ts": None,
+                }
+            )
             return
-        msg = {"id": signed["id"], "sender_pk": signed["pubkey"],
-               "content": text, "rumor_ts": signed.get("created_at")}
+        msg = {
+            "id": signed["id"],
+            "sender_pk": signed["pubkey"],
+            "content": text,
+            "rumor_ts": signed.get("created_at"),
+        }
         row = self._append_msg(msg, status="sending")
         self._pending[signed["id"]] = {"row": row, "msg": msg}
         self._scroll_to_bottom()

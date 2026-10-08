@@ -89,7 +89,8 @@ class DMService(GObject.Object):
     def _default_idle_add(self):
         """Return GLib.idle_add in the real app; None when gi isn't importable."""
         try:
-            from gi.repository import GLib  # noqa: WPS433 (local import on purpose)
+            from gi.repository import \
+                GLib  # noqa: WPS433 (local import on purpose)
 
             return GLib.idle_add
         except Exception:
