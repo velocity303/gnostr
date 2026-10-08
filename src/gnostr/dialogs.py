@@ -187,7 +187,12 @@ class ExportKeyDialog(Adw.Window):
         if display:
             # Must use the display's default clipboard; constructing
             # Gdk.Clipboard(display) makes a fresh one nothing pastes from.
-            display.get_clipboard().set_text(self.result_label.get_text())
+            # Gdk.Clipboard has NO set_text() in GTK4 (that was GTK3's
+            # Gtk.Clipboard) — set_text raised AttributeError and the copy
+            # silently did nothing. set_content is the GTK4 API (issue #33).
+            display.get_clipboard().set_content(
+                Gdk.ContentProvider.new_for_value(self.result_label.get_text())
+            )
         btn.set_label("Copied!")
 
     def on_encrypt(self, btn):

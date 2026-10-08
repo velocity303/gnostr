@@ -46,6 +46,7 @@ if pytest_prog.found()
   test('test_dm_relay_targeting', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_dm_relay_targeting.py'], env: test_env, timeout: 120)
   test('test_dm_gtk422_api', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_dm_gtk422_api.py'], env: test_env, timeout: 120)
   test('test_relay_log_wrap', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_relay_log_wrap.py'], env: test_env, timeout: 120)
+  test('test_clipboard_api', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_clipboard_api.py'], env: test_env, timeout: 120)
   endif
 
 # Real-GTK feed harness (tier 2): exercises ui.feed_view.FeedView against a
@@ -59,5 +60,10 @@ gtk_python = find_program('python3', required: false)
 if xvfb_run.found() and gtk_python.found()
   test('test_feed_gtk_real', xvfb_run,
     args: ['-a', gtk_python, meson.project_source_root() / 'tests/test_feed_gtk_real.py'],
+    timeout: 120)
+  # Real-GTK clipboard harness (issue #33): ExportKeyDialog.on_copy ->
+  # real Gdk clipboard -> read_text_async read-back.
+  test('test_clipboard_gtk_real', xvfb_run,
+    args: ['-a', gtk_python, meson.project_source_root() / 'tests/test_clipboard_gtk_real.py'],
     timeout: 120)
 endif

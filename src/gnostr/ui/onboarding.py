@@ -222,7 +222,11 @@ class CreateAccountWindow(Adw.Window):
 
         display = Gdk.Display.get_default()
         if display:
-            display.get_clipboard().set_text(text)
+            # Gdk.Clipboard has no set_text() in GTK4 — see dialogs.py
+            # ExportKeyDialog.on_copy (issue #33).
+            display.get_clipboard().set_content(
+                Gdk.ContentProvider.new_for_value(text)
+            )
 
     # ---- finish: commit to keyring + login + bootstrap -------------------
     def _finish(self):
