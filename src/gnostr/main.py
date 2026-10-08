@@ -512,6 +512,11 @@ class MainWindow(Adw.ApplicationWindow):
         self.sidebar.append_relay_log(line)
 
     def perform_login(self, priv_hex):
+        # The keyring stores the nsec (see KeyManager.save_key) and the startup
+        # path hands it straight here, while the login dialog passes hex. Accept
+        # both: DMService/get_public_key need hex or they raise on "nsec…".
+        if isinstance(priv_hex, str) and priv_hex.startswith("nsec"):
+            priv_hex = gnostr.nostr_utils.nsec_to_hex(priv_hex)
         self.priv_key = priv_hex
         self.pub_key = gnostr.nostr_utils.get_public_key(priv_hex)
         # Push keys to the client — the fresh-login dialog path also calls
