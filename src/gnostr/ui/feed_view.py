@@ -150,7 +150,7 @@ class FeedView(Adw.NavigationPage):
                 # No device info yet (e.g. very first event) — assume touch so a
                 # touch device stays gated rather than un-gated by accident.
                 return True
-            return ScrollGate.is_touch_source(source.get_input_source())
+            return ScrollGate.is_touch_source(source)
         except Exception:
             return True
 

@@ -200,6 +200,7 @@ class ContentRenderer:
         the first statement because that is the whole cost this avoids.
         """
         if ContentRenderer._activation_gated(window_ref):
+            print("[scroll-gate] swallowed video activation")
             return
         video = VideoPlayer._find_video(video_area)
         if video and getattr(video, "_pipeline", None) is not None:
@@ -243,9 +244,10 @@ class ContentRenderer:
         gate = getattr(window_ref, "scroll_gate", None)
         if gate is None or not gate.in_cooldown():
             return False
-        # No feed attached -> no gate object -> handlers run unconditionally.
-        last_touch = getattr(window_ref, "last_scroll_was_touch", False)
-        return bool(last_touch)
+        # The device class lives on the GATE (FeedView records it there), not on
+        # the window — reading a window attribute here made this gate inert
+        # (issue #22 review, bug 2).
+        return bool(gate.last_scroll_was_touch)
 
     @staticmethod
     def render(content, window_ref, post_widget_ref=None):
@@ -401,6 +403,7 @@ class ContentRenderer:
         # Swallow it (return True) so the profile view doesn't launch. No gesture
         # device on activate-link, so key off the touch-originated scroll stamp.
         if ContentRenderer._activation_gated(window_ref):
+            print("[scroll-gate] swallowed mention activation")
             return True
         if url.startswith("nostr:"):
             hex_pk = url[len("nostr:") :]
@@ -573,6 +576,11 @@ class ContentRenderer:
     def _on_quote_clicked(window, click_target, match_val):
         """Open a quote card's target. ('thread', id) opens the thread view;
         ('a', coordinate) resolves the addressable event then opens it."""
+        # Touch-activation cooldown (slice 2): the wrapper is a Gtk.Button, so
+        # there is no gesture device — key off the touch-origin scroll stamp.
+        if ContentRenderer._activation_gated(window):
+            print("[scroll-gate] swallowed quote-card activation")
+            return
         try:
             if click_target[0] == "thread":
                 window.show_thread(match_val, "Unknown", "Loading...")
