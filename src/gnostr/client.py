@@ -1,11 +1,14 @@
+import collections
 import json
+import os
 import threading
 import time
-import os
-import collections
-from gi.repository import GObject, GLib
 import traceback
+
+from gi.repository import GLib, GObject
+
 import gnostr
+
 from .util.connection_state import ConnectionState
 
 # Connection status definitions (Name, ColorCode)
@@ -653,6 +656,23 @@ class NostrClient(GObject.Object):
                 json.dumps(tags),
             )
 
+        elif kind == 4:
+            # NIP-04 DM rumor addressed to us (since-tag). Persist the raw
+            # rumor via the DM gateway — save_event rolls up dm_conversations
+            # (unread_count, last_activity) using the gateway's bound pubkey —
+            # then route the raw rumor through DMService for off-thread
+            # decryption. Skeleton/placeholder: the row is visible immediately
+            # with the raw payload and resolves to plaintext as the worker
+            # finishes.
+            gw = getattr(self, "dm_gateway", None)
+            if gw is not None:
+                try:
+                    gw.save_event(ev)
+                except Exception as e:
+                    print(f"❌ DM Gateway save failed: {e}")
+            if getattr(self, "dm_service", None) is not None:
+                self.dm_service.schedule_decrypt(ev)
+
     def _merge_relays(self, new_list):
         changed = False
         for r in new_list:
@@ -664,6 +684,46 @@ class NostrClient(GObject.Object):
         if changed:
             self.save_config()
             GLib.idle_add(self.emit, "relay-list-updated")
+
+    def set_dm_gateway(self, gateway):
+        """Inject a pre-built DM gateway (tests wire their own on an isolated
+        DB). The gateway must be bound to our pubkey so save_event can tell
+        inbound from outbound rumors when rolling up the conversation row."""
+        self.dm_gateway = gateway
+
+    def _ensure_dm_service(self):
+        """Lazily build the DM service + gateway on first kind-4 rumor.
+
+        Production callers (main.py) can inject `self.dm_gateway` ahead of time
+        to skip re-creation; headless/real-runtime paths create it here. The
+        gateway is bound to our pubkey so inbound/outbound rumors are told
+        apart when rolling up the conversation row.
+        """
+        if getattr(self, "dm_service", None) is not None:
+            return
+        gw = getattr(self, "dm_gateway", None)
+        if gw is None:
+            from gnostr.gateway.dm_gateway import SQLiteDMGateway
+
+            gw = SQLiteDMGateway()
+            self.dm_gateway = gw
+        # Bind the gateway to our pubkey so save_event can tell inbound from
+        # outbound rumors when rolling up the conversation row.
+        if getattr(gw, "_our_pubkey_override", "") != self.my_pubkey:
+            try:
+                gw.set_our_pubkey(self.my_pubkey or "")
+            except Exception:
+                pass
+        from gnostr.service.dm_service import DMService
+
+        self.dm_service = DMService(gateway=gw, our_privkey=self.my_privkey)
+
+    def subscribe_dm(self):
+        """Subscribe to kind-4 DM rumors addressed to us (since-tag)."""
+        if not self.my_pubkey:
+            print("⚠️ DM subscription skipped: no pubkey")
+            return
+        self.subscribe("dm_sub", {"kinds": [4], "#p": [self.my_pubkey], "limit": 50})
 
     def _handle_status(self, url, status):
         # Log relay connect/disconnect so the activity pane shows connectivity.

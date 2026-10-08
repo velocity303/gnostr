@@ -191,7 +191,16 @@ class ContentRenderer:
         """Lazy playback bootstrap. If the pipeline is already built, just
         toggle; otherwise remove the placeholder, show a spinner, and build the
         pipeline with autoplay. Keeps preroll cost to videos the user actually
-        plays (Task 10 contention fix)."""
+        plays (Task 10 contention fix).
+
+        Touch-activation cooldown: if a fast-scroll glide is still running, a
+        press here is almost certainly a swipe, not a deliberate tap — swallow
+        it BEFORE building/tearing down the playbin3 pipeline so one accidental
+        flick can't spin up + tear down a decoder (issue #18). The gate check is
+        the first statement because that is the whole cost this avoids.
+        """
+        if ContentRenderer._activation_gated(window_ref):
+            return
         video = VideoPlayer._find_video(video_area)
         if video and getattr(video, "_pipeline", None) is not None:
             VideoPlayer.toggle_play(video_area)
@@ -218,6 +227,25 @@ class ContentRenderer:
         VideoPlayer.load_and_play(
             url, video_area, spinner, window_ref, original_url, autoplay=True
         )
+
+    @staticmethod
+    def _activation_gated(window_ref):
+        """Return True if the feed's touch-activation cooldown is active.
+
+        Consults the gate exposed on the window ref (set by FeedView, wired from
+        the vadjustment). ``getattr`` keeps static render helpers working when
+        there is no feed attached (thread view, legacy feeds, tests): no gate
+        object means the handlers run unconditionally, so only the feed page is
+        gated. Touch-only activation consults the last-scroll device class: if
+        the last scroll was touch-originated we're still cooling down, so gate;
+        a desktop wheel/trackpad scroll must not swallow a mouse click.
+        """
+        gate = getattr(window_ref, "scroll_gate", None)
+        if gate is None or not gate.in_cooldown():
+            return False
+        # No feed attached -> no gate object -> handlers run unconditionally.
+        last_touch = getattr(window_ref, "last_scroll_was_touch", False)
+        return bool(last_touch)
 
     @staticmethod
     def render(content, window_ref, post_widget_ref=None):
@@ -368,6 +396,12 @@ class ContentRenderer:
 
     @staticmethod
     def _on_mention_link(url, window_ref):
+        # Touch-activation cooldown: during the post-scroll glide window a press
+        # on a mention link is almost certainly a swipe, not a deliberate tap.
+        # Swallow it (return True) so the profile view doesn't launch. No gesture
+        # device on activate-link, so key off the touch-originated scroll stamp.
+        if ContentRenderer._activation_gated(window_ref):
+            return True
         if url.startswith("nostr:"):
             hex_pk = url[len("nostr:") :]
             if window_ref and len(hex_pk) == 64 and hasattr(window_ref, "show_profile"):
