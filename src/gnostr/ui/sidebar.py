@@ -73,6 +73,12 @@ class Sidebar(Gtk.Box):
         self.relay_log_label.set_selectable(True)
         sw = Gtk.ScrolledWindow()
         sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        # max-content-height is ONLY honored when propagate-natural-height is
+        # TRUE (its default is FALSE, so the cap alone is silently ignored and
+        # the log's full natural height — 700px+ of wrapped lines — leaks into
+        # the row). Set both so the 180px cap holds: the log scrolls inside the
+        # row instead of stretching the section.
+        sw.set_propagate_natural_height(True)
         sw.set_max_content_height(180)
         sw.set_hexpand(True)
         sw.set_child(self.relay_log_label)
