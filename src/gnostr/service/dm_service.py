@@ -40,15 +40,19 @@ class DMService(GObject.Object):
     """
 
     __gsignals__ = {
+        # NOTE: real GObject cannot derive a GType from Python `dict`/`Exception`
+        # ("could not get typecode from object" at class-registration time
+        # on-device; mocked gi in tests hid it), so object-typed params are
+        # declared as the generic boxed Python-object type.
         # (event: dict, plaintext: str) — fired on the GLib main context after
         # an off-thread decrypt completes; `event` is the raw kind-14 rumor/wrap.
-        "dm-decrypted": (GObject.SignalFlags.RUN_FIRST, None, (dict, str)),
+        "dm-decrypted": (GObject.SignalFlags.RUN_FIRST, None, (GObject.TYPE_PYOBJECT, str)),
         # (event: dict, sender_pubkey: str, error: Exception) — a local decryption
         # failure (bad MAC/version/size). The UI toasts this instead of crashing.
         "dm-decrypt-error": (
             GObject.SignalFlags.RUN_FIRST,
             None,
-            (dict, str, Exception),
+            (GObject.TYPE_PYOBJECT, str, GObject.TYPE_PYOBJECT),
         ),
     }
 
