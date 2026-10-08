@@ -17,6 +17,7 @@ install_data(
     'renderer.py',
     'connection_status.py',
     'window.py',
+    'nip44.py',
   ],
   install_dir: pkgdatadir / pkg_name
 )

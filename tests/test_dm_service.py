@@ -30,12 +30,16 @@ from unittest.mock import MagicMock, patch
 import ecdsa
 import pytest
 
-
 # --- load real DMService methods from source (gi is mocked in conftest) ------
 
 
 _SRC_PATH = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "..", "src", "gnostr", "service", "dm_service.py"
+    os.path.dirname(os.path.abspath(__file__)),
+    "..",
+    "src",
+    "gnostr",
+    "service",
+    "dm_service.py",
 )
 
 
@@ -47,7 +51,9 @@ def _load_dm_service_ns():
     """
     src = open(_SRC_PATH, encoding="utf-8").read()
     tree = ast.parse(src)
-    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "DMService")
+    cls = next(
+        n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "DMService"
+    )
     ns = {"__class__": cls}
     ns.update({n.name: n for n in cls.body if isinstance(n, ast.FunctionDef)})
     return ns
@@ -57,7 +63,9 @@ def _load_dm_service():
     """Load the real DMService class body as a dict of {name: FunctionDef}."""
     src = open(_SRC_PATH, encoding="utf-8").read()
     tree = ast.parse(src)
-    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "DMService")
+    cls = next(
+        n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "DMService"
+    )
     return {n.name: n for n in cls.body if isinstance(n, ast.FunctionDef)}
 
 
@@ -88,7 +96,9 @@ def _bind_methods(fake_self):
     for name, fn in _load_dm_service().items():
         mod = ast.Module(body=[fn], type_ignores=[])
         ns = {}
-        exec(compile(mod, _SRC_PATH + ":bind:" + name, "exec"), ns)  # noqa: F821 - dynamic path
+        exec(
+            compile(mod, _SRC_PATH + ":bind:" + name, "exec"), ns
+        )  # noqa: F821 - dynamic path
         ns["nip44"] = __import__("gnostr.nip44", fromlist=["nip44"])
         # Methods run in an isolated namespace that carries none of the real
         # module's top-level imports; inject the stdlib names they reference
@@ -170,7 +180,9 @@ def _kb(hexkey: str) -> bytes:
 
 def _svc_encrypt(load_dm_service, our_priv_hex, recipient_pub_hex):
     """Encrypt plaintext to `recipient` using a service whose privkey is ours."""
-    svc = FakeDM(); _bind_methods(svc); svc._our_privkey = _kb(our_priv_hex)
+    svc = FakeDM()
+    _bind_methods(svc)
+    svc._our_privkey = _kb(our_priv_hex)
     return svc.encrypt("payload", _kb(recipient_pub_hex))
 
 
@@ -190,31 +202,45 @@ def _event(event_id="e" * 64, sender=None, ts=1000, content=None):
 
 def test_encrypt_decrypt_roundtrip(alice_priv, alice_pub, bob_priv, bob_pub):
     """Encrypt to Bob with Alice's key; Bob decrypts with his own key."""
-    alice = FakeDM(); _bind_methods(alice); alice._our_privkey = _kb(alice_priv)
+    alice = FakeDM()
+    _bind_methods(alice)
+    alice._our_privkey = _kb(alice_priv)
     plaintext = "hello bob"
 
     payload = alice.encrypt(plaintext, bob_pub)
 
-    bob = FakeDM(); _bind_methods(bob); bob._our_privkey = _kb(bob_priv)
+    bob = FakeDM()
+    _bind_methods(bob)
+    bob._our_privkey = _kb(bob_priv)
     # Bob derives the key from (bob_priv, alice_pub). The sender is Alice.
     assert bob.decrypt(_event(content=payload, sender=alice_pub)) == plaintext
 
 
-def test_conversation_key_is_symmetric(alice_priv, alice_pub, bob_priv):
+def test_conversation_key_is_symmetric(alice_priv, alice_pub, bob_priv, bob_pub):
     """conv(A,B) == conv(B,A): both derive the same key from one direction."""
-    alice = FakeDM(); _bind_methods(alice); alice._our_privkey = _kb(alice_priv)
-    bob = FakeDM(); _bind_methods(bob); bob._our_privkey = _kb(bob_priv)
+    alice = FakeDM()
+    _bind_methods(alice)
+    alice._our_privkey = _kb(alice_priv)
+    bob = FakeDM()
+    _bind_methods(bob)
+    bob._our_privkey = _kb(bob_priv)
 
-    k_ab = alice._conversation_key(alice_pub)  # Alice's view of A<->B
-    k_ba = bob._conversation_key(bob_pub)      # Bob's view of B<->A
+    k_ab = alice._conversation_key(bob_pub)  # Alice's view of A<->B
+    k_ba = bob._conversation_key(alice_pub)  # Bob's view of B<->A
 
     assert k_ab == k_ba
 
 
-def test_encrypt_then_decrypt_across_two_services(alice_priv, alice_pub, bob_priv, bob_pub):
+def test_encrypt_then_decrypt_across_two_services(
+    alice_priv, alice_pub, bob_priv, bob_pub
+):
     """Full outbound path: Alice encrypts for Bob, Bob decrypts."""
-    alice = FakeDM(); _bind_methods(alice); alice._our_privkey = _kb(alice_priv)
-    bob = FakeDM(); _bind_methods(bob); bob._our_privkey = _kb(bob_priv)
+    alice = FakeDM()
+    _bind_methods(alice)
+    alice._our_privkey = _kb(alice_priv)
+    bob = FakeDM()
+    _bind_methods(bob)
+    bob._our_privkey = _kb(bob_priv)
 
     msg = "secret message"
     payload = alice.encrypt(msg, bob_pub)
@@ -227,12 +253,16 @@ def test_decrypt_rejects_bad_mac():
     """A payload encrypted for a different conversation key must fail to decrypt."""
     # svc holds an invalid key ("0"*64 -> d=0), so conversation-key derivation
     # fails and the worker surfaces it as dm-decrypt-error with sender=bob_pub.
-    svc = FakeDM(); _bind_methods(svc); svc._our_privkey = _kb("0" * 64)
+    svc = FakeDM()
+    _bind_methods(svc)
+    svc._our_privkey = _kb("0" * 64)
 
     # Encrypt with a real counterparty so the payload is well-formed; but its
     # conversation key differs from ours, so decryption fails (MAC mismatch).
     other_priv, recipient_pub = _real_keypair()
-    payload = _svc_encrypt(_load_dm_service(), our_priv_hex=other_priv, recipient_pub_hex=recipient_pub)
+    payload = _svc_encrypt(
+        _load_dm_service(), our_priv_hex=other_priv, recipient_pub_hex=recipient_pub
+    )
 
     with pytest.raises(Exception):
         svc.decrypt(_event(content=payload, sender=recipient_pub))
@@ -240,7 +270,9 @@ def test_decrypt_rejects_bad_mac():
 
 def test_service_requires_local_private_key():
     """Encrypt/decrypt raise without a loaded local key."""
-    svc = FakeDM(); _bind_methods(svc); svc._our_privkey = None  # no key loaded
+    svc = FakeDM()
+    _bind_methods(svc)
+    svc._our_privkey = None  # no key loaded
     with pytest.raises(ValueError):
         svc.encrypt("x", "a" * 64)
     with pytest.raises(ValueError):
@@ -252,7 +284,9 @@ def test_service_requires_local_private_key():
 
 def test_schedule_decrypt_runs_off_thread(alice_priv, alice_pub, bob_priv, bob_pub):
     """The worker runs on a real thread; crypto never touches the main loop."""
-    alice = FakeDM(); _bind_methods(alice); alice._our_privkey = _kb(alice_priv)
+    alice = FakeDM()
+    _bind_methods(alice)
+    alice._our_privkey = _kb(alice_priv)
 
     # Pre-encrypt with Alice's key so schedule_decrypt can decrypt it back.
     evt = _event(content=alice.encrypt("off-thread-ok", bob_pub), sender=bob_pub)
@@ -263,7 +297,9 @@ def test_schedule_decrypt_runs_off_thread(alice_priv, alice_pub, bob_priv, bob_p
         received["text"] = plaintext
         received["error"] = error
 
-    svc = FakeDM(); _bind_methods(svc); svc._our_privkey = _kb(alice_priv)
+    svc = FakeDM()
+    _bind_methods(svc)
+    svc._our_privkey = _kb(alice_priv)
     # The worker runs in a background thread; wait for it to complete.
     svc.schedule_decrypt(evt, callback=on_result)
 
@@ -277,29 +313,37 @@ def test_schedule_decrypt_runs_off_thread(alice_priv, alice_pub, bob_priv, bob_p
 
 def test_schedule_decrypt_emits_dm_decrypted_signal(alice_priv, alice_pub, bob_pub):
     """When idle_add marshals onto the main loop, dm-decrypted fires."""
-    alice = FakeDM(); _bind_methods(alice); alice._our_privkey = _kb(alice_priv)
+    alice = FakeDM()
+    _bind_methods(alice)
+    alice._our_privkey = _kb(alice_priv)
 
-    # A GLib-like marshaller that runs the callback synchronously (simulating
-    # delivery on the main thread) and records emit calls to self.signals.
+    # A GLib-like marshaller that records the full marshalled call
+    # (self.emit, "dm-decrypted", event, plaintext) — simulating delivery on
+    # the main thread.
     emitted = []
 
     def fake_idle_add(*args):
-        # Real marshaller receives (self.emit, "dm-decrypted", event, plaintext);
-        # the last positional is the plaintext we care about.
-        plaintext = args[-1]
-        emitted.append(plaintext)
+        emitted.append(args)
 
-    svc = FakeDM(); _bind_methods(svc); svc._our_privkey = _kb(alice_priv)
+    svc = FakeDM()
+    _bind_methods(svc)
+    svc._our_privkey = _kb(alice_priv)
     with patch.object(svc, "_idle_add", staticmethod(fake_idle_add)):
-        evt = _event(content=alice.encrypt("off-thread-decrypted", bob_pub), sender=bob_pub)
+        evt = _event(
+            content=alice.encrypt("off-thread-decrypted", bob_pub), sender=bob_pub
+        )
         svc.schedule_decrypt(evt)  # no callback -> emits via idle_add -> emit
-
-    deadline = time.time() + 5
-    while not emitted and time.time() < deadline:
-        time.sleep(0.01)
+        # Wait while the patch is still active: if the with block exits first,
+        # _idle_add reverts to None and the worker takes the direct-emit
+        # branch instead of the marshalled one (test race).
+        deadline = time.time() + 5
+        while not emitted and time.time() < deadline:
+            time.sleep(0.01)
 
     assert len(emitted) == 1
-    event, plaintext = emitted[0][1], emitted[0][2]
+    name, event_arg, plaintext = emitted[0][1], emitted[0][2], emitted[0][3]
+    assert name == "dm-decrypted"
+    assert event_arg is evt
     assert plaintext == "off-thread-decrypted"
 
 
@@ -307,29 +351,40 @@ def test_schedule_decrypt_emits_dm_decrypt_error_signal(alice_priv, alice_pub, b
     """A decrypt failure emits dm-decrypt-error with (event, sender, error)."""
     # svc holds an invalid key ("0"*64 -> d=0), so conversation-key derivation
     # fails and the worker surfaces it as dm-decrypt-error with sender=bob_pub.
-    alice = FakeDM(); _bind_methods(alice); alice._our_privkey = _kb(alice_priv)  # encryptor key
+    alice = FakeDM()
+    _bind_methods(alice)
+    alice._our_privkey = _kb(alice_priv)  # encryptor key
 
     payload = alice.encrypt("secret", bob_pub)
 
     emitted = []
 
     def fake_idle_add(*args):
-        # Real marshaller receives (self.emit, "dm-decrypted", event, plaintext);
-        # the last positional is the plaintext we care about.
-        plaintext = args[-1]
-        emitted.append(plaintext)
+        # Marshalled call: (self.emit, "dm-decrypt-error", event, sender, error).
+        emitted.append(args)
 
-    svc = FakeDM(); _bind_methods(svc); svc._our_privkey = _kb("0" * 64)  # invalid -> error path
+    svc = FakeDM()
+    _bind_methods(svc)
+    svc._our_privkey = _kb("0" * 64)  # invalid -> error path
     with patch.object(svc, "_idle_add", staticmethod(fake_idle_add)):
         evt = _event(content=payload, sender=bob_pub)
         svc.schedule_decrypt(evt)  # no callback -> emits dm-decrypt-error
-
-    deadline = time.time() + 5
-    while not emitted and time.time() < deadline:
-        time.sleep(0.01)
+        # Wait while the patch is still active: the error path must marshal
+        # through _idle_add like the success path (never emit on the worker
+        # thread); exiting the with block early would revert _idle_add and
+        # let the worker take the direct-emit branch (test race).
+        deadline = time.time() + 5
+        while not emitted and time.time() < deadline:
+            time.sleep(0.01)
 
     assert len(emitted) == 1
-    event_arg, sender_arg, error_arg = emitted[0][1], emitted[0][2], emitted[0][3]
+    name, event_arg, sender_arg, error_arg = (
+        emitted[0][1],
+        emitted[0][2],
+        emitted[0][3],
+        emitted[0][4],
+    )
+    assert name == "dm-decrypt-error"
     assert event_arg is evt
     assert sender_arg == bob_pub
     assert isinstance(error_arg, Exception)
@@ -340,7 +395,9 @@ def test_schedule_decrypt_emits_dm_decrypt_error_signal(alice_priv, alice_pub, b
 
 def test_conversation_key_cache_is_thread_safe(alice_priv, alice_pub):
     """Concurrent lookups of the same key don't corrupt the cache."""
-    svc = FakeDM(); _bind_methods(svc); svc._our_privkey = _kb(alice_priv)
+    svc = FakeDM()
+    _bind_methods(svc)
+    svc._our_privkey = _kb(alice_priv)
 
     def worker():
         for _ in range(50):
@@ -357,8 +414,12 @@ def test_conversation_key_cache_is_thread_safe(alice_priv, alice_pub):
 
 def test_concurrent_encrypt_decrypt_roundtrip(alice_priv, alice_pub, bob_priv, bob_pub):
     """Many concurrent encrypt/decrypt ops across two services stay correct."""
-    alice = FakeDM(); _bind_methods(alice); alice._our_privkey = _kb(alice_priv)
-    bob = FakeDM(); _bind_methods(bob); bob._our_privkey = _kb(bob_priv)
+    alice = FakeDM()
+    _bind_methods(alice)
+    alice._our_privkey = _kb(alice_priv)
+    bob = FakeDM()
+    _bind_methods(bob)
+    bob._our_privkey = _kb(bob_priv)
 
     errors = []
 
@@ -382,9 +443,11 @@ def test_concurrent_encrypt_decrypt_roundtrip(alice_priv, alice_pub, bob_priv, b
     assert not errors
 
 
-def test_schedule_decrypt_thread_safety(alice_priv, alice_pub, bob_priv):
+def test_schedule_decrypt_thread_safety(alice_priv, alice_pub, bob_priv, bob_pub):
     """Many concurrent schedule_decrypt calls don't crash the cache/threads."""
-    svc = FakeDM(); _bind_methods(svc); svc._our_privkey = _kb(alice_priv)
+    svc = FakeDM()
+    _bind_methods(svc)
+    svc._our_privkey = _kb(alice_priv)
     count = {"done": 0}
 
     def worker():

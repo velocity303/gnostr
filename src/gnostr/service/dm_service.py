@@ -45,7 +45,11 @@ class DMService(GObject.Object):
         "dm-decrypted": (GObject.SignalFlags.RUN_FIRST, None, (dict, str)),
         # (event: dict, sender_pubkey: str, error: Exception) — a local decryption
         # failure (bad MAC/version/size). The UI toasts this instead of crashing.
-        "dm-decrypt-error": (GObject.SignalFlags.RUN_FIRST, None, (dict, str, Exception)),
+        "dm-decrypt-error": (
+            GObject.SignalFlags.RUN_FIRST,
+            None,
+            (dict, str, Exception),
+        ),
     }
 
     def __init__(self, gateway, our_pubkey=None, our_privkey=None, idle_add=None):
@@ -58,12 +62,29 @@ class DMService(GObject.Object):
         super().__init__()
         self._gateway = gateway
         self._our_pubkey = our_pubkey or getattr(gateway, "_our_pubkey_override", "")
-        self._our_privkey = our_privkey
+        # `nip44` takes raw 32-byte keys; the rest of the app (client.set_keys,
+        # nostr_utils.sign_event) carries keys as hex strings. Normalize here so
+        # the production path (client._ensure_dm_service) does not hit
+        # nip44's "bad key length" guard on every inbound DM.
+        self._our_privkey = (
+            self._as_key_bytes(our_privkey) if our_privkey is not None else None
+        )
         # Conversation-key cache, guarded by a lock — mirrors the renderer's
         # ImageLoader `_cache`/`_cache_lock` pattern (thread-safe, bounded work).
         self._conv_cache = {}
         self._conv_lock = threading.Lock()
         self._idle_add = idle_add if idle_add is not None else self._default_idle_add()
+
+    def _as_key_bytes(self, key):
+        """Accept a 64-char hex string or raw 32 bytes; return raw 32 bytes."""
+        if key is None:
+            raise ValueError("key must be 32 raw bytes or 64-char hex")
+        if isinstance(key, bytes):
+            return key
+        try:
+            return bytes.fromhex(key)
+        except (ValueError, TypeError):
+            raise ValueError("key must be 32 raw bytes or 64-char hex") from None
 
     def _default_idle_add(self):
         """Return GLib.idle_add in the real app; None when gi isn't importable."""
@@ -81,13 +102,16 @@ class DMService(GObject.Object):
         secp256k1 ECDH over the unhashed 32-byte x-coordinate and HKDF-extracts
         with salt 'nip44-v2'. Symmetric: conv(A,B) == conv(B,A).
         """
-        if not self._our_privkey:
+        privkey = self._our_privkey
+        if not privkey:
             raise ValueError("no local private key loaded")
         with self._conv_lock:
             cached = self._conv_cache.get(peer_pubkey)
             if cached is not None:
                 return cached
-            conv_key = nip44.get_conversation_key(self._our_privkey, peer_pubkey)
+            conv_key = nip44.get_conversation_key(
+                privkey, self._as_key_bytes(peer_pubkey)
+            )
             self._conv_cache[peer_pubkey] = conv_key
             return conv_key
 
@@ -127,6 +151,7 @@ class DMService(GObject.Object):
         that don't want GObject signals; otherwise dm-decrypted/dm-decrypt-error
         are emitted.
         """
+
         # Runs on a worker thread, never the main loop.
         def _worker():
             try:
@@ -144,7 +169,16 @@ class DMService(GObject.Object):
                 sender = event.get("pubkey") or ""
                 if callback is not None:
                     callback(None, e)
+                elif self._idle_add is not None:
+                    # Marshal through idle_add exactly like the success path:
+                    # dm-decrypt-error must never fire on the worker thread —
+                    # the documented contract is that signals are always
+                    # emitted on the GLib main context.
+                    self._idle_add(self.emit, "dm-decrypt-error", event, sender, e)
                 else:
+                    # No idle marshaller available (headless): emit directly.
+                    # Safe here — this branch only runs when there is no GLib
+                    # main loop to marshal onto, so a direct emit can't race it.
                     self.emit("dm-decrypt-error", event, sender, e)
 
         threading.Thread(target=_worker, daemon=True).start()

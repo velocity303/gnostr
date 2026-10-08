@@ -35,7 +35,12 @@ _CLIENT_PATH = os.path.normpath(
 
 _SERVICE_PATH = os.path.normpath(
     os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "..", "src", "gnostr", "service", "dm_service.py"
+        os.path.dirname(os.path.abspath(__file__)),
+        "..",
+        "src",
+        "gnostr",
+        "service",
+        "dm_service.py",
     )
 )
 
@@ -43,7 +48,9 @@ _SERVICE_PATH = os.path.normpath(
 def _load_client_source():
     src = open(_CLIENT_PATH, encoding="utf-8").read()
     tree = ast.parse(src)
-    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "NostrClient")
+    cls = next(
+        n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "NostrClient"
+    )
     return src, cls
 
 
@@ -56,6 +63,10 @@ def _client_globals():
 
     src, _cls = _load_client_source()
     ns = {
+        # client.py uses relative imports (`from .util...`); exec needs a
+        # package context for them to resolve.
+        "__name__": "gnostr.client",
+        "__package__": "gnostr",
         "GLib": types.SimpleNamespace(idle_add=lambda fn, *a: fn(*a)),
     }
     exec(compile(ast.parse(src), _CLIENT_PATH, "exec"), ns)
@@ -65,15 +76,12 @@ def _client_globals():
 def _unbound(method_name):
     """Extract the real NostrClient.<method_name> function from client.py source
     and return it unbound (call as fn(client, ...))."""
-    _, tree = _load_client_source()
-    cls = next(
-        n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "NostrClient"
-    )
+    _, cls = _load_client_source()
     fn = next(
         n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == method_name
     )
     ns = _client_globals()
-    exec(ast.Module(body=[fn], type_ignores=[]), ns)
+    exec(compile(ast.Module(body=[fn], type_ignores=[]), _CLIENT_PATH, "exec"), ns)
     return ns[method_name]
 
 
@@ -171,6 +179,57 @@ def _kind4(sender, ts, content, eid, my_pubkey):
         "tags": [["p", my_pubkey]],
         "sig": "0" * 128,
     }
+
+
+def _make_dm_service(gateway, our_privkey):
+    """Build a real-behaving DMService for tests.
+
+    Under the conftest gi mocks `GObject.Object` is a Mock, so
+    `DMService(...)` returns an opaque Mock and none of the service code runs.
+    Same workaround as test_dm_service.py: load the real methods from source via
+    AST and bind them to a lightweight fake self with a recording signal bus.
+    `_idle_add` is None so schedule_decrypt takes its documented headless path
+    (emit directly), and a threading.Event lets the test await the worker.
+    """
+    import functools
+
+    src = open(_SERVICE_PATH, encoding="utf-8").read()
+    cls = next(
+        n
+        for n in ast.parse(src).body
+        if isinstance(n, ast.ClassDef) and n.name == "DMService"
+    )
+
+    done = threading.Event()
+    handlers = {}
+
+    class FakeDM:
+        def __init__(self):
+            self._gateway = gateway
+            self._our_privkey = bytes.fromhex(our_privkey)
+            self._conv_cache = {}
+            self._conv_lock = threading.Lock()
+            self._idle_add = None
+
+        def connect(self, name, cb):
+            handlers.setdefault(name, []).append(cb)
+
+        def emit(self, name, *args):
+            for cb in handlers.get(name, ()):
+                cb(*args)
+            done.set()
+
+    svc = FakeDM()
+    for fn in cls.body:
+        if not isinstance(fn, ast.FunctionDef):
+            continue
+        ns = {}
+        exec(compile(ast.Module(body=[fn], type_ignores=[]), _SERVICE_PATH, "exec"), ns)
+        ns["nip44"] = nip44
+        ns.setdefault("threading", threading)
+        setattr(svc, fn.name, functools.partial(ns[fn.name], svc))
+    svc.signals_done = done
+    return svc
 
 
 def _handle(client, ev):
@@ -277,7 +336,9 @@ def test_kind4_routes_through_dm_service_for_decryption(client, gateway):
     peer_priv = ecdsa.SigningKey.generate(curve=ecdsa.SECP256k1)
     peer_pub = peer_priv.get_verifying_key().pubkey.point.x().to_bytes(32, "big").hex()
     plain = "encrypted dm body"
-    conv = get_conversation_key(client.my_privkey, peer_pub)
+    conv = get_conversation_key(
+        bytes.fromhex(client.my_privkey), bytes.fromhex(peer_pub)
+    )
     payload = encrypt(plain, conv)
 
     from gnostr.service.dm_service import DMService
@@ -288,9 +349,10 @@ def test_kind4_routes_through_dm_service_for_decryption(client, gateway):
     def on_decrypted(event, plaintext):
         decrypted["text"] = plaintext
 
-    dm_service = DMService(gateway=gateway, our_privkey=client.my_privkey)
+    dm_service = _make_dm_service(gateway, client.my_privkey)
     dm_service.connect("dm-decrypted", on_decrypted)
     dm_service.schedule_decrypt(rumor)
+    assert dm_service.signals_done.wait(5), "decrypt worker never emitted"
     assert decrypted.get("text") == plain
 
 
@@ -306,14 +368,18 @@ def test_placeholder_content_present_before_decryption(client, gateway):
     completes."""
     peer_priv = ecdsa.SigningKey.generate(curve=ecdsa.SECP256k1)
     peer_pub = peer_priv.get_verifying_key().pubkey.point.x().to_bytes(32, "big").hex()
-    conv = get_conversation_key(client.my_privkey, peer_pub)
+    from gnostr.nip44 import encrypt, get_conversation_key
+
+    conv = get_conversation_key(
+        bytes.fromhex(client.my_privkey), bytes.fromhex(peer_pub)
+    )
     payload = encrypt("secret", conv)
 
     rumor = _kind4(peer_pub, 1000, payload, "ph" * 64, client.my_pubkey)
 
     # The row is persisted immediately with the raw payload.
     _handle(client, rumor)
-    thread = gateway.get_thread("peer" * 8, 10, None)
+    thread = gateway.get_thread(peer_pub, 10, None)
     assert len(thread) == 1
     assert thread[0]["id"] == "ph" * 64
 
@@ -324,7 +390,7 @@ def test_placeholder_content_present_before_decryption(client, gateway):
 def test_fake_relay_emitting_kind4_updates_conversations(client, gateway):
     """A fake relay fixture emitting kind-4 events drives the conversations
     table updates — the end-to-end contract for DM-3."""
-    relay = FakeRelay({"events": [], "handle": _handle})
+    relay = FakeRelay({"events": [], "handle": lambda ev: _handle(client, ev)})
 
     # Emit two kind-4 rumors from the same peer.
     relay.send_event(_kind4("peer" * 8, 100, "one", "r1" * 64, client.my_pubkey))
@@ -339,7 +405,7 @@ def test_fake_relay_emitting_kind4_updates_conversations(client, gateway):
 
 def test_fake_relay_emitting_kind4_to_multiple_peers(client, gateway):
     """Kind-4 events from different peers each create their own conversation."""
-    relay = FakeRelay({"events": [], "handle": _handle})
+    relay = FakeRelay({"events": [], "handle": lambda ev: _handle(client, ev)})
 
     relay.send_event(_kind4("peerA" * 8, 100, "a", "a1" * 64, client.my_pubkey))
     relay.send_event(_kind4("peerB" * 8, 150, "b", "b1" * 64, client.my_pubkey))
@@ -356,13 +422,19 @@ def test_fake_relay_kind4_with_decrypt_error_surfaces_error(client, gateway):
     # Encrypt to a DIFFERENT peer so our conversation key won't match.
     import ecdsa
 
-    from gnostr.nip44 import encrypt
+    from gnostr.nip44 import encrypt, get_conversation_key
 
     other_priv = ecdsa.SigningKey.generate(curve=ecdsa.SECP256k1)
-    other_pub = other_priv.get_verifying_key().pubkey.point.x().to_bytes(32, "big").hex()
-    payload = encrypt("secret", get_conversation_key(other_priv.privkey.secret_multiplier.to_bytes(32, "big"), other_pub))
-
-    from gnostr.service.dm_service import DMService
+    other_pub = (
+        other_priv.get_verifying_key().pubkey.point.x().to_bytes(32, "big").hex()
+    )
+    payload = encrypt(
+        "secret",
+        get_conversation_key(
+            other_priv.privkey.secret_multiplier.to_bytes(32, "big"),
+            bytes.fromhex(other_pub),
+        ),
+    )
 
     rumor = _kind4(other_pub, 1000, payload, "err" * 64, client.my_pubkey)
     errors = {}
@@ -370,7 +442,8 @@ def test_fake_relay_kind4_with_decrypt_error_surfaces_error(client, gateway):
     def on_error(event, sender, error):
         errors["error"] = error
 
-    dm_service = DMService(gateway=gateway, our_privkey=client.my_privkey)
+    dm_service = _make_dm_service(gateway, client.my_privkey)
     dm_service.connect("dm-decrypt-error", on_error)
     dm_service.schedule_decrypt(rumor)
+    assert dm_service.signals_done.wait(5), "decrypt worker never emitted"
     assert "error" in errors
