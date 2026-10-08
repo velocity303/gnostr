@@ -206,6 +206,9 @@ class NostrClient(GObject.Object):
         "external-identities-updated": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         # badges-updated: (pubkey:str) — NIP-58 kind-10008 profile badges arrived
         "badges-updated": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
+        # dm-conversations-updated: (peer_pk:str) — the DM gateway persisted a
+        # rumor (inbound or our outbound self-copy); inbox/thread views refresh.
+        "dm-conversations-updated": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
     }
 
     def __init__(self, db):
@@ -668,6 +671,8 @@ class NostrClient(GObject.Object):
             if gw is not None:
                 try:
                     gw.save_event(ev)
+                    peer = ev.get("pubkey") or ""
+                    GLib.idle_add(self.emit, "dm-conversations-updated", peer)
                 except Exception as e:
                     print(f"❌ DM Gateway save failed: {e}")
             if getattr(self, "dm_service", None) is not None:
@@ -700,7 +705,15 @@ class NostrClient(GObject.Object):
         apart when rolling up the conversation row.
         """
         if getattr(self, "dm_service", None) is not None:
-            return
+            # Re-login with a different key: the cached service holds the OLD
+            # privkey, which would encrypt/decrypt every DM wrong. Drop and
+            # rebuild when the loaded key changed.
+            svc = self.dm_service
+            want = bytes.fromhex(self.my_privkey) if self.my_privkey else None
+            if want is not None and getattr(svc, "_our_privkey", None) != want:
+                self.dm_service = None
+            else:
+                return
         gw = getattr(self, "dm_gateway", None)
         if gw is None:
             from gnostr.gateway.dm_gateway import SQLiteDMGateway
@@ -724,6 +737,50 @@ class NostrClient(GObject.Object):
             print("⚠️ DM subscription skipped: no pubkey")
             return
         self.subscribe("dm_sub", {"kinds": [4], "#p": [self.my_pubkey], "limit": 50})
+
+    def ensure_dm(self):
+        """Public hook for the app: build DM gateway + service at login (not
+        lazily on first rumor) so the UI can connect to dm-decrypted before
+        any DM arrives, and open the DM subscription. Idempotent."""
+        self._ensure_dm_service()
+        if self.my_pubkey:
+            self.subscribe_dm()
+
+    def publish_dm(self, peer_pubkey, plaintext):
+        """Encrypt + publish a DM to `peer_pubkey`. Returns the signed rumor
+        dict (its id keys the UI's optimistic bubble) or None on failure.
+
+        Wire: NIP-44 v2 ciphertext riding the kind-4 rumor skeleton the client
+        already subscribes to (NIP-59 gift-wrap envelope is follow-up scope,
+        per issue #19). The rumor is persisted through the DM gateway as our
+        self-copy BEFORE publishing, so the sender's thread shows it even if
+        no relay ever echoes it back. OK-ack tracking uses the rumor id — the
+        publish-result signal resolves the optimistic bubble."""
+        if not self.my_privkey or not self.my_pubkey:
+            print("❌ DM send failed: no keys loaded")
+            return None
+        self._ensure_dm_service()
+        try:
+            ciphertext = self.dm_service.encrypt(plaintext, peer_pubkey)
+        except Exception as e:
+            print(f"❌ DM encrypt failed: {e}")
+            return None
+        event = gnostr.nostr_utils.build_event(
+            self.my_pubkey, 4, ciphertext, [["p", peer_pubkey]]
+        )
+        signed = gnostr.nostr_utils.sign_event(event, self.my_privkey)
+        if not signed:
+            return None
+        gw = getattr(self, "dm_gateway", None)
+        if gw is not None:
+            try:
+                gw.save_event(signed)
+                GLib.idle_add(self.emit, "dm-conversations-updated", peer_pubkey)
+            except Exception as e:
+                print(f"❌ DM Gateway save (outbound) failed: {e}")
+        self.publish(signed)
+        self._track_publish(signed, "DM")
+        return signed
 
     def _handle_status(self, url, status):
         # Log relay connect/disconnect so the activity pane shows connectivity.

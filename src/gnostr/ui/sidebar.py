@@ -32,6 +32,7 @@ class Sidebar(Gtk.Box):
             ("profile", "Profile", "avatar-default"),
             ("search", "Search User", "system-search"),
             ("followers", "Follows", "network-transmit-receive"),
+            ("messages", "Messages", "mail-unread"),
         ]
 
         for r_id, title, icon in items:
@@ -39,6 +40,14 @@ class Sidebar(Gtk.Box):
             r.set_activatable(True)
             self.menu_list.append(r)
             self.rows[r_id] = r
+
+        # Unread-DM badge on the Messages row (hidden at 0). MainWindow
+        # refreshes it via update_dm_badge() off gateway queries.
+        self.dm_badge = Gtk.Label(label="0")
+        self.dm_badge.add_css_class("badge")
+        self.dm_badge.add_css_class("accent")
+        self.dm_badge.set_no_show_all(True)
+        self.rows["messages"].add_suffix(self.dm_badge)
 
         self.append(self.menu_list)
         self.append(Gtk.Box(vexpand=True))
@@ -98,3 +107,11 @@ class Sidebar(Gtk.Box):
 
     def update_status(self, status_emoji):
         self.status_label.set_text(status_emoji)
+
+    def update_dm_badge(self, count):
+        """Show the unread-DM count on the Messages row; hidden at 0."""
+        if count > 0:
+            self.dm_badge.set_text(str(count))
+            self.dm_badge.show()
+        else:
+            self.dm_badge.hide()

@@ -182,6 +182,9 @@ class MainWindow(Adw.ApplicationWindow):
         elif r_id == "followers":
             if self.pub_key:
                 self.show_follows(self.pub_key)
+        elif r_id == "messages":
+            if self.pub_key:
+                self.show_dm_inbox()
         self.split_view.set_show_content(True)
 
     def sync_follows(self):
@@ -206,6 +209,39 @@ class MainWindow(Adw.ApplicationWindow):
         view = FollowersListView(self, owner_pubkey, is_own=is_own)
         page = Adw.NavigationPage(title="Follows", child=view)
         self.content_nav.push(page)
+
+    def show_dm_inbox(self):
+        """Open the DM inbox (Messages page)."""
+        try:
+            from gnostr.ui.dm_inbox_view import DMInboxView
+        except ImportError:
+            from .ui.dm_inbox_view import DMInboxView
+
+        view = DMInboxView(self)
+        page = Adw.NavigationPage(title="Messages", child=view)
+        self.content_nav.push(page)
+
+    def show_dm_thread(self, peer_pubkey):
+        """Open the DM conversation with one peer (from an inbox row)."""
+        try:
+            from gnostr.ui.dm_thread_view import DMThreadView
+        except ImportError:
+            from .ui.dm_thread_view import DMThreadView
+
+        view = DMThreadView(self, peer_pubkey)
+        page = Adw.NavigationPage(title="DM", child=view)
+        self.content_nav.push(page)
+
+    def update_dm_badge(self):
+        """Refresh the sidebar unread-DM badge from the gateway."""
+        gw = getattr(self.client, "dm_gateway", None)
+        count = 0
+        if gw is not None:
+            try:
+                count = gw.total_unread()
+            except Exception:
+                count = 0
+        self.sidebar.update_dm_badge(count)
 
     def on_login_clicked(self, btn):
         LoginDialog(self.client, self).present()
@@ -479,9 +515,14 @@ class MainWindow(Adw.ApplicationWindow):
         # set_keys, so the saved-key startup path must too or publish_* (like,
         # repost, reply, follow) silently no-ops with "No private key loaded".
         self.client.set_keys(self.pub_key, self.priv_key)
+        # Build the DM gateway + service and open the kind-4 subscription at
+        # login (not lazily on first rumor) so the inbox/thread views can
+        # connect to dm-decrypted immediately.
+        self.client.ensure_dm()
         self.main_stack.set_visible_child_name("app")
         self.sidebar.update_status("🟢")
         self.fab_post.set_visible(True)
+        self.update_dm_badge()
         GLib.idle_add(self.client.connect_all)
 
     def switch_feed(self, feed_type):
@@ -571,6 +612,18 @@ class GnostrApp(Adw.Application):
             ".liked { color: @accent_color; }"
             ".liked image { color: @accent_color; }"
             ".toast { min-width: 0px; }"
+            # DM chat bubbles (contract: 16px radius; 70% max width is
+            # enforced in code via set_max_width_chars — GTK CSS has no
+            # percentage widths, and background-alpha is not a GTK property)
+            ".dm-bubble { border-radius: 16px; padding: 8px 12px; }"
+            ".dm-in { background-color: alpha(@card_bg_color, 1); }"
+            ".dm-out { background-color: alpha(@accent_bg_color, 1); color: @accent_fg_color; }"
+            ".dm-bubble-error { background-color: alpha(@error_bg_color, 0.25); }"
+            # Inbox skeleton shimmer (fixed 64px rows; removed on first
+            # gateway result, never on a timer)
+            ".dm-skeleton { border-radius: 8px;"
+            " background-color: alpha(@text_color, 0.08); }"
+            ".dm-unread-dot { color: @accent_color; }"
         )
         Gtk.StyleContext.add_provider_for_display(
             Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION

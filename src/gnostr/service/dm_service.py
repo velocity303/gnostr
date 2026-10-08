@@ -156,6 +156,16 @@ class DMService(GObject.Object):
         def _worker():
             try:
                 plaintext = self.decrypt(event)
+                # Write the plaintext back over the stored raw payload so the
+                # inbox preview and thread queries (gateway is thread-safe)
+                # show readable text. Best-effort: a gateway without rewrite
+                # support (or a raced DB reset) must never kill the signal.
+                try:
+                    upd = getattr(self._gateway, "update_content", None)
+                    if upd is not None and event.get("id"):
+                        upd(event["id"], plaintext)
+                except Exception:
+                    pass
                 if callback is not None:
                     callback(plaintext, None)
                 elif self._idle_add is not None:
