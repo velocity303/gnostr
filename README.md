@@ -33,20 +33,40 @@ flatpak build-bundle repo gnostr.flatpak tech.livingonlinux.gnostr
 
 Prebuilt flatpaks are available within the repo for Arm and x86.
 
-### Hardware-Accelerated Video (VA-API)
+### Hardware-Accelerated Video (VA-API / V4L2)
 
-**No environment variables are required in the default setup.** GStreamer's
-`playbin3` auto-detects a working VA-API driver at runtime, and the Flatpak
-manifest already grants GPU access (`--device=dri`). You only need to set a
-variable when you are making a deliberate choice — hybrid GPUs, an unusual
-driver stack, or a software-fallback problem you are diagnosing:
+**No environment variables are required in the default setup.** The Flatpak
+manifest grants full device access (`--device=all`), which is what lets the
+GNOME runtime's hardware codec plugins register their decoders:
+
+- `va` plugin (VA-API): `vah264dec`, `vah265dec`, `vavp8dec`, `vavp9dec` — Intel/AMD/NVIDIA GPUs
+- `v4l2codecs` plugin (V4L2 stateless): `v4l2slh264dec`, `v4l2slh265dec`, … — e.g. the Librem 5's i.MX8M VPU
+
+(The legacy `gst-vaapi` element names `vaapih264dec`/`v4l2h264dec` no longer
+exist in the GNOME 50 runtime.) `playbin3`/`decodebin3` prefer these by rank
+and fall back to software (`avdec_h264` via `org.freedesktop.Platform.ffmpeg-full`)
+automatically when no hardware decoder is available or the stream profile is
+not supported in hardware (e.g. H.264 High 4:4:4).
+
+At startup of the first video, Gnostr logs which path it found:
+
+```
+🎬 [Video] HW decode available: vah264dec, vah265dec, ...
+🎬 [PERF] <url> decoders=['vah264dec'] video_caps=...
+```
+
+If you see `decoders=['avdec_h264']`, GStreamer fell back to software decoding.
+Capture both lines with `GNOSTR_VIDEO_LOG=1 flatpak run tech.livingonlinux.gnostr`.
+
+You only need an environment variable when making a deliberate choice — hybrid
+GPUs, an unusual driver stack, or a software-fallback problem you are diagnosing:
 
 | Situation | What to set |
 |---|---|
 | Intel integrated (HD/UHD) or AMD on older Mesa: wrong driver picked | `LIBVA_DRIVER_NAME=i965` (Intel Gen7–9), `crocus` (Intel on older Mesa), `radeonsi` (AMD) |
 | AMD RDNA2 or newer (RX 5000+) | Nothing — recent Mesa selects the Vulkan video path automatically; do **not** force `radeonsi` |
 | NVIDIA | The Flatpak already bundles software decode (`org.freedesktop.Platform.ffmpeg-full`), so video always works; for NVDEC hardware decode install the optional extension `flatpak install flathub org.freedesktop.Platform.VAAPI.nvidia` (no env var) |
-| Hybrid graphics (iGPU + dGPU): pin which GPU decodes | `GST_VAAPI_DRM_DEVICE=/dev/dri/renderD128` (iGPU) or `/dev/dri/renderD129` (dGPU) — check with `ls /dev/dri/renderD*` |
+| Hybrid graphics (iGPU + dGPU): pin which GPU decodes | The `va` plugin auto-selects a render node; the modern plugin has no pin knob (`GST_VAAPI_DRM_DEVICE` is legacy gst-vaapi only — *from-source installs*) |
 | gst-vaapi refuses to load a non-default driver (*from-source / distro install only* — the Flatpak manifest already bakes this in via `--env`) | `GST_VAAPI_ALL_DRIVERS=1` |
 
 Because Gnostr ships as a Flatpak, these must be passed through Flatpak, not your
@@ -57,10 +77,6 @@ flatpak run --env=GST_VAAPI_DRM_DEVICE=/dev/dri/renderD128 tech.livingonlinux.gn
 # make it permanent:
 flatpak override --user --env=GST_VAAPI_DRM_DEVICE=/dev/dri/renderD128 tech.livingonlinux.gnostr
 ```
-
-To confirm hardware decode is actually in use, run with
-`GST_DEBUG=vaapidecode*:4,avdec_*:4` — you want to see `vaapidecode` selected;
-`avdec_h264` means GStreamer fell back to software decoding.
 
 ### Running Tests
 
