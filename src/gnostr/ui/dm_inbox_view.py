@@ -92,7 +92,7 @@ class DMInboxView(Gtk.Box):
 
         self.clamp = Adw.Clamp()
         self.clamp.set_maximum_size(720)
-        self.clamp.set_tightening_ratio(0.7)
+        self.clamp.set_tightening_threshold(504)
         self.clamp.set_child(self.list_box)
 
         scroll = Gtk.ScrolledWindow()

@@ -69,7 +69,9 @@ class DMThreadView(Gtk.Box):
         self.scroll.set_vexpand(True)
         self.scroll.set_propagate_natural_height(False)
         # Contract: reverse=false, scroll-on-focus=false.
-        self.scroll.set_scroll_on_focus(False)
+        # scroll-on-focus was removed in GTK 4.20 and its default was always
+        # FALSE, so the contract holds without the call (which would raise
+        # AttributeError on the Librem 5 runtime).
 
         self.bubble_box = Gtk.ListBox()
         self.bubble_box.set_selection_mode(Gtk.SelectionMode.NONE)
@@ -78,7 +80,7 @@ class DMThreadView(Gtk.Box):
 
         clamp = Adw.Clamp()
         clamp.set_maximum_size(720)
-        clamp.set_tightening_ratio(0.7)
+        clamp.set_tightening_threshold(504)
         clamp.set_child(self.bubble_box)
         self.scroll.set_child(clamp)
 
@@ -109,7 +111,9 @@ class DMThreadView(Gtk.Box):
         self.entry = Gtk.Entry()  # Gtk.Entry is single-line by default
         self.entry.set_placeholder_text("Message…")
         self.entry.set_hexpand(True)
-        self.entry.set_enable_ime(True)
+        # set_enable_ime was removed in GTK 4.16; IME input is always enabled
+        # for editable text, so the call was a no-op that raised AttributeError
+        # on the Librem 5 runtime.
         self.entry.connect("changed", self._on_entry_changed)
         # Send sensitive on Enter (desktop).
         self.entry.connect("activate", lambda e: self._on_send())
@@ -208,8 +212,13 @@ class DMThreadView(Gtk.Box):
             return
         msgs = gw.get_thread(self.peer_pubkey, PAGE_SIZE, None)
         msgs.reverse()  # gateway returns newest-first; chat renders oldest-first
-        for r in [c for c in self.bubble_box.get_children()]:
-            self.bubble_box.remove(r)
+        # Gtk.ListBox has no get_children() in GTK4 (removed 4.10); walk the
+        # sibling chain instead. ListBox.remove(row) itself still exists.
+        row = self.bubble_box.get_first_child()
+        while row is not None:
+            nxt = row.get_next_sibling()
+            self.bubble_box.remove(row)
+            row = nxt
         self._seen_ids = set()
         for m in msgs:
             self._append_msg(m)
