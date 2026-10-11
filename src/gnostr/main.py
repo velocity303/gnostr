@@ -46,6 +46,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.client.connect("metrics-updated", self.on_metrics_updated)
         self.client.connect("publish-result", self.on_publish_result)
         self.client.connect("relay-log-updated", self.on_relay_log_updated)
+        self.client.connect("dm-unreachable", self.on_dm_unreachable)
 
         self.priv_key = None
         self.pub_key = None
@@ -303,6 +304,12 @@ class MainWindow(Adw.ApplicationWindow):
 
     def add_toast(self, toast):
         self.toast_overlay.add_toast(toast)
+
+    def on_dm_unreachable(self, client, peer_pk, event_id):
+        # Spec docs/specs/nip44-nip17-dms.md 'Relay targeting' step 3: the
+        # recipient has no kind-10050, the DM was NOT published. Toast only —
+        # never a modal dialog (UI contract).
+        self.add_toast(Adw.Toast(title="Recipient is not reachable for DMs"))
 
     def on_refresh_clicked(self):
         self.client.check_connections()

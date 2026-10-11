@@ -350,12 +350,17 @@ def _client_globals():
     import types
 
     src = open(_CLIENT_PATH, encoding="utf-8").read()
-    ns = {
-        "__name__": "gnostr.client",
-        "__package__": "gnostr",
-        "GLib": types.SimpleNamespace(idle_add=lambda fn, *a: fn(*a)),
-    }
+    ns = {"__name__": "gnostr.client", "__package__": "gnostr"}
     exec(compile(ast.parse(src), _CLIENT_PATH, "exec"), ns)
+    # client.py's own `from gi.repository import GLib` rebinds the name to
+    # conftest's Mock during exec; install the direct-call stub AFTER so
+    # idle_add callbacks run synchronously (G15: publish_dm resolves its
+    # 10050 lookup through idle_add).
+    ns["GLib"] = types.SimpleNamespace(
+        idle_add=lambda fn, *a: fn(*a),
+        timeout_add=lambda ms, fn, *a: None,
+        get_user_config_dir=lambda: "/tmp/gnostr-test",
+    )
     return ns
 
 
@@ -384,6 +389,21 @@ class FakeClient:
         self.subscribed = []
         self.published = []
         self.emitted = []
+        # G15 relay targeting: publish_dm now fans out only to the peer's
+        # 10050 relays; these give the extracted methods a relay set to work
+        # against (FakeRelay pattern from test_dm_relay_targeting.py).
+        self.relay_urls = {"wss://relay-a.example", "wss://relay-b.example"}
+        self.active_relays = {
+            u: MagicMock(
+                published=[],
+                publish=lambda ev, u=u: self.active_relays[u].published.append(ev)
+                or True,
+            )
+            for u in self.relay_urls
+        }
+        self.dm_relay_cache = {}
+        self._dm_relay_waiters = {}
+        self.requests = []
 
     def _ensure_dm_service(self):
         """gi mocks make the real DMService class a Mock (GObject.Object base);
@@ -420,6 +440,12 @@ class FakeClient:
     def emit(self, *a):
         self.emitted.append(a)
 
+    def request_once(self, sub_id, filters):
+        self.requests.append((sub_id, filters))
+
+    def _log_relay(self, line):
+        pass
+
     def _merge_relays(self, urls):
         pass
 
@@ -453,8 +479,23 @@ def test_publish_dm_stores_self_copy_under_recipient(client):
     signed = client.publish_dm(peer, "secret hello")
     assert signed is not None
     assert signed["kind"] == 4
-    # published to relays + tracked for OK-ack
-    assert client.published and client.published[0]["id"] == signed["id"]
+    # G15: publish is async + relay-targeted — settle the 10050 lookup, then
+    # the rumor goes out to the peer's DM relays only and is OK-ack tracked.
+    client._handle_event(
+        {
+            "id": "f" * 64,
+            "pubkey": peer,
+            "kind": 10050,
+            "created_at": int(time.time()),
+            "content": "",
+            "tags": [["r", "wss://relay-a.example"]],
+            "sig": "0" * 128,
+        }
+    )
+    # published to the targeted relay + tracked for OK-ack
+    assert (
+        client.active_relays["wss://relay-a.example"].published[0]["id"] == signed["id"]
+    )
     # self-copy landed in the RECIPIENT's conversation, unread stays 0
     convs = gw.get_conversations(10)
     assert convs[0]["peer_pk"] == peer

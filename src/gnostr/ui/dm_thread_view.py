@@ -132,6 +132,7 @@ class DMThreadView(Gtk.Box):
         if svc is not None:
             svc.connect("dm-decrypted", self._on_decrypted)
         main_window.client.connect("publish-result", self._on_publish_result)
+        main_window.client.connect("dm-unreachable", self._on_dm_unreachable)
 
         # Opening the thread marks it read (contract) + refreshes the badge.
         gw = getattr(main_window.client, "dm_gateway", None)
@@ -318,6 +319,18 @@ class DMThreadView(Gtk.Box):
             self._seen_ids.discard(event_id)
             self.bubble_box.remove(row)
             self._show_failed(entry["msg"])
+
+    def _on_dm_unreachable(self, client, peer_pk, event_id):
+        """The async kind-10050 lookup found no DM relays for this peer: the
+        wrap was never published (MainWindow toasts). Fail the optimistic
+        bubble like any other send failure — inline Retry, no dialog."""
+        if peer_pk != self.peer_pubkey or event_id not in self._pending:
+            return
+        entry = self._pending.pop(event_id)
+        if entry["row"] is not None:
+            self.bubble_box.remove(entry["row"])
+        self._seen_ids.discard(event_id)
+        self._show_failed(entry["msg"])
 
     def _on_dm_updated(self, client, peer_pk):
         if peer_pk != self.peer_pubkey:

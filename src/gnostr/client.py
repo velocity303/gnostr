@@ -35,6 +35,13 @@ class ConnectionStatus:
 
 DEFAULT_RELAYS = ["wss://relay.nostr.band", "wss://nos.lol", "wss://relay.primal.net"]
 
+# NIP-17 relay targeting (spec docs/specs/nip44-nip17-dms.md): TTL for cached
+# kind-10050 lookups, and how long to wait for a 10050 response before we
+# declare the peer unreachable for DMs (relays without the event answer only
+# with EOSE, so a timeout is the "no 10050" signal).
+DM_RELAY_TTL = 3600
+DM_RELAY_TIMEOUT_MS = 5000
+
 
 class NostrRelay(GObject.Object):
     def __init__(self, url, on_event, on_status, on_ok=None):
@@ -209,6 +216,11 @@ class NostrClient(GObject.Object):
         # dm-conversations-updated: (peer_pk:str) — the DM gateway persisted a
         # rumor (inbound or our outbound self-copy); inbox/thread views refresh.
         "dm-conversations-updated": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
+        # dm-unreachable: (peer_pk:str, event_id:str) — the recipient has no
+        # kind-10050 DM-relay list, so the gift-wrap was NOT published (spec
+        # docs/specs/nip44-nip17-dms.md 'Relay targeting' step 3). MainWindow
+        # surfaces this as a toast; the thread view fails the optimistic bubble.
+        "dm-unreachable": (GObject.SignalFlags.RUN_FIRST, None, (str, str)),
     }
 
     def __init__(self, db):
@@ -226,6 +238,11 @@ class NostrClient(GObject.Object):
         self.requested_profiles = {}  # pubkey -> last request timestamp (TTL cache)
         self.requested_external_ids = {}  # NIP-39 kind-10011 TTL cache
         self.requested_badges = {}  # NIP-58 kind-10008 TTL cache
+        # NIP-17 relay targeting: peer -> (timestamp, [relay urls]) from their
+        # kind-10050. Same TTL-cache pattern as requested_external_ids (10011).
+        self.dm_relay_cache = {}
+        # peer -> [callbacks waiting on the open kind-10050 lookup]
+        self._dm_relay_waiters = {}
         self.metrics = {}
         self.config_file = os.path.join(
             GLib.get_user_config_dir(), "gnostr", "config.json"
@@ -649,6 +666,12 @@ class NostrClient(GObject.Object):
                 if nr:
                     self._merge_relays(nr)
 
+        elif kind == 10050:
+            # NIP-17 DM relays: settle any open lookup for this author and
+            # refresh the TTL cache so the next send skips the fetch.
+            nr = [t[1] for t in tags if t[0] == "r" and len(t) > 1]
+            self._resolve_dm_relays(pubkey, nr or None)
+
         elif kind == 1:
             GLib.idle_add(
                 self.emit,
@@ -741,10 +764,14 @@ class NostrClient(GObject.Object):
     def ensure_dm(self):
         """Public hook for the app: build DM gateway + service at login (not
         lazily on first rumor) so the UI can connect to dm-decrypted before
-        any DM arrives, and open the DM subscription. Idempotent."""
+        any DM arrives, and open the DM subscription. Idempotent.
+
+        Also maintains our OWN kind-10050 (spec step 4): default content is
+        1-2 of the user's write relays; the settings UI is later scope."""
         self._ensure_dm_service()
         if self.my_pubkey:
             self.subscribe_dm()
+            self.publish_dm_relay_list()
 
     def publish_dm(self, peer_pubkey, plaintext):
         """Encrypt + publish a DM to `peer_pubkey`. Returns the signed rumor
@@ -755,7 +782,13 @@ class NostrClient(GObject.Object):
         per issue #19). The rumor is persisted through the DM gateway as our
         self-copy BEFORE publishing, so the sender's thread shows it even if
         no relay ever echoes it back. OK-ack tracking uses the rumor id — the
-        publish-result signal resolves the optimistic bubble."""
+        publish-result signal resolves the optimistic bubble.
+
+        Relay targeting (spec 'Relay targeting' step 3): the rumor is published
+        ONLY to the recipient's kind-10050 DM relays, resolved asynchronously —
+        Send never blocks the GTK main loop. If the peer has no 10050 the
+        publish is aborted and `dm-unreachable` is emitted (MainWindow toasts).
+        """
         if not self.my_privkey or not self.my_pubkey:
             print("❌ DM send failed: no keys loaded")
             return None
@@ -780,9 +813,108 @@ class NostrClient(GObject.Object):
                 self.emit("dm-conversations-updated", peer_pubkey)
             except Exception as e:
                 print(f"❌ DM Gateway save (outbound) failed: {e}")
-        self.publish(signed)
-        self._track_publish(signed, "DM")
+        self._publish_dm_targeted(peer_pubkey, signed)
         return signed
+
+    def _publish_dm_targeted(self, peer_pubkey, event):
+        """Publish a signed DM rumor to the peer's 10050 relays only, once the
+        (async) lookup resolves. No 10050 -> abort + dm-unreachable, and the
+        self-copy already in the gateway is the only trace (no publish)."""
+
+        def _deliver(relays):
+            if relays is None:
+                self._log_relay(
+                    f"DM {event['id'][:8]} aborted: {peer_pubkey[:8]} has no kind-10050"
+                )
+                GLib.idle_add(self.emit, "dm-unreachable", peer_pubkey, event["id"])
+                return
+            self.publish_to_relays(event, relays)
+            self._track_publish(event, "DM")
+
+        self.resolve_dm_relays(peer_pubkey, _deliver)
+
+    def resolve_dm_relays(self, peer_pubkey, callback):
+        """Resolve a peer's kind-10050 DM relays without blocking the caller.
+
+        Fresh TTL cache -> callback on the next idle tick. Open lookup -> join
+        its waiter list. Otherwise fire a one-shot REQ for the peer's kind-10050
+        and arm a timeout: relays without the event answer only with EOSE, so
+        the timeout IS the 'no 10050' signal (callback gets None). Same TTL
+        pattern as fetch_external_identities (kind 10011).
+        """
+        cached = self.dm_relay_cache.get(peer_pubkey)
+        if cached is not None and (time.time() - cached[0]) < DM_RELAY_TTL:
+            GLib.idle_add(callback, cached[1])
+            return
+        waiters = self._dm_relay_waiters.get(peer_pubkey)
+        if waiters is not None:
+            waiters.append(callback)
+            return
+        self._dm_relay_waiters[peer_pubkey] = [callback]
+        self.request_once(
+            f"dmrelays_{peer_pubkey[:8]}",
+            {"kinds": [10050], "authors": [peer_pubkey], "limit": 1},
+        )
+        try:
+            GLib.timeout_add(DM_RELAY_TIMEOUT_MS, self._dm_relay_timeout, peer_pubkey)
+        except Exception:
+            # No main loop to arm the timeout on (headless): the lookup can
+            # still resolve via _handle_event; tests drive the timeout directly.
+            pass
+
+    def _dm_relay_timeout(self, peer_pubkey):
+        """Timeout tick: an unresolved lookup means the peer has no 10050."""
+        self._resolve_dm_relays(peer_pubkey, None)
+        return False  # one-shot
+
+    def _resolve_dm_relays(self, peer_pubkey, relays):
+        """Settle an open 10050 lookup (relays list, or None for unreachable).
+        Positive results are cached with TTL; negative results are not, so a
+        peer who later sets a 10050 becomes reachable without waiting."""
+        if relays:
+            self.dm_relay_cache[peer_pubkey] = (time.time(), relays)
+        waiters = self._dm_relay_waiters.pop(peer_pubkey, [])
+        for cb in waiters:
+            GLib.idle_add(cb, relays if relays else None)
+
+    def publish_to_relays(self, event, urls):
+        """Publish an event ONLY to the relays in `urls` (NIP-17 targeting).
+        Returns how many relays accepted the send."""
+        sent = 0
+        for url, r in self.active_relays.items():
+            if url in urls and r.publish(event):
+                sent += 1
+        self._log_relay(
+            f"EVENT {event['id'][:8]} sent to {sent}/{len(urls)} DM relay(s)"
+        )
+        return sent
+
+    def dm_relay_defaults(self):
+        """Own DM relays default: up to 2 of the user's configured relays
+        (settings UI is explicitly later scope, spec step 4)."""
+        return sorted(self.relay_urls)[:2]
+
+    def publish_dm_relay_list(self):
+        """Publish/maintain our own kind-10050 DM-relay list (spec step 4).
+        Default content: 1-2 of the user's write relays. Called at login."""
+        if not self.my_privkey or not self.my_pubkey:
+            return False
+        urls = self.dm_relay_defaults()
+        if not urls:
+            return False
+        event = {
+            "pubkey": self.my_pubkey,
+            "created_at": int(time.time()),
+            "kind": 10050,
+            "tags": [["r", u] for u in urls],
+            "content": "",
+        }
+        signed = gnostr.nostr_utils.sign_event(event, self.my_privkey)
+        if not signed:
+            return False
+        self.publish(signed)
+        self._track_publish(signed, "DM Relays")
+        return True
 
     def _handle_status(self, url, status):
         # Log relay connect/disconnect so the activity pane shows connectivity.
