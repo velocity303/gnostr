@@ -33,6 +33,7 @@ Implement NIP-44 v2 exactly per https://github.com/nostr-protocol/nips/blob/mast
 1. Build **unsigned rumor** kind 14: `content` plain text, `p` tags for each peer, optional `e` tag (reply to another kind-14 id), optional `subject` tag. `created_at` = now (canonical timestamp lives here).
 2. Seal → gift-wrap **twice**: one wrap to the recipient, one wrap to the sender (self-copy, so history survives device loss).
 3. **Relay targeting:** fetch recipient's kind **10050** (DM relays). Publish wraps ONLY to those relays. If recipient has no 10050 → toast "Recipient is not reachable for DMs" and abort. Cache 10050 lookups (TTL, same pattern as 10011 in `profile_nips.py`).
+   *Implementation (G15):* the lookup is async — Send never blocks the GTK main loop. A one-shot REQ for the peer's 10050 is fired and a 5 s timeout armed; relays without the event answer only with EOSE, so the timeout IS the "no 10050" verdict → abort + `dm-unreachable` signal (MainWindow toasts, thread view fails the optimistic bubble). Concurrent sends to one peer share a single lookup. Positive results cached with TTL (`DM_RELAY_TTL`); negative results are NOT cached, so a peer who later sets a 10050 becomes reachable immediately.
 4. Maintain own kind 10050 (default: 1–2 of the user's write relays; settings UI later).
 
 ### Receive
