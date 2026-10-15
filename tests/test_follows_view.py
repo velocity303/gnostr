@@ -45,6 +45,10 @@ def _unbound(method_name):
         "Adw": MagicMock(),
         "Gtk": MagicMock(),
         "hex_to_npub": _nu.hex_to_npub,
+        # A3: DM suffix button resolves its icon through the shared probe;
+        # headless, the last (guaranteed) candidate wins.
+        "resolve_icon": lambda c: c[-1],
+        "DM_ICON_CANDIDATES": ("mail-message-new-symbolic", "list-add-symbolic"),
     }
     exec(compile(mod, _VIEW_PATH, "exec"), ns)
     return ns[method_name]

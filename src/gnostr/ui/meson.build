@@ -10,7 +10,9 @@ install_data(
     'thread_view.py',
     'followers_list_view.py',
     'dm_inbox_view.py',
+    'dm_recipient_view.py',
     'dm_thread_view.py',
+    'icons.py',
   ],
   install_dir: pkgdatadir / pkg_name / 'ui'
 )

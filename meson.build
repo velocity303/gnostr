@@ -44,6 +44,7 @@ if pytest_prog.found()
   test('test_scroll_gate', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_scroll_gate.py'], env: test_env, timeout: 120)
   test('test_scroll_gate_wiring', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_scroll_gate_wiring.py'], env: test_env, timeout: 120)
   test('test_dm_relay_targeting', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_dm_relay_targeting.py'], env: test_env, timeout: 120)
+  test('test_dm_recipient_view', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_dm_recipient_view.py'], env: test_env, timeout: 120)
   test('test_dm_gtk422_api', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_dm_gtk422_api.py'], env: test_env, timeout: 120)
   test('test_relay_log_wrap', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_relay_log_wrap.py'], env: test_env, timeout: 120)
   test('test_clipboard_api', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_clipboard_api.py'], env: test_env, timeout: 120)
@@ -65,5 +66,10 @@ if xvfb_run.found() and gtk_python.found()
   # real Gdk clipboard -> read_text_async read-back.
   test('test_clipboard_gtk_real', xvfb_run,
     args: ['-a', gtk_python, meson.project_source_root() / 'tests/test_clipboard_gtk_real.py'],
+    timeout: 120)
+  # Real-GTK recipient-picker smoke (Phase A2): construct + filter +
+  # paste-pin + activate against real Gtk/Adw.
+  test('test_dm_recipient_gtk_real', xvfb_run,
+    args: ['-a', gtk_python, meson.project_source_root() / 'tests/test_dm_recipient_gtk_real.py'],
     timeout: 120)
 endif

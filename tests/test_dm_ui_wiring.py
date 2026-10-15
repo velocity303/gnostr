@@ -116,12 +116,32 @@ class FakeInbox:
         self._gateway_result_seen = False
         self.title_label = MagicMock()
         self.btn_refresh = MagicMock()
+        # A4: reload() may swap the clamp for an empty-state StatusPage.
+        self.scroll = MagicMock()
+        self.clamp = MagicMock()
+        self._empty_page = None
 
     def _gateway(self):
         return getattr(self.main_window.client, "dm_gateway", None)
 
     def _remove_skeleton(self):
         self._skeleton_rows = []
+
+    def _show_empty_state(self):
+        fn = _class_method(
+            os.path.join(_UI_DIR, "dm_inbox_view.py"),
+            "DMInboxView",
+            "_show_empty_state",
+        )
+        return fn(self)
+
+    def _remove_empty_state(self):
+        fn = _class_method(
+            os.path.join(_UI_DIR, "dm_inbox_view.py"),
+            "DMInboxView",
+            "_remove_empty_state",
+        )
+        return fn(self)
 
     def _append_skeleton(self):
         pass
