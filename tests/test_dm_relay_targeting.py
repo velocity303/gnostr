@@ -120,6 +120,12 @@ class FakeClient:
         }
         self.dm_relay_cache = {}
         self._dm_relay_waiters = {}
+        # P4/P5 state (mirrors NostrClient.__init__ so the ast-extracted
+        # methods find their attributes instead of hitting __getattr__)
+        self._dm_status_batches = {}
+        self._dm_status_by_sub = {}
+        self._dm_status_seq = 0
+        self._dm_initiation_times = collections.deque()
         self.requests = []  # client-level request_once calls
         self.dm_service = _Svc(self)
 

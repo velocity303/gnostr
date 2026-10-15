@@ -42,14 +42,27 @@ DEFAULT_RELAYS = ["wss://relay.nostr.band", "wss://nos.lol", "wss://relay.primal
 DM_RELAY_TTL = 3600
 DM_RELAY_TIMEOUT_MS = 5000
 
+# P4 batch DM-capability probe (spec docs/specs/dm-initiation-and-feed-freshness.md):
+# kind-3 authors per REQ, and how long to wait for the batch before settling
+# (timeout-as-negative, same logic as the single-peer lookup above).
+DM_STATUS_BATCH = 50
+DM_STATUS_TIMEOUT_MS = 5000
+
+# P5 client-side initiation throttle: gift wraps are signed by one-time keys,
+# so relays cannot reputation-filter (NIP-17 Spam / NIP-59 Spam Protection) —
+# the client owns abuse control. New-conversation initiations per rolling hour.
+DM_INITIATION_WARN_PER_HOUR = 10
+DM_INITIATION_HARD_STOP_PER_HOUR = 30
+
 
 class NostrRelay(GObject.Object):
-    def __init__(self, url, on_event, on_status, on_ok=None):
+    def __init__(self, url, on_event, on_status, on_ok=None, on_eose=None):
         super().__init__()
         self.url = url
         self.on_event = on_event
         self.on_status = on_status
         self.on_ok = on_ok or (lambda *a: None)
+        self.on_eose = on_eose
         self.ws = None
         self.is_connected = False
         self.sub_id = None
@@ -76,6 +89,8 @@ class NostrRelay(GObject.Object):
                         # print(f"DEBUG [{self.url}] Closing Snapshot {sub_id}")
                         self.ws.send(json.dumps(["CLOSE", sub_id]))
                         self.snapshot_ids.remove(sub_id)
+                    if self.on_eose:
+                        self.on_eose(sub_id, self.url)
                 elif d[0] == "NOTICE":
                     print(f"NOTICE [{self.url}]: {d[1]}")
             except Exception:
@@ -221,6 +236,13 @@ class NostrClient(GObject.Object):
         # docs/specs/nip44-nip17-dms.md 'Relay targeting' step 3). MainWindow
         # surfaces this as a toast; the thread view fails the optimistic bubble.
         "dm-unreachable": (GObject.SignalFlags.RUN_FIRST, None, (str, str)),
+        # dm-initiation-throttled: (peer_pk:str, level:str) — P5 client-side
+        # abuse control (spec Phase P): gift wraps use one-time keys so relays
+        # cannot reputation-filter; the client counts new-conversation
+        # initiations per rolling hour. level is "warn" (threshold reached,
+        # send still allowed) or "hard-stop" (send refused). UI wiring is a
+        # separate card; the UI surfaces this as a toast.
+        "dm-initiation-throttled": (GObject.SignalFlags.RUN_FIRST, None, (str, str)),
     }
 
     def __init__(self, db):
@@ -243,6 +265,15 @@ class NostrClient(GObject.Object):
         self.dm_relay_cache = {}
         # peer -> [callbacks waiting on the open kind-10050 lookup]
         self._dm_relay_waiters = {}
+        # P4 batch probe state: token -> batch dict, sub_id -> token
+        self._dm_status_batches = {}
+        self._dm_status_by_sub = {}
+        self._dm_status_seq = 0
+        # P5 throttle: timestamps (time.time()) of new-conversation
+        # initiations in the rolling hour. In-memory only by design — a
+        # persisted counter would punish the user after a restart for sends
+        # the relays already accepted.
+        self._dm_initiation_times = collections.deque()
         self.metrics = {}
         self.config_file = os.path.join(
             GLib.get_user_config_dir(), "gnostr", "config.json"
@@ -287,7 +318,11 @@ class NostrClient(GObject.Object):
             # Handled by check_connections
             return
         r = NostrRelay(
-            url, self._handle_event, self._handle_status, on_ok=self._handle_ok
+            url,
+            self._handle_event,
+            self._handle_status,
+            on_ok=self._handle_ok,
+            on_eose=self._handle_eose,
         )
         r.start()
         self.active_relays[url] = r
@@ -669,7 +704,12 @@ class NostrClient(GObject.Object):
         elif kind == 10050:
             # NIP-17 DM relays: settle any open lookup for this author and
             # refresh the TTL cache so the next send skips the fetch.
-            nr = [t[1] for t in tags if t[0] == "r" and len(t) > 1]
+            # P3 tag-name tolerance: NIP-17's example uses ["relay", ...]
+            # while nostr-tools/NIP-65 convention publish ["r", ...] — parse
+            # BOTH (publish stays "r"), or a spec-literal peer's list reads
+            # as empty -> false "unreachable".
+            nr = [t[1] for t in tags if t[0] in ("r", "relay") and len(t) > 1]
+            self._dm_status_event(pubkey, nr)
             self._resolve_dm_relays(pubkey, nr or None)
 
         elif kind == 1:
@@ -792,6 +832,10 @@ class NostrClient(GObject.Object):
         if not self.my_privkey or not self.my_pubkey:
             print("❌ DM send failed: no keys loaded")
             return None
+        if not self._dm_initiation_allowed(peer_pubkey):
+            # P5 hard-stop: refuse before the self-copy is saved, so a
+            # refused initiation never creates a phantom conversation row.
+            return None
         self._ensure_dm_service()
         try:
             ciphertext = self.dm_service.encrypt(plaintext, peer_pubkey)
@@ -876,6 +920,167 @@ class NostrClient(GObject.Object):
         waiters = self._dm_relay_waiters.pop(peer_pubkey, [])
         for cb in waiters:
             GLib.idle_add(cb, relays if relays else None)
+
+    def probe_dm_reachability(self, peer_pubkey, callback):
+        """P1: public tri-state reachability probe (spec Phase P).
+
+        Thin wrapper over resolve_dm_relays — SAME cache, waiter list and 5 s
+        timeout; deliberately no second cache. callback(peer_pk, relays):
+        relays non-empty -> reachable (has a 10050); relays None -> no 10050
+        (timeout-as-negative). While the lookup is in flight the callback has
+        not fired yet — that is the third state; callers render 'unknown'.
+
+        Caveats for the UI (spec P1): 10050-present != deliverable (auth
+        relays may drop gift wraps), and negatives are never cached, so a
+        stale 'unreachable' badge must never block Send — `dm-unreachable`
+        remains the authoritative mid-send failure signal.
+        """
+        self.resolve_dm_relays(
+            peer_pubkey, lambda relays: callback(peer_pubkey, relays)
+        )
+
+    # --- P4: batch DM-capability probe (spec Phase P) ---
+
+    def fetch_dm_relay_status(self, pubkeys, callback):
+        """P4: batch kind-10050 presence probe (spec Phase P).
+
+        Chunked <=50-author REQs ({"kinds":[10050],"authors":chunk,
+        "limit":len}) via request_once on every connected relay; settle on
+        EOSE-from-all-relays OR timeout (kind 10050 is replaceable — one
+        event per author per relay, so absence across all relays after EOSE
+        is the negative). callback(status_map) fires once with
+        {pubkey: [relays]} for PRESENT peers only; positives are fed into the
+        same dm_relay_cache (TTL 3600) so the first DM to a probed follower
+        skips the lookup. Absent peers are unknown, never cached — no
+        persisted capability cache (goes stale against peers editing 10050).
+        """
+        pubkeys = [p for p in dict.fromkeys(pubkeys or []) if p]
+        if not pubkeys:
+            GLib.idle_add(callback, {})
+            return
+        chunks = [
+            pubkeys[i : i + DM_STATUS_BATCH]
+            for i in range(0, len(pubkeys), DM_STATUS_BATCH)
+        ]
+        shared = {"results": {}, "pending": len(chunks)}
+        relay_count = len(self.active_relays)
+        for chunk in chunks:
+            self._dm_status_seq += 1
+            token = f"dmstatus_{self._dm_status_seq}_{int(time.time() * 1000)}"
+            sub_id = f"dmstatus_{self._dm_status_seq}"
+            self._dm_status_batches[token] = {
+                "sub_id": sub_id,
+                "authors": set(chunk),
+                "shared": shared,
+                "callback": callback,
+                "seen": set(),
+                "relay_count": relay_count,
+                "settled": False,
+            }
+            self._dm_status_by_sub[sub_id] = token
+            self.request_once(
+                sub_id,
+                {"kinds": [10050], "authors": chunk, "limit": len(chunk)},
+            )
+            try:
+                GLib.timeout_add(DM_STATUS_TIMEOUT_MS, self._dm_status_timeout, token)
+            except Exception:
+                # No main loop to arm the timeout on (headless): tests drive
+                # the tick / EOSE fan-in directly, same as the 10050 lookup.
+                pass
+        if relay_count == 0:
+            # Nothing connected: settle everything now as unknown rather than
+            # waiting out a timeout for relays that will never answer.
+            for token in list(self._dm_status_batches):
+                self._settle_dm_status_batch(token)
+
+    def _dm_status_timeout(self, token):
+        batch = self._dm_status_batches.get(token)
+        if batch is not None:
+            self._settle_dm_status_batch(token)
+        return False  # one-shot
+
+    def _handle_eose(self, sub_id, relay_url):
+        """EOSE fan-in for P4 batch probes: a chunk settles once every relay
+        that was connected at REQ time has answered. Other sub_ids are not
+        tracked here and are ignored."""
+        token = self._dm_status_by_sub.get(sub_id)
+        if token is None:
+            return
+        batch = self._dm_status_batches.get(token)
+        if batch is None or batch["settled"]:
+            return
+        batch["seen"].add(relay_url)
+        if len(batch["seen"]) >= batch["relay_count"]:
+            self._settle_dm_status_batch(token)
+
+    def _dm_status_event(self, pubkey, relays):
+        """Record a kind-10050 arrival into any open batch probe containing
+        this author (called from _handle_event)."""
+        if not relays:
+            return
+        for batch in self._dm_status_batches.values():
+            if pubkey in batch["authors"]:
+                batch["shared"]["results"][pubkey] = relays
+
+    def _settle_dm_status_batch(self, token):
+        batch = self._dm_status_batches.pop(token, None)
+        if batch is None or batch["settled"]:
+            return
+        batch["settled"] = True
+        self._dm_status_by_sub.pop(batch["sub_id"], None)
+        shared = batch["shared"]
+        now = time.time()
+        # Positives into the shared TTL cache (TTL 3600 via DM_RELAY_TTL
+        # expiry check); negatives (absent authors) are simply not present.
+        for pk, relays in shared["results"].items():
+            self.dm_relay_cache[pk] = (now, relays)
+        shared["pending"] -= 1
+        if shared["pending"] <= 0:
+            GLib.idle_add(batch["callback"], dict(shared["results"]))
+
+    # --- P5: client-side new-conversation initiation throttle ---
+
+    def _dm_initiation_allowed(self, peer_pubkey):
+        """P5 abuse control (spec Phase P): relays cannot reputation-filter
+        gift wraps (one-time keys), so the client counts first-message-to-
+        new-peer sends in a rolling in-memory hour. Replies in existing
+        conversations are exempt (a dm_messages row for the peer exists).
+
+        Returns True if the send may proceed. Warn at
+        DM_INITIATION_WARN_PER_HOUR (send still allowed, signal emitted once
+        per crossing), hard-stop at DM_INITIATION_HARD_STOP_PER_HOUR (send
+        refused, signal emitted). The UI subscribes to
+        `dm-initiation-throttled` (peer_pk, level) — wiring is UI scope.
+        """
+        gw = getattr(self, "dm_gateway", None)
+        if gw is not None:
+            try:
+                if gw.get_thread(peer_pubkey, 1, None):
+                    return True  # existing conversation: reply, exempt
+            except Exception:
+                pass
+        now = time.time()
+        times = self._dm_initiation_times
+        while times and now - times[0] > 3600:
+            times.popleft()
+        if len(times) >= DM_INITIATION_HARD_STOP_PER_HOUR:
+            self._log_relay(
+                f"DM initiation hard stop: {peer_pubkey[:8]} "
+                f"({len(times)} new conversations in the last hour)"
+            )
+            GLib.idle_add(
+                self.emit, "dm-initiation-throttled", peer_pubkey, "hard-stop"
+            )
+            return False
+        times.append(now)
+        if len(times) == DM_INITIATION_WARN_PER_HOUR:
+            self._log_relay(
+                f"DM initiation warning: {len(times)} new conversations "
+                "in the last hour"
+            )
+            GLib.idle_add(self.emit, "dm-initiation-throttled", peer_pubkey, "warn")
+        return True
 
     def publish_to_relays(self, event, urls):
         """Publish an event ONLY to the relays in `urls` (NIP-17 targeting).
