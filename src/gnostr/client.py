@@ -146,6 +146,11 @@ class NostrRelay(GObject.Object):
             pass
 
     def request_once(self, sub_id, filters):
+        # Register the sub_id for EOSE auto-close (spec Phase B2a): the on_msg
+        # EOSE handler CLOSEs anything in snapshot_ids, so one-shot REQs
+        # (freshness pull, fetch_user_relays, fetch_profile/… — all unique
+        # sub_ids) no longer leak open subscriptions on every relay.
+        self.snapshot_ids.add(sub_id)
         self.request_queue.append((sub_id, filters))
         if self.is_connected:
             self.process_queue()

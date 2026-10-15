@@ -151,6 +151,11 @@ class MainWindow(Adw.ApplicationWindow):
         # feed (the startup subscribe is a no-op until relays connect; on_status_changed
         # re-runs switch_feed once the first relay is live).
         self._feed_live = False
+        # Startup feed-freshness state (spec Phase B): the hold window routes
+        # gap-fill events to the pill instead of flushing inline; the pulled
+        # flag guards "exactly one freshness REQ per startup".
+        self._freshness_hold = 0.0
+        self._freshness_pulled = False
         if saved:
             GLib.idle_add(lambda: self.switch_feed(self.active_feed_type))
 
@@ -379,10 +384,17 @@ class MainWindow(Adw.ApplicationWindow):
                 if row is not None:
                     inserted = self.feed_view.feed_model.prepend_new([row])
                     if inserted:
-                        if self.feed_view.feed_model.at_top:
-                            self.feed_view.flush_new()
-                        else:
+                        # Startup freshness hold (spec Phase B2b): gap-fill
+                        # events surface as the "N new posts" pill, never an
+                        # inline flush — the user chooses when the viewport
+                        # moves. Live events during the hold buffer too;
+                        # the pill tap flushes everything in model order.
+                        if (
+                            getattr(self, "_freshness_hold", 0.0) > time.monotonic()
+                        ) or not self.feed_view.feed_model.at_top:
                             self.feed_view.buffered_new(inserted)
+                        else:
+                            self.feed_view.flush_new()
                 return
             # Legacy inline feed (global / me): dedup against posts already
             # rendered: the live subscription re-delivers DB-backfilled
@@ -451,12 +463,51 @@ class MainWindow(Adw.ApplicationWindow):
             # that only hit the DB locally get corrected here).
             if self.pub_key:
                 GLib.idle_add(self.client.fetch_contacts)
+            # Startup feed-freshness (spec Phase B1): exactly one bounded
+            # freshness REQ for the following feed, chained AFTER the
+            # switch_feed idle hop (GLib runs idle handlers in add order)
+            # so the newest cached created_at is read from the freshly
+            # loaded FeedModel. request_once bypasses subscribe(), so the
+            # live sub_following is never CLOSEd.
+            GLib.idle_add(self._pull_feed_freshness)
+
+    def _pull_feed_freshness(self):
+        """One bounded freshness REQ per startup (spec Phase B1).
+
+        The startup feed render is the local SQLite cache; when relays come
+        up this pull fills the gap between the newest cached post and now,
+        bounded by a 7 d floor so it is a gap-fill, not a re-sync. The 60 s
+        overlap below the newest cached post absorbs relay clock skew and
+        makes the FeedModel echo-back dedup load-bearing. Events land via
+        prepend_new and surface as the 'N new posts' pill while the hold
+        window is active (Phase B2b) — never an inline viewport jump.
+        """
+        if not self.pub_key or self._freshness_pulled:
+            return
+        contacts = self.db.get_following_list(self.pub_key)
+        if not contacts:
+            return  # deferred: re-armed on own contacts-updated (Phase B3)
+        self._freshness_pulled = True
+        newest = 0
+        m = self.feed_view.feed_model
+        if m is not None and m.top_key:
+            newest = m.top_key[0]  # newest cached created_at
+        since = max(newest - 60, int(time.time()) - 7 * 86400)
+        self._freshness_hold = time.monotonic() + 5.0  # pill-hold window (B2b)
+        self.client.request_once(
+            f"fresh_following_{int(time.time())}",
+            {"kinds": [1], "authors": contacts[:300], "since": since, "limit": 50},
+        )
 
     def on_contacts_updated(self, client, pubkey):
         # An owner's following list was reconciled (own or foreign kind-3).
         # Open FollowsListView widgets self-refresh via the signal; nothing
-        # else needs updating here.
-        pass
+        # else needs updating here — except the freshness re-arm (Phase B3):
+        # our own kind-3 arriving with no freshness pull yet means the
+        # following table was empty at CONNECTED time (first-ever login),
+        # so fire the one bounded pull now.
+        if pubkey == self.pub_key and not self._freshness_pulled:
+            self._pull_feed_freshness()
 
     def on_profile_updated(self, client, pubkey):
         # Profile metadata (kind 0) arrived — refresh avatars/names in existing

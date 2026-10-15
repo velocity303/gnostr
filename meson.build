@@ -47,6 +47,10 @@ if pytest_prog.found()
   test('test_dm_gtk422_api', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_dm_gtk422_api.py'], env: test_env, timeout: 120)
   test('test_relay_log_wrap', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_relay_log_wrap.py'], env: test_env, timeout: 120)
   test('test_clipboard_api', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_clipboard_api.py'], env: test_env, timeout: 120)
+  # Startup feed-freshness (spec Phase B): bounded freshness REQ window,
+  # EOSE auto-close registration, pill routing during the hold, and the
+  # FeedModel freshness-merge/echo-back dedup regression.
+  test('test_feed_freshness', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_feed_freshness.py'], env: test_env, timeout: 120)
   endif
 
 # Real-GTK feed harness (tier 2): exercises ui.feed_view.FeedView against a
