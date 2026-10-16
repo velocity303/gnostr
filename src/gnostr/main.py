@@ -134,7 +134,9 @@ class MainWindow(Adw.ApplicationWindow):
         bx.append(cs)
         # P3 #16: NIP-06 is `unrecommended` by its own NIP — the entry point
         # is labelled power-user and the dialog repeats the warning.
-        dv = Gtk.Button(label="Derive from seed phrase (power user)", css_classes=["flat"])
+        dv = Gtk.Button(
+            label="Derive from seed phrase (power user)", css_classes=["flat"]
+        )
         dv.connect("clicked", self.on_derive_key_clicked)
         bx.append(dv)
         self.login_page.set_child(bx)

@@ -95,7 +95,9 @@ class Sidebar(Gtk.Box):
         self.append(self.relay_expander)
 
         # Key-health (P3 #16): last backup verified + re-verify prompt.
-        self.key_health_label = Gtk.Label(label="", css_classes=["dim-label"], wrap=True)
+        self.key_health_label = Gtk.Label(
+            label="", css_classes=["dim-label"], wrap=True
+        )
         self.key_health_label.set_xalign(0)
         self.append(self.key_health_label)
         self._refresh_key_health()
