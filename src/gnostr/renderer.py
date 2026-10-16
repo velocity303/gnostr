@@ -10,7 +10,6 @@ from urllib.parse import urlparse
 import traceback
 import subprocess
 import time
-
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 gi.require_version("GstVideo", "1.0")
@@ -43,6 +42,50 @@ _MAX_VIDEO_HEIGHT = 720
 def _vlog(msg):
     if _DEBUG_VIDEO:
         print(msg)
+
+
+# Issue #18: HW-decode probe. The GNOME 50 runtime ships the modern `va`
+# (VA-API) and `v4l2codecs` (V4L2 stateless) codec plugins — the legacy
+# gst-vaapi names (vaapih264dec/v4l2h264dec) no longer exist. These plugins
+# only register their decoders when the sandbox can open the GPU/VPU nodes
+# (VA-API needs the DRI render node; the Librem 5 i.MX8 VPU needs /dev/video*
+# via --device=all). decodebin3 already prefers them by rank (primary+1) and
+# silently falls back to software (avdec_*) when they are absent or the stream
+# profile is unsupported in HW — this probe only logs which path is available,
+# once per session, so the choice is visible next to the per-video [PERF] line.
+_HW_DECODER_ELEMENTS = (
+    "vah264dec",
+    "vah265dec",
+    "vavp8dec",
+    "vavp9dec",
+    "v4l2slh264dec",
+    "v4l2slh265dec",
+    "v4l2slvp8dec",
+    "v4l2slvp9dec",
+    "vaapih264dec",  # legacy gst-vaapi (older runtimes)
+    "v4l2h264dec",  # legacy gst-plugins-good v4l2videodec
+)
+_hw_decode_report_cache = None
+
+
+def hw_decode_report():
+    """Return the HW decoder elements registered in this process (possibly
+    empty = software decode). Logs the choice once; cached thereafter."""
+    global _hw_decode_report_cache
+    if _hw_decode_report_cache is None:
+        found = []
+        try:
+            for name in _HW_DECODER_ELEMENTS:
+                if Gst.ElementFactory.find(name):
+                    found.append(name)
+        except Exception:
+            found = []
+        _hw_decode_report_cache = found
+        if found:
+            print(f"🎬 [Video] HW decode available: {', '.join(found)}")
+        else:
+            print("🎬 [Video] HW decode unavailable — software fallback (avdec_*)")
+    return _hw_decode_report_cache
 
 
 class ContentRenderer:
@@ -888,6 +931,10 @@ class VideoPlayer:
         video = None
         try:
             _vlog(f"🎬 [Video] Building pipeline for: {url[:80]}...")
+            # Issue #18: log (once per session) whether HW decoders are
+            # registered in this sandbox; decodebin3 picks them by rank and
+            # falls back to software automatically when absent/unsupported.
+            hw_decode_report()
 
             # Create playbin3 with just the URI — it handles all formats internally
             pipeline = Gst.parse_launch(f"playbin3 uri={url}")
@@ -1143,7 +1190,11 @@ class VideoPlayer:
 
             def _walk(bin_, depth=0):
                 for el in bin_.iterate_elements():
-                    name = el.get_name().lower()
+                    # Match on the FACTORY name, not the instance name: the
+                    # GNOME 50 `va` plugin registers elements like vah264dec
+                    # whose instance names contain none of the old keywords.
+                    factory = el.get_factory()
+                    name = (factory.get_name() if factory else el.get_name()).lower()
                     if any(
                         k in name
                         for k in (
@@ -1151,13 +1202,15 @@ class VideoPlayer:
                             "v4l2",
                             "vaapi",
                             "avdec",
+                            "vah26",
+                            "vavp",
                             "omx",
                             "mfx",
                             "d3d",
                             "nvdec",
                         )
                     ):
-                        decoders.append(el.get_name())
+                        decoders.append(name)
                     if isinstance(el, Gst.Bin):
                         _walk(el, depth + 1)
 

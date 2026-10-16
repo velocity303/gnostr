@@ -2,8 +2,9 @@
 Comprehensive tests for codec support and video playback.
 """
 
-import pytest
 from unittest.mock import Mock
+
+import pytest
 
 
 @pytest.fixture(scope="function")
@@ -247,3 +248,45 @@ class TestContentRenderer:
         box = ContentRenderer.render("Test", window_ref)
 
         assert isinstance(box, Mock)
+
+
+class TestHWDecodeProbe:
+    """Issue #18: runtime HW-decode probe + logging."""
+
+    def _reset_probe(self):
+        import sys
+
+        import gnostr.renderer as renderer
+
+        renderer._hw_decode_report_cache = None
+        return renderer, sys.modules["gi.repository.Gst"]
+
+    def test_probe_reports_and_caches(self):
+        """Probe returns the registered HW decoder list and caches it (one
+        ElementFactory scan per session)."""
+        renderer, mock_gst = self._reset_probe()
+        mock_gst.ElementFactory.find.reset_mock()
+
+        result = renderer.hw_decode_report()
+        assert isinstance(result, list)
+        # conftest's shared Gst mock returns a truthy Mock from find(), so
+        # every candidate element counts as available here.
+        assert "vah264dec" in result
+        first_calls = mock_gst.ElementFactory.find.call_count
+
+        # Second call is served from the cache — no extra factory scans.
+        assert renderer.hw_decode_report() is result
+        assert mock_gst.ElementFactory.find.call_count == first_calls
+
+    def test_probe_software_fallback(self):
+        """When no HW decoder element resolves, the probe returns [] (the
+        software-fallback signal) instead of raising."""
+        renderer, mock_gst = self._reset_probe()
+        mock_gst.ElementFactory.find.return_value = None
+        assert renderer.hw_decode_report() == []
+
+    def test_probe_never_raises(self):
+        """A broken ElementFactory must not take video startup down with it."""
+        renderer, mock_gst = self._reset_probe()
+        mock_gst.ElementFactory.find.side_effect = RuntimeError("boom")
+        assert renderer.hw_decode_report() == []
