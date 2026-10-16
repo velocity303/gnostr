@@ -6,6 +6,14 @@ import sys
 import os
 from unittest.mock import Mock
 
+# Tier-2 real-GTK harnesses (test_*_gtk_real.py) call sys.exit(77) at
+# import time when real GTK4/Adw or a display is absent. pytest imports
+# every test_*.py module during collection, so that SystemExit aborts
+# the whole run as an INTERNALERROR ("no tests ran"). Exclude them from
+# collection here; they are executed standalone under xvfb-run via the
+# meson test targets, never imported by pytest.
+collect_ignore_glob = ["*_gtk_real.py"]
+
 # CRITICAL: Mock gi BEFORE any other imports that might trigger renderer.py
 mock_gi = Mock()
 mock_gi.require_version = lambda x, y: None
