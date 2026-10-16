@@ -123,6 +123,14 @@ class DMInboxView(Gtk.Box):
         # Live refresh: the client emits dm-conversations-updated after the
         # gateway persists a rumor (inbound or our own outbound self-copy).
         main_window.client.connect("dm-conversations-updated", self._on_dm_updated)
+        # An inbound row is stored as ciphertext and rewritten to plaintext by
+        # the decrypt worker; without this the preview keeps showing the raw
+        # base64 blob until the next conversation update.
+        svc = getattr(main_window.client, "dm_service", None)
+        if svc is not None:
+            self._decrypted_handler = svc.connect(
+                "dm-decrypted", lambda *a: self._on_dm_updated(None, None)
+            )
 
         self.reload()
 

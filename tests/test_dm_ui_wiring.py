@@ -557,6 +557,60 @@ def test_publish_dm_without_keys_returns_none(client):
     assert client.publish_dm("c" * 64, "x") is None
 
 
+def test_publish_dm_self_copy_stores_plaintext(client):
+    """The stored self-copy must be PLAINTEXT: threads/inbox read
+    dm_messages directly and nothing ever re-decrypts our own rows, so a
+    ciphertext self-copy renders as a raw base64 blob forever (regression:
+    'my messages are just encrypted text')."""
+    from gnostr.gateway.dm_gateway import SQLiteDMGateway
+
+    gw = SQLiteDMGateway()
+    gw.set_our_pubkey(client.my_pubkey)
+    client.set_dm_gateway(gw)
+
+    peer = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+    signed = client.publish_dm(peer, "readable hello")
+    assert signed is not None
+    # wire event keeps the ciphertext...
+    assert signed["content"] != "readable hello"
+    # ...but the local row is plaintext
+    thread = gw.get_thread(peer, 10, None)
+    assert thread[0]["content"] == "readable hello"
+
+
+def test_own_relay_echo_does_not_clobber_plaintext(client):
+    """A relay echo of our own kind-4 must not re-save (PK collision) nor
+    schedule a decrypt whose update_content would rewrite the plaintext row
+    back to ciphertext."""
+    from gnostr.gateway.dm_gateway import SQLiteDMGateway
+
+    gw = SQLiteDMGateway()
+    gw.set_our_pubkey(client.my_pubkey)
+    client.set_dm_gateway(gw)
+    client._ensure_dm_service()
+
+    peer = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+    signed = client.publish_dm(peer, "echo me")
+
+    scheduled = []
+    client.dm_service.schedule_decrypt = lambda ev: scheduled.append(ev["id"])
+    # simulate the relay echo of the very event we published
+    client._handle_event({**signed, "id": signed["id"]})
+    assert signed["id"] not in scheduled
+    thread = gw.get_thread(peer, 10, None)
+    assert thread[0]["content"] == "echo me"
+
+
+def test_thread_bubble_uses_char_wrap():
+    """A raw NIP-44 payload is one 300+ char base64 token; WORD wrap can't
+    break it and the bubble overflows the phone screen. The bubble label must
+    set Pango.WrapMode.CHAR (regression: 'long encrypted text not wrapping
+    nicely on a smartphone display')."""
+    src = open(os.path.join(_UI_DIR, "dm_thread_view.py")).read()
+    assert "set_wrap(True)" in src
+    assert "Pango.WrapMode.CHAR" in src
+
+
 def test_ensure_dm_opens_kind4_subscription(client):
     client.ensure_dm()
     subs = dict(client.subscribed)

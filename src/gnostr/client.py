@@ -738,12 +738,20 @@ class NostrClient(GObject.Object):
             gw = getattr(self, "dm_gateway", None)
             if gw is not None:
                 try:
+                    # Our own echo collides with the plaintext self-copy's id
+                    # (PRIMARY KEY) and aborts harmlessly — same no-op path as
+                    # relay dedup; the row keeps its plaintext.
                     gw.save_event(ev)
                     peer = ev.get("pubkey") or ""
                     GLib.idle_add(self.emit, "dm-conversations-updated", peer)
                 except Exception as e:
                     print(f"❌ DM Gateway save failed: {e}")
-            if getattr(self, "dm_service", None) is not None:
+            # Never decrypt our own echo: the self-copy already holds the
+            # plaintext and update_content would clobber it with ciphertext.
+            if (
+                getattr(self, "dm_service", None) is not None
+                and ev.get("pubkey") != self.my_pubkey
+            ):
                 self.dm_service.schedule_decrypt(ev)
 
     def _merge_relays(self, new_list):
@@ -856,7 +864,11 @@ class NostrClient(GObject.Object):
         gw = getattr(self, "dm_gateway", None)
         if gw is not None:
             try:
-                gw.save_event(signed)
+                # Self-copy stores PLAINTEXT, not the wire ciphertext: the
+                # thread/inbox read straight from dm_messages and nothing
+                # ever re-decrypts our own rows (no relay echo on targeted
+                # publishes). The published event keeps the ciphertext.
+                gw.save_event({**signed, "content": plaintext})
                 # publish_dm runs on the UI thread (composer action), so the
                 # inbox refresh can emit directly — no idle_add hop needed.
                 self.emit("dm-conversations-updated", peer_pubkey)

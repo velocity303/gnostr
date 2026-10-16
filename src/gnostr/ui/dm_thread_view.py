@@ -29,7 +29,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gtk
+from gi.repository import Adw, Gtk, Pango
 
 from ..nostr_utils import hex_to_npub
 from .dm_inbox_view import format_relative_time
@@ -167,6 +167,10 @@ class DMThreadView(Gtk.Box):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         bubble = Gtk.Label(label=msg["content"] or "")
         bubble.set_wrap(True)
+        # CHAR wrap: an undecrypted NIP-44 payload is one 300+ char base64
+        # token with no spaces — WORD wrap (the default) can't break it and
+        # the bubble overflows the phone screen. CHAR breaks mid-token.
+        bubble.set_wrap_mode(Pango.WrapMode.CHAR)
         bubble.set_selectable(True)
         bubble.set_xalign(0)
         # Contract: bubbles cap at ~70% width. GTK CSS can't express a

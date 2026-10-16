@@ -132,6 +132,15 @@ class DMService(GObject.Object):
         if not sender:
             raise ValueError("event has no sender pubkey")
         payload = event.get("content", "")
+        # Our own outbound self-copy is stored as PLAINTEXT (publish_dm), but
+        # relays echo the signed ciphertext back to our kind-4 subscription.
+        # NIP-44 can't decrypt our own payload (sender == us, not the peer the
+        # conversation key was derived with) — recognize the echo by author and
+        # hand back the payload verbatim instead of raising a decrypt error.
+        # getattr: test subclasses may bypass __init__ and lack the attribute.
+        our_pk = getattr(self, "_our_pubkey", "") or ""
+        if our_pk and sender == our_pk:
+            return payload
         conv_key = self._conversation_key(sender)
         return nip44.decrypt(payload, conv_key)
 
