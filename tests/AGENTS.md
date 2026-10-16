@@ -17,6 +17,8 @@ Test suite for gnostr — pytest-based with xvfb for GTK rendering. Covers servi
 - `test_feed_pagination.py` — following-feed keyset pagination (`database.get_feed_following`): first page, full coverage exactly-once, stability under new events mid-scroll, equal-created_at tiebreak, short-page end-of-DB, no-OFFSET source guard, EXPLAIN QUERY PLAN index usage — imports the mocked-GLib Database
 - `test_feed_model.py` — FeedModel (workstream #0, task 2): widget-agnostic feed window. load_first/load_older keyset cursor, end-of-DB sentinel, newest-side eviction that never touches the cursor, live-prepend buffer + flush, reset, max_window=1 / page_size=1 boundaries — fully mocked Database (no SQLite, no GTK)
 - `test_feed_gtk_real.py` — tier-2 real-GTK feed harness: drives the actual `FeedView` + `FeedModel` under a real `Gtk.Application` (xvfb) — load_first, load_older, near-top re-pull + anchor restore, live pill/flush, end-of-DB sentinel, window invariants. Self-skips (exit 77) when GTK4/Adw or a display is absent, so it is a no-op in CI without xvfb
+- `test_clipboard_gtk_real.py` — tier-2 real-GTK clipboard harness (issue #33): `ExportKeyDialog.on_copy` against the real Gdk clipboard under xvfb. Same self-skip (exit 77) rule
+- `test_dm_recipient_gtk_real.py` — tier-2 real-GTK recipient-picker harness (Phase A fixback): `DmRecipientView` constructed under real GTK — filter, paste-pin, activate, own-key rejection, empty-follows restore. Same self-skip (exit 77) rule
 - `test_profile_db.py` — profiles table persistence: full NIP-01/NIP-24 field round-trip, deprecated-field handling, schema migration, NIP-39 external identities + NIP-58 badges + badge-definition storage — imports the mocked-GLib Database
 - `test_profile_nips.py` — profile NIP protocol helpers: NIP-05 verification (mocked urllib), NIP-39 external identities, NIP-58 profile badges, LUD-16 resolution — imports real `profile_nips` (GTK-free)
 - `test_search_resolver.py` — search identifier resolver: npub/nprofile/nsec/hex/nostr: → pubkey — imports real `nostr_utils` (GTK-free)
@@ -34,6 +36,7 @@ Test suite for gnostr — pytest-based with xvfb for GTK rendering. Covers servi
 
 ## Local Contracts
 - `conftest.py` MUST mock `gi.repository` modules (Gtk, Adw, GLib, Gdk, Gst, Gio) before any test imports real modules
+- `conftest.py` sets `collect_ignore_glob = ["*_gtk_real.py"]` (issue #35): tier-2 real-GTK harnesses call `sys.exit(77)` at import time when GTK4/Adw or a display is absent, and pytest imports every `test_*.py` during collection — the SystemExit aborts the whole run as INTERNALERROR. Real-GTK harnesses are NEVER collected by pytest; they run standalone under `xvfb-run` via their `meson.build` test targets. Every new `test_*_gtk_real.py` harness inherits this rule automatically.
 - Tests never import real GTK — all GTK objects are mocked via unittest.MagicMock
 - Mock objects must provide the attribute/property access that real GTK objects would
 - `xvfb-run` is required for GTK tests — CI pipeline runs under xvfb
