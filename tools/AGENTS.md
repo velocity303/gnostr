@@ -17,6 +17,7 @@ Developer helper scripts for the two phone targets. Not shipped in the Flatpak.
 - App deploy to PM: tarball the `repo` dir from librem5, `flatpak remote-add --user gnostr-local file:///home/user/lab/repo` (no-gpg-verify), `flatpak install --user --reinstall`.
 - GNOME 50 runtime update removed `appstream-compose` from the SDK sandbox; flatpak-builder now fails on that final step only. Workaround: `flatpak build-export repo build-dir` manually (verify `build-dir/metadata` has `command=gnostr`, not pytest) + `flatpak install --reinstall`.
 - On PM the app logged `Unable to create a GL context` (GTK fell back off GL); rendering works, watch for it if visuals regress. `GSK_RENDERER=cairo` forces the software renderer explicitly.
+- `pm_onboarding_evidence.py` — drives the P1 create-account + backup-gate flow on the librem5 rig and collects the grim-shot acceptance evidence for `docs/onboarding-key-management.md` (issue #14). Stops before `_finish()`: never writes to the keyring, never touches the user's login.
 
 ## Child DOX Index
 None.
