@@ -26,7 +26,13 @@ BANNED = [
     ),
 ]
 
-DM_FILES = ["dm_inbox_view.py", "dm_thread_view.py"]
+DM_FILES = [
+    "dm_inbox_view.py",
+    "dm_thread_view.py",
+    "dm_recipient_view.py",
+    "followers_list_view.py",
+    "icons.py",
+]
 
 
 def test_dm_views_no_removed_gtk_apis():

@@ -230,6 +230,20 @@ class MainWindow(Adw.ApplicationWindow):
         page = Adw.NavigationPage(title="Messages", child=view)
         self.content_nav.push(page)
 
+    def show_dm_recipient(self):
+        """Open the New Message recipient picker (spec Phase A2). Mirrors
+        show_dm_inbox: a NavigationPage on content_nav, never a dialog —
+        every DM surface here is a nav page (modals lose the shared back
+        contract on Phosh)."""
+        try:
+            from gnostr.ui.dm_recipient_view import DmRecipientView
+        except ImportError:
+            from .ui.dm_recipient_view import DmRecipientView
+
+        view = DmRecipientView(self)
+        page = Adw.NavigationPage(title="New Message", child=view)
+        self.content_nav.push(page)
+
     def show_dm_thread(self, peer_pubkey):
         """Open the DM conversation with one peer (from an inbox row)."""
         try:
@@ -276,24 +290,23 @@ class MainWindow(Adw.ApplicationWindow):
 
         edit-create-symbolic (the old hard-coded name) does not exist in
         Adwaita/Phosh, so the button fell back to the theme's broken/missing
-        glyph. Preference order, first hit wins (same pattern as
-        PostWidget._resolve_icon_name):
+        glyph. Preference order, first hit wins — the probe itself is the
+        shared ui.icons.resolve_icon helper (A1 factoring).
           document-edit-symbolic  — pencil-on-paper, GNOME's compose glyph
           document-new-symbolic   — plus-on-paper
           list-add-symbolic       — guaranteed-present fallback
         """
-        candidates = (
-            "document-edit-symbolic",
-            "document-new-symbolic",
-            "list-add-symbolic",
+        try:
+            from gnostr.ui.icons import resolve_icon
+        except ImportError:
+            from .ui.icons import resolve_icon
+        return resolve_icon(
+            (
+                "document-edit-symbolic",
+                "document-new-symbolic",
+                "list-add-symbolic",
+            )
         )
-        display = Gdk.Display.get_default()
-        if display is not None:
-            theme = Gtk.IconTheme.get_for_display(display)
-            for name in candidates:
-                if theme.has_icon(name):
-                    return name
-        return candidates[-1]
 
     def on_fab_post_clicked(self, button):
         from gnostr.dialogs import ComposeWindow

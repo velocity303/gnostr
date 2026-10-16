@@ -18,6 +18,13 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gtk
 
 from ..nostr_utils import hex_to_npub
+from .icons import resolve_icon
+
+DM_ICON_CANDIDATES = (
+    "mail-message-new-symbolic",
+    "chat-message-new-symbolic",
+    "list-add-symbolic",
+)
 
 
 class FollowersListView(Gtk.Box):
@@ -109,6 +116,20 @@ class FollowersListView(Gtk.Box):
         row.add_prefix(avatar)
         row.set_activatable(True)
         row.pubkey = pk
+        # A3: DM shortcut suffix (48x48 flat). Gtk.Button claims the press
+        # inside itself — no CLAIM gesture on the row (house rule); row tap
+        # still opens the profile. Skipped for the owner's own key.
+        if pk != self.main_window.pub_key:
+            btn_dm = Gtk.Button(
+                icon_name=resolve_icon(DM_ICON_CANDIDATES), css_classes=["flat"]
+            )
+            btn_dm.set_tooltip_text("Send message")
+            btn_dm.set_size_request(48, 48)
+            btn_dm.set_valign(Gtk.Align.CENTER)
+            btn_dm.connect(
+                "clicked", lambda b, pk=pk: self.main_window.show_dm_thread(pk)
+            )
+            row.add_suffix(btn_dm)
         # Kick off metadata fetch (TTL-cached) so name/avatar fill in on arrival.
         self.main_window.client.fetch_profile(pk)
         return row

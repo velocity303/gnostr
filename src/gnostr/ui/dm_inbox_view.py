@@ -23,10 +23,16 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gtk, Pango
 
 from ..nostr_utils import hex_to_npub
+from .icons import resolve_icon
 
 SKELETON_ROWS = 3
 ROW_MIN_HEIGHT = 64
 AVATAR_SIZE = 40
+NEW_MSG_ICON_CANDIDATES = (
+    "mail-message-new-symbolic",
+    "chat-message-new-symbolic",
+    "list-add-symbolic",
+)
 
 
 def format_relative_time(ts):
@@ -76,6 +82,15 @@ class DMInboxView(Gtk.Box):
         self.btn_refresh.set_tooltip_text("Reload conversations")
         self.btn_refresh.connect("clicked", lambda b: self.reload())
         back_row.append(self.btn_refresh)
+        # A1: New Message button (third flat button) -> recipient picker.
+        self.btn_new_message = Gtk.Button(
+            icon_name=resolve_icon(NEW_MSG_ICON_CANDIDATES), css_classes=["flat"]
+        )
+        self.btn_new_message.set_tooltip_text("New message")
+        self.btn_new_message.connect(
+            "clicked", lambda b: main_window.show_dm_recipient()
+        )
+        back_row.append(self.btn_new_message)
         self.append(back_row)
 
         self.title_label = Gtk.Label(
@@ -95,11 +110,13 @@ class DMInboxView(Gtk.Box):
         self.clamp.set_tightening_threshold(504)
         self.clamp.set_child(self.list_box)
 
-        scroll = Gtk.ScrolledWindow()
-        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scroll.set_vexpand(True)
-        scroll.set_child(self.clamp)
-        self.append(scroll)
+        self.scroll = Gtk.ScrolledWindow()
+        self.scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self.scroll.set_vexpand(True)
+        self.scroll.set_child(self.clamp)
+        self.append(self.scroll)
+
+        self._empty_page = None  # A4 StatusPage while an empty result is shown
 
         self._append_skeleton()
 
@@ -153,18 +170,38 @@ class DMInboxView(Gtk.Box):
             self.list_box.remove(r)
         self.list_rows = []
 
-        for conv in convs:
-            row = self._make_row(conv)
-            self.list_box.append(row)
-            self.list_rows.append(row)
-
         if not convs:
-            empty = Adw.ActionRow(title="No messages yet", activatable=False)
-            empty.add_css_class("dim-label")
-            self.list_box.append(empty)
-            self.list_rows.append(empty)
+            # A4: empty-state StatusPage with a New Message pill. Renders
+            # ONLY when a real gateway result has been seen AND it is empty
+            # — the skeleton stays authoritative pre-gateway (never fake an
+            # empty result).
+            self._show_empty_state()
+        else:
+            self._remove_empty_state()
+            for conv in convs:
+                row = self._make_row(conv)
+                self.list_box.append(row)
+                self.list_rows.append(row)
 
         self.main_window.update_dm_badge()
+
+    def _show_empty_state(self):
+        self._remove_empty_state()
+        page = Adw.StatusPage(
+            icon_name="mail-unread-symbolic",
+            title="No messages yet",
+            description="Start a conversation — tap New Message.",
+        )
+        pill = Gtk.Button(label="New Message", css_classes=["pill", "suggested-action"])
+        pill.connect("clicked", lambda b: self.main_window.show_dm_recipient())
+        page.set_child(pill)
+        self._empty_page = page
+        self.scroll.set_child(page)
+
+    def _remove_empty_state(self):
+        if self._empty_page is not None:
+            self._empty_page = None
+        self.scroll.set_child(self.clamp)
 
     def _make_row(self, conv):
         pk = conv["peer_pk"]
