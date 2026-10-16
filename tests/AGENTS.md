@@ -36,6 +36,7 @@ Test suite for gnostr — pytest-based with xvfb for GTK rendering. Covers servi
 
 ## Local Contracts
 - `conftest.py` MUST mock `gi.repository` modules (Gtk, Adw, GLib, Gdk, Gst, Gio) before any test imports real modules
+- `conftest.py` sets `collect_ignore_glob = ["*_gtk_real.py"]` (issue #35): tier-2 real-GTK harnesses call `sys.exit(77)` at import time when GTK4/Adw or a display is absent, and pytest imports every `test_*.py` during collection — the SystemExit aborts the whole run as INTERNALERROR. Real-GTK harnesses are NEVER collected by pytest; they run standalone under `xvfb-run` via their `meson.build` test targets. Every new `test_*_gtk_real.py` harness inherits this rule automatically.
 - Tests never import real GTK — all GTK objects are mocked via unittest.MagicMock
 - Mock objects must provide the attribute/property access that real GTK objects would
 - `xvfb-run` is required for GTK tests — CI pipeline runs under xvfb
