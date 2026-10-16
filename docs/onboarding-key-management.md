@@ -61,11 +61,11 @@ New `src/gnostr/signer/` module — the *only* place NIP-46 lives. `client.py` k
 
 Cross-device matrix, using the phone as the signer test bed: Amber on the Librem 5 signing for desktop gnostr, and desktop gnostr (as signer-less client) against nsec.app. All publish flows (post/reply/like/repost/kind-3/kind-0) work through `BunkerBackend`. `LocalKeyBackend` keeps 100% of existing tests green.
 
-## P3 — Optional / deferred
+## P3 — Optional / deferred — ✅ IMPLEMENTED 2026-10-08 (Gitea #16, PR #30)
 
-- NIP-06 mnemonic derivation as an explicit power-user option (multi-identity trees). Off by default; the NIP's own "unrecommended" note goes in the UI copy.
-- Key-health surface: last-backup-verified timestamp, re-verify prompt in Settings.
-- NIP-05 identity hookup during onboarding (nice-to-have, separate scope).
+- ✅ NIP-06 mnemonic derivation as an explicit power-user option (multi-identity trees). Off by default; the NIP's own "unrecommended" note goes in the UI copy. (`src/gnostr/nip06.py`, derive dialog `src/gnostr/ui/derive_key.py`, path `m/44'/1237'/account'/0'` per SLIP-0044.)
+- ✅ Key-health surface: last-backup-verified timestamp, re-verify prompt in Settings. (`src/gnostr/key_health.py`; sidebar shows the reminder copy.)
+- ⏭ NIP-05 identity hookup during onboarding (nice-to-have, separate scope) — **not implemented here**; remains a separate scope as specced.
 
 ## Testing strategy (rig-first)
 

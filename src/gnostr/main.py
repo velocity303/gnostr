@@ -132,6 +132,13 @@ class MainWindow(Adw.ApplicationWindow):
         cs = Gtk.Button(label="Connect Signer (bunker)", css_classes=["pill"])
         cs.connect("clicked", self.on_connect_signer_clicked)
         bx.append(cs)
+        # P3 #16: NIP-06 is `unrecommended` by its own NIP — the entry point
+        # is labelled power-user and the dialog repeats the warning.
+        dv = Gtk.Button(
+            label="Derive from seed phrase (power user)", css_classes=["flat"]
+        )
+        dv.connect("clicked", self.on_derive_key_clicked)
+        bx.append(dv)
         self.login_page.set_child(bx)
 
         # 5. Assemble Stack
@@ -389,6 +396,11 @@ class MainWindow(Adw.ApplicationWindow):
         from .dialogs import ExportKeyDialog
 
         ExportKeyDialog(self).present()
+
+    def on_derive_key_clicked(self, btn):
+        from .ui.derive_key import DeriveKeyDialog
+
+        DeriveKeyDialog(self.client, self).present()
 
     @staticmethod
     def _resolve_fab_icon():

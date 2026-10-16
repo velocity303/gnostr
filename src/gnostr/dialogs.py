@@ -207,6 +207,11 @@ class ExportKeyDialog(Adw.Window):
 
         self.result_label.set_text(nip49_encrypt(nsec_hex, p1))
         self.copy_btn.set_visible(True)
+        # Key-health (P3 #16): producing the backup artifact counts as a
+        # verified backup — Settings shows this timestamp.
+        from gnostr import key_health
+
+        key_health.mark_backup_verified()
 
 
 class ComposeWindow(Adw.Window):
