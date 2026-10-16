@@ -52,6 +52,15 @@ class Sidebar(Gtk.Box):
         self.append(self.menu_list)
         self.append(Gtk.Box(vexpand=True))
 
+        # Connected remote signer (NIP-46, P2 #15) — hidden unless a bunker
+        # backend is active. Shows which signer holds the key + disconnect.
+        self.signer_row = Adw.ActionRow(title="Signer", subtitle="remote signer")
+        self.signer_row.set_visible(False)
+        disc = Gtk.Button(label="Disconnect", valign=Gtk.Align.CENTER)
+        disc.connect("clicked", self.on_disconnect_signer_clicked)
+        self.signer_row.add_suffix(disc)
+        self.menu_list.append(self.signer_row)
+
         # Relay Activity — collapsible log of publish/OK/connect activity so
         # follows/likes/reposts are verifiable against relays, not just the DB.
         self.relay_expander = Adw.ExpanderRow(title="Relay Activity")
@@ -120,6 +129,17 @@ class Sidebar(Gtk.Box):
 
     def on_backup_key_clicked(self, b):
         self.main_window.on_export_key_clicked()
+
+    def on_disconnect_signer_clicked(self, b):
+        self.main_window.on_disconnect_signer()
+
+    def set_signer_status(self, label):
+        """Show/hide the connected-signer row (P2 #15). label=None hides."""
+        if label is None:
+            self.signer_row.set_visible(False)
+        else:
+            self.signer_row.set_subtitle(label)
+            self.signer_row.set_visible(True)
 
     def update_status(self, status_emoji):
         self.status_label.set_text(status_emoji)

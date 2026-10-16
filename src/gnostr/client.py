@@ -262,6 +262,7 @@ class NostrClient(GObject.Object):
         self.relay_log = collections.deque(maxlen=200)
         self.my_pubkey = None
         self.my_privkey = None
+        self.signer = None  # SignerBackend (P2 #15); set_keys/set_signer install it
         self.requested_profiles = {}  # pubkey -> last request timestamp (TTL cache)
         self.requested_external_ids = {}  # NIP-39 kind-10011 TTL cache
         self.requested_badges = {}  # NIP-58 kind-10008 TTL cache
@@ -308,6 +309,66 @@ class NostrClient(GObject.Object):
     def set_keys(self, pub, priv):
         self.my_pubkey = pub
         self.my_privkey = priv
+        # P2 (#15): signing goes through a SignerBackend. A local key wraps
+        # into LocalKeyBackend here so every publish path is backend-routed.
+        # Imported lazily: signer imports gnostr.nostr_utils, and client.py is
+        # itself imported by gnostr/__init__ — a top-level import would race
+        # the package's partial initialization.
+        from . import signer as _signer
+
+        self.signer = _signer.LocalKeyBackend(priv) if priv is not None else None
+
+    def set_signer(self, backend):
+        """Install a SignerBackend (e.g. BunkerBackend). The backend owns all
+        signing; my_pubkey mirrors its user pubkey and my_privkey stays None
+        for remote signers (nothing in the UI path may assume a local key)."""
+        self.signer = backend
+        self.my_pubkey = backend.get_public_key()
+        self.my_privkey = getattr(backend, "local_privkey", None)
+
+    def _can_sign(self):
+        return getattr(self, "signer", None) is not None or bool(self.my_privkey)
+
+    def _sign(self, event):
+        """Single signing funnel: backend if installed, else legacy local key
+        (kept for the mocked-GObject test fakes that set my_privkey directly)."""
+        backend = getattr(self, "signer", None)
+        if backend is not None:
+            return backend.sign_event(event)
+        if not self.my_privkey:
+            return None
+        return gnostr.nostr_utils.sign_event(event, self.my_privkey)
+
+    def _dispatch_signed(self, event, label, after=None):
+        """Sign + publish an unsigned event through the active backend.
+
+        Local backends sign inline (unchanged behaviour). A remote backend
+        (BunkerBackend) needs a relay round-trip plus a user approval prompt,
+        which can take seconds — so it runs on a worker thread and the UI
+        path returns immediately; the real confirmation still arrives via the
+        OK-ack publish-result signal. `after(signed)` runs post-publish side
+        effects (DB writes + signals) on both paths."""
+        backend = getattr(self, "signer", None)
+        if backend is not None and not getattr(backend, "is_local", True):
+
+            def _worker():
+                signed = backend.sign_event(event)
+                if signed:
+                    self.publish(signed)
+                    self._track_publish(signed, label)
+                    if after:
+                        GLib.idle_add(after, signed)
+
+            threading.Thread(target=_worker, daemon=True).start()
+            return True
+        signed = self._sign(event)
+        if signed:
+            self.publish(signed)
+            self._track_publish(signed, label)
+            if after:
+                after(signed)
+            return True
+        return False
 
     def connect_all(self):
         def _connect_loop():
@@ -387,16 +448,11 @@ class NostrClient(GObject.Object):
     def _build_and_publish(self, kind, content, tags, label="Event"):
         """Shared build → sign → publish for any event kind. Returns True on
         success. All social-action publishes route through here (DRY)."""
-        if not self.my_privkey or not self.my_pubkey:
-            print("❌ No private key loaded")
+        if not self.my_pubkey or not self._can_sign():
+            print("❌ No signer backend loaded")
             return False
         event = gnostr.nostr_utils.build_event(self.my_pubkey, kind, content, tags)
-        signed = gnostr.nostr_utils.sign_event(event, self.my_privkey)
-        if signed:
-            self.publish(signed)
-            self._track_publish(signed, label)
-            return True
-        return False
+        return self._dispatch_signed(event, label)
 
     def _track_publish(self, event, label):
         """Register a just-published event for OK-ack resolution. The entry
@@ -469,26 +525,21 @@ class NostrClient(GObject.Object):
 
     def publish_reaction(self, target_event_id, target_pubkey, content="+"):
         """NIP-25: kind-7 reaction. content '+' adds, '-' removes/undo."""
-        if not self.my_privkey or not self.my_pubkey:
-            print("❌ No private key loaded")
+        if not self.my_pubkey or not self._can_sign():
+            print("❌ No signer backend loaded")
             return False
         event = gnostr.nostr_utils.build_reaction_event(
             self.my_pubkey, target_event_id, target_pubkey, content
         )
-        signed = gnostr.nostr_utils.sign_event(event, self.my_privkey)
-        if signed:
-            self.publish(signed)
-            self._track_publish(signed, "Like" if content == "+" else "Unlike")
-            return True
-        return False
+        return self._dispatch_signed(event, "Like" if content == "+" else "Unlike")
 
     def publish_repost(
         self, target_event_id, target_pubkey, target_kind=1, original_event=None
     ):
         """NIP-18: kind-6 generic repost. content = original event JSON.
         `original_event` is the DB row; falls back to fetching it."""
-        if not self.my_privkey or not self.my_pubkey:
-            print("❌ No private key loaded")
+        if not self.my_pubkey or not self._can_sign():
+            print("❌ No signer backend loaded")
             return False
         ev = original_event or self.db.get_event_by_id(target_event_id)
         if not ev:
@@ -501,15 +552,11 @@ class NostrClient(GObject.Object):
             ev.get("kind", target_kind),
             ev,
         )
-        signed = gnostr.nostr_utils.sign_event(event, self.my_privkey)
-        if signed:
-            self.publish(signed)
-            return True
-        return False
+        return self._dispatch_signed(event, "Repost")
 
     def publish_contacts(self):
         """Publish the current follow list as a kind-3 contact-list event."""
-        if not self.my_privkey or not self.my_pubkey:
+        if not self._can_sign() or not self.my_pubkey:
             return False
         following = self.db.get_following_list(self.my_pubkey)
         self._publish_contact_list(following, label="Contacts")
@@ -521,7 +568,7 @@ class NostrClient(GObject.Object):
         tracked for OK acks so the Relay Activity pane confirms the sync landed.
         Pairs with the startup pull (fetch_contacts → kind-3 → save_contacts)
         that reconciles the DB from the relays' newest view."""
-        if not self.my_privkey or not self.my_pubkey:
+        if not self._can_sign() or not self.my_pubkey:
             self._log_relay("follow-sync skipped: no keys")
             return False
         following = self.db.get_following_list(self.my_pubkey)
@@ -536,22 +583,21 @@ class NostrClient(GObject.Object):
         picture, banner, website, nip05, lud16, bot, birthday). Builds the
         stringified-JSON content, signs, publishes, tracks the OK ack, and
         persists locally. Returns True on success."""
-        if not self.my_privkey or not self.my_pubkey:
-            print("❌ No private key loaded")
+        if not self.my_pubkey or not self._can_sign():
+            print("❌ No signer backend loaded")
             return False
         content = json.dumps(metadata, separators=(",", ":"))
         event = gnostr.nostr_utils.build_event(self.my_pubkey, 0, content, [])
-        signed = gnostr.nostr_utils.sign_event(event, self.my_privkey)
-        if signed:
-            self.publish(signed)
-            self._track_publish(signed, "Profile")
+
+        def _after(signed):
             self.db.save_profile(self.my_pubkey, content, event["created_at"])
             GLib.idle_add(self.emit, "profile-updated", self.my_pubkey)
-            return True
-        return False
+
+        return self._dispatch_signed(event, "Profile", after=_after)
 
     def publish_relay_list(self):
-
+        if not self.my_pubkey or not self._can_sign():
+            return
         event = {
             "pubkey": self.my_pubkey,
             "created_at": int(time.time()),
@@ -559,12 +605,10 @@ class NostrClient(GObject.Object):
             "tags": [["r", u] for u in self.relay_urls],
             "content": "",
         }
-        signed = gnostr.nostr_utils.sign_event(event, self.my_privkey)
-        if signed:
-            self.publish(signed)
+        self._dispatch_signed(event, "Relay list")
 
     def follow_user(self, target_pubkey):
-        if not self.my_pubkey or not self.my_privkey:
+        if not self.my_pubkey or not self._can_sign():
             return
         following = self.db.get_following_list(self.my_pubkey)
         if target_pubkey in following:
@@ -574,7 +618,7 @@ class NostrClient(GObject.Object):
         print(f"✅ Followed {target_pubkey[:8]}...")
 
     def unfollow_user(self, target_pubkey):
-        if not self.my_pubkey or not self.my_privkey:
+        if not self.my_pubkey or not self._can_sign():
             return
         following = self.db.get_following_list(self.my_pubkey)
         if target_pubkey not in following:
@@ -592,12 +636,12 @@ class NostrClient(GObject.Object):
             "tags": tags,
             "content": "",
         }
-        signed = gnostr.nostr_utils.sign_event(event, self.my_privkey)
-        if signed:
-            self.publish(signed)
-            self._track_publish(signed, label)
+
+        def _after(signed):
             self.db.save_contacts(self.my_pubkey, following)
             GLib.idle_add(self.emit, "contacts-updated", self.my_pubkey)
+
+        self._dispatch_signed(event, label, after=_after)
 
     def get_ref_id(self, tags):
         for t in tags:
@@ -613,6 +657,18 @@ class NostrClient(GObject.Object):
             tags = ev.get("tags", [])
         except KeyError as e:
             print(f"❌ ERROR: Malformed Event: {e}")
+            return
+
+        # NIP-46 transport events are signer plumbing, not feed content: route
+        # them to the active BunkerBackend and keep them out of the DB, the
+        # dedup set, and every feed signal.
+        if ev.get("kind") == 24133:
+            backend = getattr(self, "signer", None)
+            if backend is not None and hasattr(backend, "handle_event"):
+                try:
+                    backend.handle_event(ev)
+                except Exception as e:
+                    print(f"❌ NIP-46 response handling failed: {e}")
             return
 
         # Dedup FIRST so re-subscribed events (e.g. thread refresh) are never
