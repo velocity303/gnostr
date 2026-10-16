@@ -278,6 +278,7 @@ def _fake_relay():
         on_event=lambda ev: None,
         on_status=lambda *a: None,
         on_ok=lambda *a: None,
+        on_eose=None,
         ws=None,
         is_connected=False,
         sub_id=None,
