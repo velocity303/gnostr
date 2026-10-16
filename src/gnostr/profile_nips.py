@@ -60,7 +60,9 @@ def verify_nip05(pubkey: str, nip05: str) -> bool:
         return False
     url = f"https://{domain}/.well-known/nostr.json?name={local_part}"
     try:
-        req = urllib.request.Request(url)
+        # Explicit UA: many CDNs (Cloudflare included) 403 the default
+        # Python-urllib agent, which would silently break verification.
+        req = urllib.request.Request(url, headers={"User-Agent": "gnostr/1.0"})
         with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read().decode("utf-8", "replace"))
     except Exception:
