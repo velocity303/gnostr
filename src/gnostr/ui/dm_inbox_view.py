@@ -80,7 +80,7 @@ class DMInboxView(Gtk.Box):
             icon_name="view-refresh-symbolic", css_classes=["flat"]
         )
         self.btn_refresh.set_tooltip_text("Reload conversations")
-        self.btn_refresh.connect("clicked", lambda b: self.reload())
+        self.btn_refresh.connect("clicked", self._on_refresh_clicked)
         back_row.append(self.btn_refresh)
         # A1: New Message button (third flat button) -> recipient picker.
         self.btn_new_message = Gtk.Button(
@@ -162,6 +162,17 @@ class DMInboxView(Gtk.Box):
 
     def _gateway(self):
         return getattr(self.main_window.client, "dm_gateway", None)
+
+    def _on_refresh_clicked(self, _btn=None):
+        """Refresh button: re-REQ the kind-4 subscription (pull fresh rumors
+        from the relays) AND rebuild rows from the local gateway. The plain
+        reload() only reads SQLite; without the re-subscribe a freshly opened
+        inbox never learns about messages that arrived while it was closed."""
+        try:
+            self.main_window.client.subscribe_dm()
+        except Exception:
+            pass
+        self.reload()
 
     def reload(self):
         """Query the gateway and rebuild rows. The skeleton is removed on the

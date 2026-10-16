@@ -206,3 +206,54 @@ def test_save_event_no_connection_is_safe(tmp_path, monkeypatch):
     # Should not raise.
     gw.save_event(_event("e1", "peerA", 100, "hi"))
     gw.get_conversations(10)
+
+
+# ---------------------------------------------------------------------------
+# Account-switch wipe (regression: user B saw user A's decrypted DMs after
+# logout/login — the SQLite DB is shared across accounts on the device).
+# ---------------------------------------------------------------------------
+
+
+def test_clear_all_empties_messages_and_conversations(tmp_path, monkeypatch):
+    gw = _make_gateway(tmp_path, monkeypatch, our_pubkey="owner")
+    gw.save_event(_event("e1", "peerA", 100, "hi"))
+    assert gw.get_conversations(10)
+    gw.clear_all()
+    assert gw.get_conversations(10) == []
+    assert gw.get_thread("peerA", 10, None) == []
+    assert gw.total_unread() == 0
+
+
+def test_bind_account_wipes_on_switch_keeps_on_same(tmp_path, monkeypatch):
+    from gnostr.gateway.dm_gateway import SQLiteDMGateway
+
+    monkeypatch.setattr(GLib, "get_user_data_dir", lambda: str(tmp_path / "data"))
+    gw = SQLiteDMGateway()
+    gw.bind_account("alice" * 10 + "aa")
+    gw.save_event(_event("e1", "peerA", 100, "alice secret"))
+    assert len(gw.get_conversations(10)) == 1
+
+    # Same account re-bind (restart): history survives.
+    gw.bind_account("alice" * 10 + "aa")
+    assert len(gw.get_conversations(10)) == 1
+
+    # Different account: everything is wiped before the new identity binds.
+    gw.bind_account("bob" * 10 + "bbb")
+    assert gw.get_conversations(10) == []
+    assert gw.get_thread("peerA", 10, None) == []
+    assert gw._our_pubkey() == "bob" * 10 + "bbb"
+
+
+def test_bind_account_survives_reopen(tmp_path, monkeypatch):
+    """The bound pubkey persists in dm_meta: reopening the same DB file with
+    a different account still wipes (the wipe must work across app runs)."""
+    from gnostr.gateway.dm_gateway import SQLiteDMGateway
+
+    monkeypatch.setattr(GLib, "get_user_data_dir", lambda: str(tmp_path / "data"))
+    gw1 = SQLiteDMGateway()
+    gw1.bind_account("alice" * 10 + "aa")
+    gw1.save_event(_event("e1", "peerA", 100, "alice secret"))
+
+    gw2 = SQLiteDMGateway()  # same db_path, fresh process-equivalent
+    gw2.bind_account("bob" * 10 + "bbb")
+    assert gw2.get_conversations(10) == []

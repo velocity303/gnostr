@@ -5,7 +5,7 @@ Nostr relay connection gateway — manages WebSocket connections to relays, hand
 
 ## Ownership
 - `gateway.py` — Gateway class: relay WebSocket connection, message parsing, reconnection logic
-- `dm_gateway.py` — AbstractDMGateway + SQLiteDMGateway: kind-4 DM rumor persistence (dm_conversations rollup keyed by PEER — outbound self-copies land under the recipient's p-tag conversation, inbound under sender; unread_count only for inbound), `get_conversations` (with last-message `preview`), `get_thread`, `mark_read`, `update_content` (plaintext write-back after off-thread decryption), `total_unread` (sidebar badge SUM query). Thread-safe via a lock; UI reads it directly, writes ride client signals.
+- `dm_gateway.py` — AbstractDMGateway + SQLiteDMGateway: kind-4 DM rumor persistence (dm_conversations rollup keyed by PEER — outbound self-copies land under the recipient's p-tag conversation, inbound under sender; unread_count only for inbound), `get_conversations` (with last-message `preview`), `get_thread`, `mark_read`, `update_content` (plaintext write-back after off-thread decryption), `total_unread` (sidebar badge SUM query), `clear_all` (full wipe) and `bind_account` (persists bound_pubkey in dm_meta; wipes messages+conversations when a DIFFERENT account binds — user B must never see user A's decrypted DMs; same-account restart keeps history). Thread-safe via a lock; UI reads it directly, writes ride client signals.
 
 ## Local Contracts
 - Gateway is instantiated by NostrClient, not by UI code

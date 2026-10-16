@@ -652,3 +652,41 @@ def test_main_window_badge_zero_without_gateway():
     fn = _class_method(_MAIN_PATH, "MainWindow", "update_dm_badge")
     fn(win)
     win.sidebar.update_dm_badge.assert_called_with(0)
+
+
+def test_ensure_dm_service_wipes_on_account_switch(client):
+    """Regression: logging out as user A and in as user B left A's decrypted
+    DMs visible — the shared SQLite DB was never wiped. _ensure_dm_service
+    must route the pubkey bind through gateway.bind_account (which wipes on
+    a DIFFERENT bound pubkey and persists the new one)."""
+    from gnostr.gateway.dm_gateway import SQLiteDMGateway
+
+    gw = SQLiteDMGateway()
+    client.set_dm_gateway(gw)
+    gw.bind_account("a" * 64)  # client fixture pubkey
+    gw.save_event(
+        {
+            "id": "e" * 64,
+            "pubkey": "p" * 64,
+            "created_at": 1,
+            "content": "alice secret",
+            "tags": [],
+        }
+    )
+    assert len(gw.get_conversations(10)) == 1
+
+    # Switch identity: the bind must detect the change and wipe.
+    client.my_pubkey = "c" * 64
+    _ensure = _class_method(_CLIENT_PATH, "NostrClient", "_ensure_dm_service")
+    _ensure(client)
+    assert gw.get_conversations(10) == []
+    assert gw._our_pubkey() == "c" * 64
+
+
+def test_inbox_refresh_resubscribes():
+    """The refresh button must re-REQ the kind-4 subscription (pull from
+    relays), not just re-read SQLite — otherwise messages that arrived while
+    the inbox was closed never show up."""
+    src = open(os.path.join(_UI_DIR, "dm_inbox_view.py")).read()
+    assert "def _on_refresh_clicked" in src
+    assert "subscribe_dm()" in src

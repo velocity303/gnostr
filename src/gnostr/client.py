@@ -797,10 +797,15 @@ class NostrClient(GObject.Object):
             gw = SQLiteDMGateway()
             self.dm_gateway = gw
         # Bind the gateway to our pubkey so save_event can tell inbound from
-        # outbound rumors when rolling up the conversation row.
+        # outbound rumors when rolling up the conversation row. bind_account
+        # also detects ACCOUNT SWITCH (persisted bound pubkey) and wipes the
+        # shared DB first — user B must never see user A's decrypted DMs.
         if getattr(gw, "_our_pubkey_override", "") != self.my_pubkey:
             try:
-                gw.set_our_pubkey(self.my_pubkey or "")
+                if hasattr(gw, "bind_account"):
+                    gw.bind_account(self.my_pubkey or "")
+                else:
+                    gw.set_our_pubkey(self.my_pubkey or "")
             except Exception:
                 pass
         from gnostr.service.dm_service import DMService

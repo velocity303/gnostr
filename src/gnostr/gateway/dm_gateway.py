@@ -76,6 +76,13 @@ class AbstractDMGateway(abc.ABC):
         """SUM(unread_count) across conversations — the sidebar badge query."""
         return 0
 
+    def clear_all(self) -> None:
+        """Delete every stored conversation + message (account switch wipe).
+
+        Non-abstract: gateways without local persistence may leave this
+        unimplemented (no-op default keeps fakes working).
+        """
+
     @abc.abstractmethod
     def close(self) -> None:
         """Close the underlying connection."""
@@ -119,6 +126,15 @@ class SQLiteDMGateway(AbstractDMGateway):
                     rumor_ts INTEGER,
                     inserted_at INTEGER NOT NULL,
                     direction TEXT NOT NULL
+                )
+                """)
+
+            # Single-row key/value store for gateway state (e.g. bound_pubkey
+            # for account-switch detection).
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS dm_meta (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
                 )
                 """)
 
@@ -339,6 +355,54 @@ class SQLiteDMGateway(AbstractDMGateway):
             cursor = self.conn.cursor()
             cursor.execute("SELECT COALESCE(SUM(unread_count), 0) FROM dm_conversations")
             return int(cursor.fetchone()[0])
+
+    def clear_all(self) -> None:
+        """Wipe every conversation + message row (account switch).
+
+        The DB is shared across logins on this device; without this, user B
+        sees user A's decrypted DMs after a logout (the rows are plaintext
+        after decrypt — deleting the key does not delete the data).
+        """
+        if not self.conn:
+            return
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute("DELETE FROM dm_messages")
+                cursor.execute("DELETE FROM dm_conversations")
+                self.conn.commit()
+            except Exception as e:
+                print(f"⚠️ DM Gateway Clear Error: {e}")
+
+    def bind_account(self, pubkey: str) -> None:
+        """Bind the gateway to `pubkey`, wiping the DB on ACCOUNT SWITCH.
+
+        The bound pubkey is persisted in dm_meta so a restart with the SAME
+        account keeps history, while a login with a DIFFERENT account wipes
+        first — user B must never see user A's decrypted DMs. First-ever
+        bind (no stored value) never wipes; the DB is empty anyway.
+        """
+        if self.conn:
+            with self.lock:
+                try:
+                    cursor = self.conn.cursor()
+                    cursor.execute(
+                        "SELECT value FROM dm_meta WHERE key = 'bound_pubkey'"
+                    )
+                    row = cursor.fetchone()
+                    if row and row[0] and pubkey and row[0] != pubkey:
+                        cursor.execute("DELETE FROM dm_messages")
+                        cursor.execute("DELETE FROM dm_conversations")
+                        print("🧹 DM store wiped: account switched")
+                    cursor.execute(
+                        "INSERT OR REPLACE INTO dm_meta (key, value) "
+                        "VALUES ('bound_pubkey', ?)",
+                        (pubkey or "",),
+                    )
+                    self.conn.commit()
+                except Exception as e:
+                    print(f"⚠️ DM Gateway Bind Account Error: {e}")
+        self._our_pubkey_override = pubkey
 
     # ------------------------------------------------------------------
     # helpers
