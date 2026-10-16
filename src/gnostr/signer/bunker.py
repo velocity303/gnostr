@@ -128,12 +128,16 @@ class BunkerBackend(SignerBackend):
         try:
             result = self._rpc(
                 "sign_event",
-                [json.dumps({
-                    "kind": event.get("kind"),
-                    "content": event.get("content", ""),
-                    "tags": event.get("tags", []),
-                    "created_at": event.get("created_at", int(time.time())),
-                })],
+                [
+                    json.dumps(
+                        {
+                            "kind": event.get("kind"),
+                            "content": event.get("content", ""),
+                            "tags": event.get("tags", []),
+                            "created_at": event.get("created_at", int(time.time())),
+                        }
+                    )
+                ],
             )
         except BunkerError:
             return None

@@ -316,9 +316,7 @@ class NostrClient(GObject.Object):
         # the package's partial initialization.
         from . import signer as _signer
 
-        self.signer = (
-            _signer.LocalKeyBackend(priv) if priv is not None else None
-        )
+        self.signer = _signer.LocalKeyBackend(priv) if priv is not None else None
 
     def set_signer(self, backend):
         """Install a SignerBackend (e.g. BunkerBackend). The backend owns all
@@ -352,6 +350,7 @@ class NostrClient(GObject.Object):
         effects (DB writes + signals) on both paths."""
         backend = getattr(self, "signer", None)
         if backend is not None and not getattr(backend, "is_local", True):
+
             def _worker():
                 signed = backend.sign_event(event)
                 if signed:
@@ -359,6 +358,7 @@ class NostrClient(GObject.Object):
                     self._track_publish(signed, label)
                     if after:
                         GLib.idle_add(after, signed)
+
             threading.Thread(target=_worker, daemon=True).start()
             return True
         signed = self._sign(event)
@@ -531,9 +531,7 @@ class NostrClient(GObject.Object):
         event = gnostr.nostr_utils.build_reaction_event(
             self.my_pubkey, target_event_id, target_pubkey, content
         )
-        return self._dispatch_signed(
-            event, "Like" if content == "+" else "Unlike"
-        )
+        return self._dispatch_signed(event, "Like" if content == "+" else "Unlike")
 
     def publish_repost(
         self, target_event_id, target_pubkey, target_kind=1, original_event=None

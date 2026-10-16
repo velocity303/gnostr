@@ -2,9 +2,10 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, Adw, Pango
-from gnostr.key_manager import KeyManager
+from gi.repository import Adw, Gtk, Pango
+
 import gnostr.nostr_utils as nostr_utils
+from gnostr.key_manager import KeyManager
 
 
 class RelayPreferencesWindow(Adw.PreferencesWindow):
@@ -117,9 +118,7 @@ class LoginDialog(Adw.Window):
             # would work once and evaporate on restart (Librem 5 field bug:
             # "user interaction failed" from gnome-keyring was ignored).
             if not KeyManager.save_key(h):
-                self.error_label.set_text(
-                    "Keyring save failed — key not persisted."
-                )
+                self.error_label.set_text("Keyring save failed — key not persisted.")
                 return
             self.client.set_keys(nostr_utils.get_public_key(h), h)
             self.client.fetch_user_relays()
@@ -442,7 +441,10 @@ class ConnectSignerWindow(Adw.Window):
         qr_box.append(self.qr_area)
         if segno is None:
             qr_box.append(
-                Gtk.Label(label="QR unavailable (segno not installed)", css_classes=["dim-label"])
+                Gtk.Label(
+                    label="QR unavailable (segno not installed)",
+                    css_classes=["dim-label"],
+                )
             )
         g.add(qr_box)
 
@@ -450,7 +452,9 @@ class ConnectSignerWindow(Adw.Window):
         page.add(bg)
         self.error_label = Gtk.Label(label="", css_classes=["error-label"], wrap=True)
         bg.add(self.error_label)
-        self.connect_btn = Gtk.Button(label="Connect", css_classes=["pill", "suggested-action"])
+        self.connect_btn = Gtk.Button(
+            label="Connect", css_classes=["pill", "suggested-action"]
+        )
         self.connect_btn.connect("clicked", self.on_connect)
         bg.add(self.connect_btn)
 

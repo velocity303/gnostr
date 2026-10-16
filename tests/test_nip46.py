@@ -124,9 +124,7 @@ class MockSigner:
                 unsigned = json.loads(req["params"][0])
                 unsigned["pubkey"] = self.user_pub
                 unsigned["id"] = nostr_utils.compute_event_id(unsigned)
-                result = json.dumps(
-                    nostr_utils.sign_event(unsigned, self.user_priv)
-                )
+                result = json.dumps(nostr_utils.sign_event(unsigned, self.user_priv))
         elif method == "logout":
             result = "ok"
         resp = nostr_utils.build_event(
@@ -171,7 +169,12 @@ def test_parse_bunker_uri():
 
 @pytest.mark.parametrize(
     "bad",
-    ["", "nostr://" + "a" * 64, "bunker://nothex?relay=wss://r", "bunker://" + "a" * 64],
+    [
+        "",
+        "nostr://" + "a" * 64,
+        "bunker://nothex?relay=wss://r",
+        "bunker://" + "a" * 64,
+    ],
 )
 def test_parse_bunker_uri_rejects_garbage(bad):
     with pytest.raises(ValueError):
@@ -376,7 +379,7 @@ def test_new_bunker_backend_connects_and_blobs(monkeypatch):
 
     client, proto, signer = _pair()
     signer.serve()
-    built = _capture_backends(monkeypatch, signer)
+    _capture_backends(monkeypatch, signer)
     uri = f"bunker://{proto.signer_pubkey}?relay={RELAY}&secret=s3cr3t"
     backend = new_bunker_backend(client, uri)
     signer.stop()
@@ -395,7 +398,7 @@ def test_reconnect_from_session_restores_same_identity(monkeypatch):
 
     client, proto, signer = _pair()
     signer.serve()
-    built = _capture_backends(monkeypatch, signer)
+    _capture_backends(monkeypatch, signer)
     backend = new_bunker_backend(
         client, f"bunker://{proto.signer_pubkey}?relay={RELAY}&secret=s3cr3t"
     )
