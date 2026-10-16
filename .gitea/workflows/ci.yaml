@@ -41,11 +41,6 @@ jobs:
           apt-get update
 
           # Install pip, PyGObject, and the GTK4/Adwaita UI typelibs via apt
-          # appstream-compose: jammy's flatpak-builder 1.2.2 always runs the
-          # appstream-compose binary and ignores the manifest's
-          # "x-run-appstream-compose": false key (added upstream later);
-          # without this package "Build Flatpak" dies with
-          # "bwrap: execvp appstream-compose: No such file or directory" (issue #36).
           apt-get install -y \
             python3-pip \
             python3-gi python3-gi-cairo \
@@ -53,7 +48,6 @@ jobs:
             xvfb \
             flatpak \
             flatpak-builder \
-            appstream-compose \
             pkg-config
 
       - name: Add flathub remote

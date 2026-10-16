@@ -56,7 +56,7 @@ Architecture:
 - `data/` — desktop file, icons, GSettings schema, metainfo
 - `po/` — translations
 
-Build system: Meson with Flatpak Builder. CI via Gitea Actions (`.gitea/workflows/ci.yaml`). The CI build step needs the `appstream-compose` apt package (jammy flatpak-builder 1.2.2 always runs the appstream-compose binary and ignores the manifest's `x-run-appstream-compose` key), and the self-hosted runner's `container.options` must grant `SYS_ADMIN` + `NET_ADMIN` so flatpak-builder's bubblewrap sandbox can create namespaces inside the job container (issue #36).
+Build system: Meson with Flatpak Builder. CI via Gitea Actions (`.gitea/workflows/ci.yaml`). The manifest disables metadata composition with the top-level `"appstream-compose": false` key (the correct flatpak-builder property name; `x-run-appstream-compose` is not a recognized key and is silently ignored, so the build dies with `bwrap: execvp appstream-compose: No such file or directory` on runners without the binary). The self-hosted runner's `container.options` must grant `SYS_ADMIN` + `NET_ADMIN` so flatpak-builder's bubblewrap sandbox can create namespaces inside the job container (issue #36).
 
 ## Work Guidance
 

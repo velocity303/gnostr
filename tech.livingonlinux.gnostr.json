@@ -173,5 +173,5 @@
             ]
         }
     ],
-    "x-run-appstream-compose": false
+    "appstream-compose": false
 }
