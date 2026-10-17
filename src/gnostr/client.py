@@ -66,6 +66,13 @@ REQ_DEDUP_WINDOW = 2.0  # s; same sub_id enqueued twice inside this window = 1 R
 RECONNECT_BACKOFF_START = 2.0  # s; randomized exponential, capped below
 RECONNECT_BACKOFF_MAX = 60.0
 IDLE_RELAY_TIMEOUT = 300.0  # s of zero relay traffic before idle disconnect
+# DM freshness poll (DM-UX): opening any other feed CLOSEs dm_sub —
+# RelayConnection.subscribe closes the previous sub_id when a different one
+# opens — so without this a new DM only surfaces on a manual refresh. One
+# snapshot REQ per relay per interval is ~1 REQ/min, two orders of magnitude
+# below relay rate limits (nos.lol bans at 200 REQ/10 s per IP).
+DM_POLL_INTERVAL = 60  # s between kind-4 re-REQs while logged in
+DM_POLL_SINCE_SLACK = 120  # s of overlap re-fetch; dedup absorbs the repeats
 
 
 class NostrRelay(GObject.Object):
@@ -448,6 +455,7 @@ class NostrClient(GObject.Object):
         self._dm_status_batches = {}
         self._dm_status_by_sub = {}
         self._dm_status_seq = 0
+        self._dm_poll_source = None  # GLib source id for the DM freshness poll
         # P5 throttle: timestamps (time.time()) of new-conversation
         # initiations in the rolling hour. In-memory only by design — a
         # persisted counter would punish the user after a restart for sends
@@ -482,6 +490,9 @@ class NostrClient(GObject.Object):
     def set_keys(self, pub, priv):
         self.my_pubkey = pub
         self.my_privkey = priv
+        if pub is None:
+            # Logout: the DM freshness poll must die with the session.
+            self.stop_dm_poll()
         # P2 (#15): signing goes through a SignerBackend. A local key wraps
         # into LocalKeyBackend here so every publish path is backend-routed.
         # Imported lazily: signer imports gnostr.nostr_utils, and client.py is
@@ -1187,6 +1198,52 @@ class NostrClient(GObject.Object):
         if self.my_pubkey:
             self.subscribe_dm()
             self.publish_dm_relay_list()
+            self.start_dm_poll()
+
+    def start_dm_poll(self):
+        """Periodic kind-4 freshness poll (DM-UX). Opening any other feed
+        CLOSEs dm_sub — RelayConnection.subscribe closes the previous sub_id
+        when a different one opens — so without this a new DM only surfaces
+        on a manual refresh. One snapshot REQ per relay per DM_POLL_INTERVAL
+        (~1/min) is two orders of magnitude under relay REQ rate limits.
+        Idempotent: re-starting replaces the old timer."""
+        self.stop_dm_poll()
+        if not self.my_pubkey:
+            return
+        self._dm_poll_source = GLib.timeout_add(
+            DM_POLL_INTERVAL * 1000, self._dm_poll_tick
+        )
+
+    def stop_dm_poll(self):
+        if getattr(self, "_dm_poll_source", None) is not None:
+            try:
+                GLib.source_remove(self._dm_poll_source)
+            except Exception:
+                pass
+            self._dm_poll_source = None
+
+    def _dm_poll_tick(self):
+        """One poll REQ: kind-4 addressed to us over a window of
+        interval+slack (relays carry created_at clock skew; the overlap is
+        absorbed by seen_events dedup in _handle_event). Snapshot REQ:
+        auto-closes on EOSE, never replays on reconnect, never disturbs a
+        live dm_sub. Returns True to keep the timer; False self-removes on
+        logout (pubkey gone)."""
+        if not self.my_pubkey:
+            self._dm_poll_source = None
+            return False
+        try:
+            since = int(time.time()) - DM_POLL_INTERVAL - DM_POLL_SINCE_SLACK
+            self._dm_poll_seq = getattr(self, "_dm_poll_seq", 0) + 1
+            # Unique sub_id per tick: REQ_DEDUP_WINDOW keys on sub_id, and a
+            # repeated id would silently swallow the tick.
+            self.request_once(
+                f"dm_poll_{self._dm_poll_seq}",
+                {"kinds": [4], "#p": [self.my_pubkey], "since": since, "limit": 50},
+            )
+        except Exception:
+            pass  # a missed tick is fine; the next one is a minute away
+        return True
 
     def publish_dm(self, peer_pubkey, plaintext):
         """Encrypt + publish a DM to `peer_pubkey`. Returns the signed rumor

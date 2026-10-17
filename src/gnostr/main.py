@@ -47,6 +47,11 @@ class MainWindow(Adw.ApplicationWindow):
         self.client.connect("publish-result", self.on_publish_result)
         self.client.connect("relay-log-updated", self.on_relay_log_updated)
         self.client.connect("dm-unreachable", self.on_dm_unreachable)
+        # Poll-delivered DMs must move the sidebar badge even while the user
+        # sits on the feed (inbox/thread views only refresh while visible).
+        self.client.connect(
+            "dm-conversations-updated", lambda *_: self.update_dm_badge()
+        )
 
         self.priv_key = None
         self.pub_key = None
