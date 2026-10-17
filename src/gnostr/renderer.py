@@ -53,7 +53,6 @@ _BUFFER_PLAY_PCT = 60
 # inconsistently present across Flatpak GStreamer bindings).
 _BUFFERING_MSG_BIT = 1 << 5  # GST_MESSAGE_BUFFERING
 _ASYNC_DONE_MSG_BIT = 1 << 21  # GST_MESSAGE_ASYNC_DONE (preroll complete)
-_NO_MORE_PADS_MSG_BIT = 1 << 10  # GST_MESSAGE_NO_MORE_PADS (demux settled)
 _PLAY_FLAG_DOWNLOAD = 1 << 7  # GST_PLAY_FLAG_DOWNLOAD (progressive download-ahead)
 
 
@@ -1080,7 +1079,11 @@ class VideoPlayer:
                     # prefill target. Drive the spinner/percent overlay and the
                     # threshold-gated play from here (see _on_buffering).
                     try:
-                        _pct = msg.parse_buffering()[0]  # [1] = time-left, unused
+                        # Real PyGObject gst_message_parse_buffering() has ONE
+                        # out-arg and returns a bare int (verified on 1.26.1);
+                        # some bindings surface (int, time_left). Handle both.
+                        _b = msg.parse_buffering()
+                        _pct = int(_b[0] if isinstance(_b, (tuple, list)) else _b)
                     except Exception:
                         _pct = 100
                     _v = getattr(p, "_video", None)
@@ -1097,8 +1100,6 @@ class VideoPlayer:
                         _p = getattr(_v, "_buffer_pct", -1)
                         if _p < 0 or _p >= _BUFFER_PLAY_PCT:
                             VideoPlayer._start_gated_play(_v, media_url)
-                elif t & _NO_MORE_PADS_MSG_BIT:
-                    _vlog(f"🎬 [Media] NO_MORE_PADS {media_url[:40]}")
                 elif t & Gst.MessageType.STATE_CHANGED:
                     old, new, pending = msg.parse_state_changed()
                     if pending == Gst.State.VOID_PENDING:
@@ -1333,14 +1334,19 @@ class VideoPlayer:
             else:
                 VideoPlayer._set_buffering_ui(video, False)
         else:
-            if video._is_playing and not getattr(video, "_buffer_gate", False):
+            # pct == -1 means "unknown" — never treat it as a drain.
+            if (
+                pct >= 0
+                and video._is_playing
+                and not getattr(video, "_buffer_gate", False)
+            ):
                 # Mid-playback drain: park in PAUSED (sink keeps last frame)
                 # instead of starving → black-frame stutter.
                 video._auto_paused = True
                 video._is_playing = False
                 pipeline.set_state(Gst.State.PAUSED)
                 _vlog(f"🎬[PERF-BUF] drain pause pct={pct} {media_url[:50]}")
-            VideoPlayer._set_buffering_ui(video, True, pct)
+            VideoPlayer._set_buffering_ui(video, True, pct if pct >= 0 else None)
 
     @staticmethod
     def _start_gated_play(video, media_url=""):

@@ -85,11 +85,14 @@ def built_video(mock_container):
     return mock_video, mock_pipeline, handler, spinner, mock_container
 
 
-def _msg(t, pct=None):
+def _msg(t, pct=None, tuple_shape=False):
     m = Mock()
     m.type = t
     if pct is not None:
-        m.parse_buffering.return_value = (pct, None)
+        # Real PyGObject gst_message_parse_buffering() returns a BARE int
+        # (one out-arg; verified on GStreamer 1.26.1). tuple_shape covers
+        # bindings that surface (percent, time_left).
+        m.parse_buffering.return_value = (pct, None) if tuple_shape else pct
     return m
 
 
@@ -199,6 +202,27 @@ class TestPrefillGate:
         assert 1 in _states(pipeline)
         assert video._buffer_gate is False
 
+    def test_buffering_tuple_shape_binding_robustness(
+        self, mock_container, built_video
+    ):
+        """Bindings returning (percent, time_left) must gate identically."""
+        from gnostr.renderer import VideoPlayer
+
+        video, pipeline, handler, _, _ = built_video
+        VideoPlayer.load_and_play(
+            "http://t.test/tuple.mp4", mock_container, None, autoplay=True
+        )
+        pipeline.set_state.reset_mock()
+
+        handler(_msg(_BUFFERING, 30, tuple_shape=True))
+
+        assert 1 not in _states(pipeline), "tuple-shape 30% must not start play"
+        assert video._buffer_pct == 30
+
+        pipeline.set_state.reset_mock()
+        handler(_msg(_BUFFERING, 80, tuple_shape=True))
+        assert 1 in _states(pipeline), "tuple-shape threshold releases the gate"
+
     def test_user_tap_bypasses_gate(self, mock_container, built_video, monkeypatch):
         from gnostr.renderer import VideoPlayer
 
@@ -241,6 +265,19 @@ class TestMidPlaybackDrain:
         pipeline.set_state.reset_mock()
         handler(_msg(_BUFFERING, 90))  # buffer recovers
         assert 1 in _states(pipeline), "recovered buffer must resume PLAYING"
+        assert video._auto_paused is False
+        assert video._is_playing is True
+
+    def test_unknown_percent_minus_one_never_drain_pauses(
+        self, mock_container, built_video
+    ):
+        """BUFFERING pct=-1 (unknown) must not park a playing video."""
+        video, pipeline, handler = self._start_playing(built_video, mock_container)
+        pipeline.set_state.reset_mock()
+
+        handler(_msg(_BUFFERING, -1))
+
+        assert 2 not in _states(pipeline), "pct=-1 is unknown, not a drain"
         assert video._auto_paused is False
         assert video._is_playing is True
 
