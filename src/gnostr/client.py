@@ -1,6 +1,7 @@
 import collections
 import json
 import os
+import random
 import threading
 import time
 import traceback
@@ -54,6 +55,18 @@ DM_STATUS_TIMEOUT_MS = 5000
 DM_INITIATION_WARN_PER_HOUR = 10
 DM_INITIATION_HARD_STOP_PER_HOUR = 30
 
+# --- Relay usage economy (issue #26 'Relay Usage Optimizations') ---
+# Popular relays cap REQ messages per IP (nos.lol: 200 REQ / 10 s, then an
+# automated ban). A client's relay economy is about how it batches, caches,
+# re-issues subscriptions, and reacts to CLOSED — the failure mode shared by
+# every heavy client in the issue's findings is 'CLOSED is unhandled'.
+REQ_RATE_LIMIT = 18  # REQ messages per relay per second (18/s < 200/10s cap)
+REQ_BURST = 5  # burst allowance for a legitimate simultaneous fan-out
+REQ_DEDUP_WINDOW = 2.0  # s; same sub_id enqueued twice inside this window = 1 REQ
+RECONNECT_BACKOFF_START = 2.0  # s; randomized exponential, capped below
+RECONNECT_BACKOFF_MAX = 60.0
+IDLE_RELAY_TIMEOUT = 300.0  # s of zero relay traffic before idle disconnect
+
 
 class NostrRelay(GObject.Object):
     def __init__(self, url, on_event, on_status, on_ok=None, on_eose=None):
@@ -68,11 +81,49 @@ class NostrRelay(GObject.Object):
         self.sub_id = None
         self.active_sub_ids = set()  # sub_ids actually opened on THIS relay
         self.request_queue = []
+        self.queued_sub_ids = set()  # dedup: sub_ids already waiting in queue
+        self._recent_reqs = {}  # sub_id -> monotonic ts (windowed REQ dedup)
         self.is_processing_queue = False
         self.snapshot_ids = set()  # Track subscriptions that should close on EOSE
+        # Live (non-snapshot) subscriptions, sub_id -> filters. A reconnect
+        # used to silently drop every live sub (sub_following, dm_sub) until
+        # the next manual feed switch — DMs stopped arriving after a flap.
+        # Reconnect now replays these through the rate-limited queue.
+        self.live_subs = {}
+        # REQ rate limiting (issue #26): token bucket refilled at
+        # REQ_RATE_LIMIT/s; the queue worker sleeps instead of bursting past
+        # a relay's per-IP REQ cap (nos.lol bans at 200 REQ/10 s per IP).
+        self._tokens = float(REQ_BURST)
+        self._last_refill = time.monotonic()
+        # Reconnect backoff (issue #26): randomized exponential so a fleet of
+        # gnostr clients behind one CGNAT address does not re-thunder the
+        # relay in lockstep after a flap. Reset on a successful CONNECTED.
+        self._backoff = RECONNECT_BACKOFF_START
+        self._last_attempt = 0.0
+        self._last_traffic = time.monotonic()  # any inbound message
+        self._closed_notified = False  # rate-limit NOTICE surfaced once
+        self._idle_closed = False  # parked by the idle sweep (issue #26)
+
+    def _refill_tokens(self):
+        now = time.monotonic()
+        self._tokens = min(
+            float(REQ_BURST), self._tokens + (now - self._last_refill) * REQ_RATE_LIMIT
+        )
+        self._last_refill = now
+        return now
+
+    def _next_send_wait(self):
+        """Seconds to sleep before the next REQ is legal (0 if a token is
+        available; consumes the token)."""
+        self._refill_tokens()
+        if self._tokens >= 1.0:
+            self._tokens -= 1.0
+            return 0.0
+        return (1.0 - self._tokens) / REQ_RATE_LIMIT
 
     def start(self):
         def on_msg(ws, m):
+            self._last_traffic = time.monotonic()
             try:
                 d = json.loads(m)
                 if d[0] == "EVENT":
@@ -91,6 +142,25 @@ class NostrRelay(GObject.Object):
                         self.snapshot_ids.remove(sub_id)
                     if self.on_eose:
                         self.on_eose(sub_id, self.url)
+                elif d[0] == "CLOSED":
+                    # NIP-01: ["CLOSED", <sub_id>, <message>]. The relay
+                    # refused the subscription (rate limit, full). Heavy
+                    # clients in issue #26 all ignore this and keep re-firing
+                    # the same REQ — the ban spiral. Here: drop the sub so it
+                    # is not replayed, and surface rate-limit closures once
+                    # per connection so the user sees WHY a feed is stale.
+                    sub_id = d[1] if len(d) > 1 else ""
+                    reason = d[2] if len(d) > 2 else ""
+                    self.active_sub_ids.discard(sub_id)
+                    self.snapshot_ids.discard(sub_id)
+                    self.live_subs.pop(sub_id, None)  # refused: never replayed
+                    self.request_queue = [
+                        (sid, f) for (sid, f) in self.request_queue if sid != sub_id
+                    ]
+                    self.queued_sub_ids.discard(sub_id)
+                    if "rate-limited" in reason and not self._closed_notified:
+                        self._closed_notified = True
+                        print(f"⚠️ [{self.url}] rate-limited: {reason}")
                 elif d[0] == "NOTICE":
                     print(f"NOTICE [{self.url}]: {d[1]}")
             except Exception:
@@ -100,7 +170,16 @@ class NostrRelay(GObject.Object):
 
         def on_open(ws):
             self.is_connected = True
+            self._backoff = RECONNECT_BACKOFF_START  # flap counter resets
+            self._closed_notified = False
+            self._last_traffic = time.monotonic()
             GLib.idle_add(self.on_status, self.url, ConnectionState.CONNECTED)
+            # Replay live subscriptions that were open before the flap
+            # (issue #26: reconnect used to drop sub_following/dm_sub until
+            # the next manual feed switch — DMs silently stopped arriving).
+            # Snapshots are excluded: they already closed at their EOSE.
+            for sid, filters in self.live_subs.items():
+                self._enqueue(sid, filters)
             self.process_queue()
 
         def on_err(ws, e):
@@ -109,8 +188,11 @@ class NostrRelay(GObject.Object):
 
         def on_close(ws, c, m):
             self.is_connected = False
+            if self._idle_closed:
+                return  # intentional park, not a failure — keep status quiet
             GLib.idle_add(self.on_status, self.url, ConnectionState.DISCONNECTED)
 
+        self._last_attempt = time.monotonic()
         self.ws = websocket.WebSocketApp(
             self.url,
             on_open=on_open,
@@ -121,34 +203,78 @@ class NostrRelay(GObject.Object):
         threading.Thread(target=self.ws.run_forever, daemon=True).start()
 
     def restart(self):
-        if not self.is_connected:
-            # Simple restart check: if thread is dead, start new one?
-            # WebSocketApp run_forever blocks, so if it exited, the thread died.
-            # We can just call start() again.
-            self.start()
+        """Reconnect with randomized exponential backoff (issue #26). Called
+        from the periodic check_connections sweep; returns without reconnecting
+        while the backoff window is still open, or while the relay is parked
+        idle (only explicit activity wakes a parked relay). Randomized jitter
+        (0.5x-1.5x) keeps many clients behind one NAT from reconnecting in
+        lockstep."""
+        if self.is_connected or self._idle_closed:
+            return
+        wait = self._backoff * random.uniform(0.5, 1.5)
+        if time.monotonic() - self._last_attempt < wait:
+            return
+        self._backoff = min(self._backoff * 2.0, RECONNECT_BACKOFF_MAX)
+        self.start()
+
+    def wake(self):
+        """Explicit activity on a parked (idle-closed) relay: reconnect now,
+        backoff reset — the user asked for something from this relay."""
+        if self.is_connected:
+            return
+        self._idle_closed = False
+        self._backoff = RECONNECT_BACKOFF_START
+        self.start()
+
+    def close_if_idle(self, now=None):
+        """Park the connection if no inbound traffic for IDLE_RELAY_TIMEOUT
+        (issue #26: idle relays hold sockets and count against per-IP
+        connection caps for nothing — Gossip's idle-disconnect pattern).
+        Relays with an open live sub are NOT parked: the user is streaming
+        from them (following feed / DM inbox) and parking would delay new
+        events. live_subs survive — the next subscribe or request wakes a
+        parked relay and replays them."""
+        if not self.is_connected or self._idle_closed or self.live_subs:
+            return False
+        now = now if now is not None else time.monotonic()
+        if now - self._last_traffic < IDLE_RELAY_TIMEOUT:
+            return False
+        self._idle_closed = True
+        if self.ws:
+            self.ws.close()
+        return True
 
     def subscribe(self, sub_id, filters, snapshot=False):
-        if not self.is_connected:
-            return
-
         # Close the previous subscription before opening a new one, but only if
         # it's actually open on THIS relay. The old code used a single shared
         # self.sub_id and sent CLOSE for IDs the relay didn't recognize, which
         # produced "bad close: invalid subscription id length" NOTICEs and
         # "too many concurrent REQs" — degrading relay communication.
-        if self.sub_id and self.sub_id != sub_id:
+        if self.is_connected and self.sub_id and self.sub_id != sub_id:
             try:
                 self.ws.send(json.dumps(["CLOSE", self.sub_id]))
             except Exception:
                 pass
             self.active_sub_ids.discard(self.sub_id)
+            self.live_subs.pop(self.sub_id, None)  # closed: not replayed
 
         if snapshot:
             self.snapshot_ids.add(sub_id)
-        elif sub_id in self.snapshot_ids:
-            self.snapshot_ids.remove(sub_id)
+            self.live_subs.pop(sub_id, None)
+        else:
+            self.live_subs[sub_id] = filters
+            self.snapshot_ids.discard(sub_id)
 
         self.sub_id = sub_id
+
+        if not self.is_connected:
+            # Record the live sub even while down (issue #26): on_open replays
+            # live_subs after a flap, so a startup or post-flap subscribe is
+            # no longer silently dropped until the next manual feed switch.
+            if self._idle_closed:
+                self.wake()  # explicit activity: park ends, on_open replays
+            return
+
         self.active_sub_ids.add(sub_id)
         try:
             self.ws.send(
@@ -160,15 +286,36 @@ class NostrRelay(GObject.Object):
         except Exception:
             pass
 
+    def _enqueue(self, sub_id, filters):
+        """Queue a REQ for the rate-limited worker. Dedup (issue #26): the
+        same sub_id enqueued twice within REQ_DEDUP_WINDOW (e.g. a profile
+        opened twice while scrolling, or a widget remount storm) is one REQ,
+        not two. The window is short so a deliberate later re-fetch (TTL
+        expiry) still goes out."""
+        now = time.monotonic()
+        if sub_id in self.queued_sub_ids:
+            return
+        if now - self._recent_reqs.get(sub_id, -1e9) < REQ_DEDUP_WINDOW:
+            return
+        if len(self._recent_reqs) > 512:  # bounded, never a slow leak
+            self._recent_reqs = {
+                k: v for k, v in self._recent_reqs.items() if now - v < REQ_DEDUP_WINDOW
+            }
+        self._recent_reqs[sub_id] = now
+        self.queued_sub_ids.add(sub_id)
+        self.request_queue.append((sub_id, filters))
+        if self.is_connected:
+            self.process_queue()
+        elif self._idle_closed:
+            self.wake()  # queued REQs drain via process_queue in on_open
+
     def request_once(self, sub_id, filters):
         # Register the sub_id for EOSE auto-close (spec Phase B2a): the on_msg
         # EOSE handler CLOSEs anything in snapshot_ids, so one-shot REQs
         # (freshness pull, fetch_user_relays, fetch_profile/… — all unique
         # sub_ids) no longer leak open subscriptions on every relay.
         self.snapshot_ids.add(sub_id)
-        self.request_queue.append((sub_id, filters))
-        if self.is_connected:
-            self.process_queue()
+        self._enqueue(sub_id, filters)
 
     def process_queue(self):
         if self.is_processing_queue or not self.request_queue:
@@ -178,6 +325,15 @@ class NostrRelay(GObject.Object):
         def _worker():
             while self.request_queue and self.is_connected:
                 sub_id, filters = self.request_queue.pop(0)
+                self.queued_sub_ids.discard(sub_id)
+                # Token bucket (issue #26): pace REQs to REQ_RATE_LIMIT/s
+                # instead of the old flat 0.1 s sleep — a burst of one-shot
+                # fetches (scrolling a follows list) no longer spikes past
+                # relay per-IP caps, and the sleep only happens when the
+                # bucket is actually empty.
+                wait = self._next_send_wait()
+                if wait > 0:
+                    time.sleep(wait)
                 try:
                     self.ws.send(
                         json.dumps(
@@ -185,7 +341,7 @@ class NostrRelay(GObject.Object):
                             + (filters if isinstance(filters, list) else [filters])
                         )
                     )
-                    time.sleep(0.1)
+                    self.active_sub_ids.add(sub_id)
                 except Exception:
                     break
             self.is_processing_queue = False
@@ -394,10 +550,16 @@ class NostrClient(GObject.Object):
         self.active_relays[url] = r
 
     def check_connections(self):
-        # Scan active relays, if disconnected, restart them
+        """Periodic sweep (main.py: every 300 s). Two jobs (issue #26):
+        - reconnect disconnected relays through NostrRelay.restart(), which
+          now applies randomized exponential backoff instead of hammering a
+          relay that just dropped us (the ban spiral in the issue findings);
+        - park relays with no traffic and no live subscription, so idle
+          sockets do not count against per-IP connection caps."""
         for url, relay in self.active_relays.items():
-            if not relay.is_connected:
-                print(f"🔄 Reconnecting to {url}...")
+            if relay.close_if_idle():
+                self._log_relay(f"{url} parked: idle {int(IDLE_RELAY_TIMEOUT)}s")
+            elif not relay.is_connected:
                 relay.restart()
 
     def add_relay(self, url):

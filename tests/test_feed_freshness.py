@@ -286,12 +286,30 @@ def _fake_relay():
         request_queue=[],
         is_processing_queue=False,
         snapshot_ids=set(),
+        # relay-economy fields (issue #26) the real __init__ sets
+        queued_sub_ids=set(),
+        _recent_reqs={},
+        live_subs={},
+        _idle_closed=False,
+        _tokens=5.0,
+        _last_refill=time.monotonic(),
+        _backoff=2.0,
+        _last_attempt=0.0,
+        _last_traffic=time.monotonic(),
+        _closed_notified=False,
     )
     ws_mod = types.SimpleNamespace(WebSocketApp=_FakeWS)
     conn_state = __import__(
         "gnostr.util.connection_state", fromlist=["ConnectionState"]
     ).ConnectionState
-    for name in ("start", "request_once", "process_queue"):
+    for name in (
+        "start",
+        "request_once",
+        "process_queue",
+        "_enqueue",
+        "_next_send_wait",
+        "_refill_tokens",
+    ):
         fn = _extract(
             _CLIENT_PATH,
             "NostrRelay",
@@ -300,6 +318,13 @@ def _fake_relay():
                 "websocket": ws_mod,
                 "threading": __import__("threading"),
                 "ConnectionState": conn_state,
+                "REQ_RATE_LIMIT": 18,
+                "REQ_BURST": 5,
+                "REQ_DEDUP_WINDOW": 2.0,
+                "RECONNECT_BACKOFF_START": 2.0,
+                "RECONNECT_BACKOFF_MAX": 60.0,
+                "IDLE_RELAY_TIMEOUT": 300.0,
+                "random": __import__("random"),
             },
         )
         setattr(relay, name, fn.__get__(relay))

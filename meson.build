@@ -53,6 +53,9 @@ if pytest_prog.found()
   # EOSE auto-close registration, pill routing during the hold, and the
   # FeedModel freshness-merge/echo-back dedup regression.
   test('test_feed_freshness', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_feed_freshness.py'], env: test_env, timeout: 120)
+  # Relay usage economy (issue #26): REQ token bucket, queue dedup, CLOSED
+  # handling, reconnect backoff, live-sub replay, idle parking.
+  test('test_relay_usage_economy', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_relay_usage_economy.py'], env: test_env, timeout: 120)
   endif
 
 # Real-GTK feed harness (tier 2): exercises ui.feed_view.FeedView against a
