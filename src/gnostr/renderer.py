@@ -39,6 +39,23 @@ _DEBUG_VIDEO = os.environ.get("GNOSTR_VIDEO_LOG") == "1"
 _MAX_VIDEO_WIDTH = 1280
 _MAX_VIDEO_HEIGHT = 720
 
+# VID-1: mobile pre-buffer target. playbin3 forwards buffer-size/buffer-duration
+# to the buffering queue it inserts after the source, so the network stream runs
+# this far ahead of the sink before playback is allowed to starve. 5 s target;
+# playback starts/resumes at _BUFFER_PLAY_PCT of it (~3 s) so a Librem 5 on
+# Wi-Fi rides out jitter instead of stuttering black frames (issue VID-1).
+# Plain ints, not Gst.SECOND math — the test suite's Gst mock has no SECOND.
+_BUFFER_TARGET_NS = 5 * 1000 * 1000 * 1000
+_BUFFER_TARGET_BYTES = 4 * 1024 * 1024
+_BUFFER_PLAY_PCT = 60
+
+# Numeric message bits (same rationale as _qos_bit below: enum names are
+# inconsistently present across Flatpak GStreamer bindings).
+_BUFFERING_MSG_BIT = 1 << 5  # GST_MESSAGE_BUFFERING
+_ASYNC_DONE_MSG_BIT = 1 << 21  # GST_MESSAGE_ASYNC_DONE (preroll complete)
+_NO_MORE_PADS_MSG_BIT = 1 << 10  # GST_MESSAGE_NO_MORE_PADS (demux settled)
+_PLAY_FLAG_DOWNLOAD = 1 << 7  # GST_PLAY_FLAG_DOWNLOAD (progressive download-ahead)
+
 
 def _vlog(msg):
     if _DEBUG_VIDEO:
@@ -884,7 +901,11 @@ class VideoPlayer:
         url, container, spinner, window_ref=None, original_url=None, autoplay=False
     ):
         def on_ready(video):
-            if spinner and spinner.get_parent() == container:
+            # VID-1: a gated player (real video, autoplay tap) keeps the
+            # spinner + percent label visible until the buffer threshold is
+            # reached; the bus handler removes them when PLAYING starts.
+            gated = video is not None and getattr(video, "_buffer_gate", False)
+            if spinner and not gated and spinner.get_parent() == container:
                 container.remove(spinner)
 
             if video:
@@ -901,8 +922,11 @@ class VideoPlayer:
                 container.append(video)
                 VideoPlayer._start_position_timer(container, video)
                 if autoplay and hasattr(video, "_pipeline"):
-                    video._pipeline.set_state(Gst.State.PLAYING)
-                    video._is_playing = True
+                    if gated:
+                        VideoPlayer._attach_buffer_label(container, video, spinner)
+                    else:
+                        video._pipeline.set_state(Gst.State.PLAYING)
+                        video._is_playing = True
 
             else:
                 container.append(Gtk.Image.new_from_icon_name("video-symbolic"))
@@ -945,6 +969,21 @@ class VideoPlayer:
                 raise RuntimeError("Pipeline creation returned None")
 
             _vlog("🎬 [Video] Pipeline created OK")
+
+            # VID-1: prefill a few seconds before playback. playbin3 forwards
+            # buffer-size/buffer-duration to the buffering queue behind the
+            # source; the download flag turns on progressive download-ahead
+            # (downloadbuffer) so the stream runs ahead of the sink instead of
+            # starving it on a jittery Librem 5 Wi-Fi link. Guarded: older
+            # playbin3 builds or the test-suite mock may reject these.
+            try:
+                pipeline.set_property("buffer-duration", _BUFFER_TARGET_NS)
+                pipeline.set_property("buffer-size", _BUFFER_TARGET_BYTES)
+                pipeline.set_property(
+                    "flags", int(pipeline.get_property("flags")) | _PLAY_FLAG_DOWNLOAD
+                )
+            except Exception as _buf_exc:
+                _vlog(f"🎬 [Video] buffer props not applied: {_buf_exc}")
 
             # Use gtk4paintablesink — GStreamer renders frames to a Gdk.Paintable
             # natively in C with proper frame-dropping. No per-frame Python
@@ -1036,6 +1075,30 @@ class VideoPlayer:
                         _vlog(f"🎬 [Media Warning] {media_url}\n  -> {err.message}")
                     except Exception:
                         _vlog(f"🎬 [Media] Bus message: {t}")
+                elif t & _BUFFERING_MSG_BIT:
+                    # VID-1: BUFFERING carries the fill percent toward the
+                    # prefill target. Drive the spinner/percent overlay and the
+                    # threshold-gated play from here (see _on_buffering).
+                    try:
+                        _pct = msg.parse_buffering()[0]  # [1] = time-left, unused
+                    except Exception:
+                        _pct = 100
+                    _v = getattr(p, "_video", None)
+                    if _v is not None:
+                        VideoPlayer._on_buffering(_v, _pct, media_url)
+                elif t & _ASYNC_DONE_MSG_BIT:
+                    # Preroll complete. A gated player with no buffering
+                    # pressure (local file / fast link never emitted BUFFERING
+                    # below threshold) starts now; otherwise _on_buffering owns
+                    # the start once the threshold is hit.
+                    _vlog(f"🎬 [Media] ASYNC_DONE (preroll) {media_url[:40]}")
+                    _v = getattr(p, "_video", None)
+                    if _v is not None and getattr(_v, "_buffer_gate", False):
+                        _p = getattr(_v, "_buffer_pct", -1)
+                        if _p < 0 or _p >= _BUFFER_PLAY_PCT:
+                            VideoPlayer._start_gated_play(_v, media_url)
+                elif t & _NO_MORE_PADS_MSG_BIT:
+                    _vlog(f"🎬 [Media] NO_MORE_PADS {media_url[:40]}")
                 elif t & Gst.MessageType.STATE_CHANGED:
                     old, new, pending = msg.parse_state_changed()
                     if pending == Gst.State.VOID_PENDING:
@@ -1107,6 +1170,14 @@ class VideoPlayer:
             video._original_url = original_url or url
             pipeline._t0 = time.monotonic()  # Task 10 perf: build-start timestamp
             pipeline._caps_reported = False  # inspect once at first preroll
+            # VID-1: threshold-gated autoplay. Real videos (not GIFs) wait for
+            # the buffer to reach _BUFFER_PLAY_PCT before PLAYING so playback
+            # doesn't starve from frame 0; GIFs stay on the old preroll+loop UX.
+            video._buffer_gate = bool(autoplay) and not url.lower().endswith(".gif")
+            video._buffer_pct = -1  # -1 = no BUFFERING message seen yet
+            video._buffer_hits = 0  # BUFFERING messages observed (perf line)
+            video._auto_paused = False  # VID-1: PAUSED by drain, not by user
+            pipeline._video = video  # bus handler drives the gate via this
 
             # Play at full volume; users control loudness at the system level.
             pipeline.set_property("volume", 1.0)
@@ -1232,6 +1303,145 @@ class VideoPlayer:
                 return child
         return None
 
+    # ------------------------------------------------------------------ VID-1
+    # Buffering UX: spinner+percent while the prefill queue fills, play only
+    # once _BUFFER_PLAY_PCT is reached, and pause-and-resume (instead of
+    # stuttering black frames) when a mid-playback stream drains.
+
+    @staticmethod
+    def _on_buffering(video, pct, media_url=""):
+        """Handle a GST BUFFERING message: percent is fill toward the target."""
+        try:
+            pct = int(pct)
+        except Exception:
+            pct = 100
+        video._buffer_pct = pct
+        video._buffer_hits = getattr(video, "_buffer_hits", 0) + 1
+        pipeline = getattr(video, "_pipeline", None)
+        if pipeline is None:
+            return
+        if pct >= _BUFFER_PLAY_PCT:
+            if getattr(video, "_buffer_gate", False):
+                VideoPlayer._start_gated_play(video, media_url)
+            elif getattr(video, "_auto_paused", False):
+                # Drain recovered: resume smoothly where it stalled.
+                video._auto_paused = False
+                video._is_playing = True
+                pipeline.set_state(Gst.State.PLAYING)
+                VideoPlayer._set_buffering_ui(video, False)
+                _vlog(f"🎬[PERF-BUF] resume pct={pct} {media_url[:50]}")
+            else:
+                VideoPlayer._set_buffering_ui(video, False)
+        else:
+            if video._is_playing and not getattr(video, "_buffer_gate", False):
+                # Mid-playback drain: park in PAUSED (sink keeps last frame)
+                # instead of starving → black-frame stutter.
+                video._auto_paused = True
+                video._is_playing = False
+                pipeline.set_state(Gst.State.PAUSED)
+                _vlog(f"🎬[PERF-BUF] drain pause pct={pct} {media_url[:50]}")
+            VideoPlayer._set_buffering_ui(video, True, pct)
+
+    @staticmethod
+    def _start_gated_play(video, media_url=""):
+        """Release the VID-1 gate: start PLAYING and log time-to-first-frame."""
+        pipeline = getattr(video, "_pipeline", None)
+        if pipeline is None:
+            return
+        video._buffer_gate = False
+        video._auto_paused = False
+        video._is_playing = True
+        pipeline.set_state(Gst.State.PLAYING)
+        VideoPlayer._clear_buffering_ui(video)
+        try:
+            _ttf = (time.monotonic() - pipeline._t0) * 1000
+            _vlog(
+                f"🎬[PERF-TTF] {media_url[:55]} ttf={_ttf:.0f}ms "
+                f"buffer_hits={getattr(video, '_buffer_hits', 0)} "
+                f"pct={getattr(video, '_buffer_pct', -1)}"
+            )
+        except Exception:
+            pass
+
+    @staticmethod
+    def _attach_buffer_label(container, video, spinner=None):
+        """Initial buffering: percent label beside the pre-existing spinner."""
+        try:
+            label = Gtk.Label(label="Buffering 0%")
+            label.add_css_class("dim-label")
+            label.set_halign(Gtk.Align.CENTER)
+            label.set_valign(Gtk.Align.CENTER)
+            label.set_vexpand(True)
+            container.append(label)
+            video._buffer_label = label
+            video._buffer_container = container
+            video._buffer_spinner = spinner
+        except Exception:
+            pass
+
+    @staticmethod
+    def _set_buffering_ui(video, active, pct=None):
+        """Show/hide the buffering row over a playing video (drain UX)."""
+        container = getattr(video, "_buffer_container", None) or video.get_parent()
+        if container is None:
+            return
+        if active:
+            # During the initial gate the spinner+percent label already exists
+            # (attached by on_ready) — update it instead of stacking a row.
+            _lbl = getattr(video, "_buffer_label", None)
+            if _lbl is not None and getattr(video, "_buffer_gate", False):
+                try:
+                    if pct is not None:
+                        _lbl.set_text(f"Buffering {pct}%")
+                except Exception:
+                    pass
+                return
+            row = getattr(video, "_buffer_row", None)
+            if row is None:
+                row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                row.set_halign(Gtk.Align.CENTER)
+                sp = Gtk.Spinner()
+                sp.start()
+                label = Gtk.Label(label="Buffering…")
+                label.add_css_class("dim-label")
+                row.append(sp)
+                row.append(label)
+                video._buffer_row = row
+                video._buffer_row_label = label
+                try:
+                    container.insert(0, row)  # above the video frame
+                except Exception:
+                    container.append(row)
+            if pct is not None:
+                try:
+                    video._buffer_row_label.set_text(f"Buffering {pct}%")
+                except Exception:
+                    pass
+        else:
+            VideoPlayer._clear_buffering_ui(video)
+
+    @staticmethod
+    def _clear_buffering_ui(video):
+        """Remove every buffering affordance (initial spinner+label, drain row)."""
+        try:
+            spinner = getattr(video, "_buffer_spinner", None)
+            cont = getattr(video, "_buffer_container", None)
+            if (
+                spinner is not None
+                and cont is not None
+                and spinner.get_parent() == cont
+            ):
+                cont.remove(spinner)
+            label = getattr(video, "_buffer_label", None)
+            if label is not None and cont is not None and label.get_parent() == cont:
+                cont.remove(label)
+            row = getattr(video, "_buffer_row", None)
+            parent = row.get_parent() if row is not None else None
+            if row is not None and parent is not None:
+                parent.remove(row)
+        except Exception:
+            pass
+
     @staticmethod
     def toggle_play(video_container):
         video = VideoPlayer._find_video(video_container)
@@ -1239,6 +1449,11 @@ class VideoPlayer:
             _vlog("🎬 [Video] toggle_play: no live pipeline found")
             return
         pipeline = video._pipeline
+        # VID-1: a deliberate tap during the prefill gate means "play now" —
+        # drop the gate and its spinner instead of waiting for the threshold.
+        if getattr(video, "_buffer_gate", False):
+            video._buffer_gate = False
+            VideoPlayer._clear_buffering_ui(video)
         video._is_playing = not video._is_playing
         _vlog(f"🎬 [Video] toggle_play: {'PLAYING' if video._is_playing else 'PAUSED'}")
         if video._is_playing:
