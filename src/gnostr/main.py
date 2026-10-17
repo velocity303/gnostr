@@ -112,6 +112,11 @@ class MainWindow(Adw.ApplicationWindow):
         self.content_overlay = Gtk.Overlay()
         self.content_overlay.set_child(self.content_nav)
         self.content_overlay.add_overlay(self.fab_post)
+        # The FAB composes a NEW post — it is noise on every other page (DM
+        # thread/inbox, profile, thread detail). Drive visibility from the
+        # nav stack: only the root feed page shows it. notify::visible-page
+        # fires on push AND pop, so back-navigation restores it automatically.
+        self.content_nav.connect("notify::visible-page", self._update_fab_visibility)
 
         # NavigationPage contains the overlay — split_view expects a NavigationPage
         self.feed_page = Adw.NavigationPage(title="Content", child=self.content_overlay)
@@ -328,7 +333,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.main_stack.set_visible_child_name("app")
         self.sidebar.update_status("🟢")
         self.sidebar.set_signer_status(f"bunker {self.pub_key[:8]}…")
-        self.fab_post.set_visible(True)
+        self._update_fab_visibility()
         GLib.idle_add(self.client.connect_all)
         if not session_saved:
             self.add_toast(
@@ -430,6 +435,11 @@ class MainWindow(Adw.ApplicationWindow):
                 "list-add-symbolic",
             )
         )
+
+    def _update_fab_visibility(self, *args):
+        """FAB shows only on the root feed page (see content_nav connect)."""
+        on_feed = self.content_nav.get_visible_page() is self.feed_view
+        self.fab_post.set_visible(bool(on_feed and self.pub_key))
 
     def on_fab_post_clicked(self, button):
         from gnostr.dialogs import ComposeWindow
@@ -723,7 +733,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.client.ensure_dm()
         self.main_stack.set_visible_child_name("app")
         self.sidebar.update_status("🟢")
-        self.fab_post.set_visible(True)
+        self._update_fab_visibility()
         self.update_dm_badge()
         GLib.idle_add(self.client.connect_all)
 
