@@ -171,9 +171,7 @@ def _feedview_method(name):
     cls = next(
         n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "FeedView"
     )
-    fn = next(
-        n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == name
-    )
+    fn = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == name)
     mod = ast.Module(body=[fn], type_ignores=[])
     ns = {
         "GLib": MagicMock(),
@@ -223,6 +221,7 @@ def test_run_viewport_scan_sweeps_scrolled_and_disarms():
     fake_mod.VideoPlayer = FakeVideoPlayer
     sys.modules["gnostr.renderer"] = fake_mod
     try:
+
         class FakeView:
             _viewport_scan_id = 7
             _scrolled = object()
