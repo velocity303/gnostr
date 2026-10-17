@@ -83,6 +83,10 @@ class NostrRelay(GObject.Object):
         self.request_queue = []
         self.queued_sub_ids = set()  # dedup: sub_ids already waiting in queue
         self._recent_reqs = {}  # sub_id -> monotonic ts (windowed REQ dedup)
+        # DM-3 resilient publish: EVENTs aimed at this relay while it was down,
+        # flushed on open (fallback relays get connected mid-retry and need
+        # their send to survive until the socket is live).
+        self.publish_queue = []
         self.is_processing_queue = False
         self.snapshot_ids = set()  # Track subscriptions that should close on EOSE
         # Live (non-snapshot) subscriptions, sub_id -> filters. A reconnect
@@ -181,6 +185,7 @@ class NostrRelay(GObject.Object):
             for sid, filters in self.live_subs.items():
                 self._enqueue(sid, filters)
             self.process_queue()
+            self._flush_publish_queue()
 
         def on_err(ws, e):
             self.is_connected = False
@@ -360,6 +365,18 @@ class NostrRelay(GObject.Object):
             print(f"❌ [{self.url}] publish send failed: {e}")
             return False
 
+    def _flush_publish_queue(self):
+        """Send EVENTs queued while this relay was down (DM-3 fallback path:
+        a fallback relay is connected mid-retry and its send is queued until
+        the socket opens)."""
+        while self.publish_queue and self.is_connected:
+            event = self.publish_queue[0]
+            try:
+                self.ws.send(json.dumps(["EVENT", event]))
+                self.publish_queue.pop(0)
+            except Exception:
+                break
+
     def close(self):
         if self.ws:
             self.ws.close()
@@ -510,8 +527,8 @@ class NostrClient(GObject.Object):
             def _worker():
                 signed = backend.sign_event(event)
                 if signed:
-                    self.publish(signed)
-                    self._track_publish(signed, label)
+                    sent = self.publish(signed)
+                    self._track_publish(signed, label, sent_urls=sent)
                     if after:
                         GLib.idle_add(after, signed)
 
@@ -519,8 +536,8 @@ class NostrClient(GObject.Object):
             return True
         signed = self._sign(event)
         if signed:
-            self.publish(signed)
-            self._track_publish(signed, label)
+            sent = self.publish(signed)
+            self._track_publish(signed, label, sent_urls=sent)
             if after:
                 after(signed)
             return True
@@ -597,15 +614,17 @@ class NostrClient(GObject.Object):
             r.subscribe(sub_id, filters, snapshot=snapshot)
 
     def publish(self, event):
-        sent = 0
-        for r in self.active_relays.values():
+        sent_urls = set()
+        for url, r in self.active_relays.items():
             if r.publish(event):
-                sent += 1
+                sent_urls.add(url)
         # Surface how many relays actually received the EVENT — the like flow
         # must be observable, not silently swallowed.
         self._log_relay(
-            f"EVENT {event['id'][:8]} sent to {sent}/{len(self.active_relays)} relay(s)"
+            f"EVENT {event['id'][:8]} sent to "
+            f"{len(sent_urls)}/{len(self.active_relays)} relay(s)"
         )
+        return sent_urls
 
     def _build_and_publish(self, kind, content, tags, label="Event"):
         """Shared build → sign → publish for any event kind. Returns True on
@@ -616,14 +635,97 @@ class NostrClient(GObject.Object):
         event = gnostr.nostr_utils.build_event(self.my_pubkey, kind, content, tags)
         return self._dispatch_signed(event, label)
 
-    def _track_publish(self, event, label):
-        """Register a just-published event for OK-ack resolution. The entry
-        carries a 30s expiry; handle_ok resolves it, the timeout sweep emits a
-        'not confirmed' result for dead relays."""
+    def _track_publish(self, event, label, sent_urls=None, candidates=None):
+        """Register a just-published event for OK-ack resolution and DM-3
+        resilient retry. The entry carries a 30s expiry; handle_ok resolves
+        it, the timeout sweep retries untried candidates then emits a
+        'not confirmed' result for dead relays. `sent_urls` = relays the
+        EVENT already went out on; `candidates` = relays eligible for retry
+        (defaults to the configured set at retry time)."""
+        tried = set()
+        if sent_urls:
+            try:
+                tried = set(sent_urls)
+            except TypeError:  # fake relays in tests may return True/None
+                tried = set()
         self.pending_publishes[event["id"]] = {
             "label": label,
             "expires": time.time() + 30,
+            "event": event,
+            "tried": tried,
+            "answered": set(),
+            "rejections": [],
+            "candidates": set(candidates) if candidates else None,
         }
+
+    def _retry_publish(self, event_id, pending):
+        """DM-3: send the tracked event on candidate relays not yet tried
+        (connecting fallback relays on demand). True if a retry went out."""
+        event = pending.get("event")
+        if event is None:
+            return False
+        candidates = set(pending.get("candidates") or self.relay_urls)
+        tried = pending.setdefault("tried", set())
+        untried = [u for u in candidates if u not in tried]
+        if not untried:
+            return False
+        sent = [u for u in untried if self._send_to_relay(event, u)]
+        tried.update(sent)
+        if sent:
+            self._log_relay(
+                f"{pending['label']} {event_id[:8]} retry -> " + ", ".join(sent)
+            )
+        return bool(sent)
+
+    def _send_to_relay(self, event, url):
+        """Send an EVENT to one relay; a relay that isn't up yet (fallback
+        still connecting) gets the event queued for its socket-open flush."""
+        relay = self.active_relays.get(url)
+        if relay is None:
+            try:
+                self.add_relay_connection(url)
+            except Exception:
+                return False
+            relay = self.active_relays.get(url)
+            if relay is None:
+                return False
+        if relay.publish(event):
+            return True
+        try:
+            # Bounded: a permanently-down fallback relay must not accumulate
+            # retries forever (oldest queued event is dropped past the cap).
+            if len(relay.publish_queue) >= 20:
+                relay.publish_queue.pop(0)
+            relay.publish_queue.append(event)
+            return True
+        except AttributeError:
+            return False
+
+    def _fail_publish(self, event_id, pending):
+        """Settle a publish as failed: one aggregated publish-result so the
+        UI shows a single clear toast naming the rejecting relay."""
+        self.pending_publishes.pop(event_id, None)
+        rejections = pending.get("rejections") or []
+        if rejections:
+            last_url, last_msg = rejections[-1]
+            detail = last_msg or "rejected"
+            message = (
+                detail
+                if len(rejections) == 1
+                else f"{detail} (all {len(rejections)} relays rejected)"
+            )
+            relay_url = last_url
+        else:
+            message, relay_url = "no relay acknowledged", ""
+        GLib.idle_add(
+            self.emit,
+            "publish-result",
+            event_id,
+            False,
+            message,
+            relay_url,
+            pending["label"],
+        )
 
     def _log_relay(self, line):
         """Append a relay-activity line to the bounded log and emit the
@@ -635,14 +737,42 @@ class NostrClient(GObject.Object):
 
     def _handle_ok(self, event_id, accepted, message, relay_url):
         """NIP-01 OK ack: [\"OK\", event_id, accepted, message]. Resolves the
-        pending publish for this event_id (if tracked) and emits publish-result."""
-        pending = self.pending_publishes.pop(event_id, None)
+        pending publish for this event_id (if tracked) and emits publish-result.
+
+        DM-3 resilient publish: the first OK accepted=true settles the publish
+        (dedupe — later acks from other relays are ignored). An OK accepted=false
+        logs the rejecting relay and retries the event on any candidate relay not
+        yet tried; publish-result fires only once every candidate has answered
+        (or the 30s sweep expires the entry)."""
+        pending = self.pending_publishes.get(event_id)
         if not pending:
             return
         self._log_relay(
             f"{pending['label']} {'OK' if accepted else 'REJECTED'} {relay_url}"
             + (f" ({message})" if message else "")
         )
+        if accepted:
+            # First acceptance wins: settle now, ignore later relay acks.
+            self.pending_publishes.pop(event_id, None)
+        else:
+            pending.setdefault("answered", set()).add(relay_url)
+            pending.setdefault("rejections", []).append((relay_url, message))
+            if self._retry_publish(event_id, pending):
+                return  # retry in flight — settle later
+            answered = pending.get("answered", set())
+            candidates = pending.get("candidates")
+            # Effective candidate set: the DM-targeted list, else the relays
+            # the EVENT actually went out on. All answered with rejection -> fail.
+            effective = (
+                set(candidates)
+                if candidates is not None
+                else pending.get("tried", set())
+            )
+            if effective and not (effective - answered):
+                self._fail_publish(event_id, pending)
+                return
+            # Some candidates never answered: wait for the sweep to retry/fail.
+            return
         GLib.idle_add(
             self.emit,
             "publish-result",
@@ -654,22 +784,31 @@ class NostrClient(GObject.Object):
         )
 
     def sweep_pending_publishes(self):
-        """Emit a not-confirmed result for publishes that never got an OK.
+        """Retry then settle publishes that never got a full OK round.
         Call periodically (e.g. on a timer); idempotent."""
         now = time.time()
         for eid, p in list(self.pending_publishes.items()):
-            if now > p["expires"]:
-                self.pending_publishes.pop(eid, None)
-                self._log_relay(f"{p['label']} NOT CONFIRMED (no relay ack in 30s)")
-                GLib.idle_add(
-                    self.emit,
-                    "publish-result",
-                    eid,
-                    False,
-                    "no relay acknowledged within 30s",
-                    "",
-                    p["label"],
-                )
+            if now <= p["expires"]:
+                continue
+            if self._retry_publish(eid, p):
+                # DM-3: untried candidates existed — give them the full window.
+                p["expires"] = now + 30
+                continue
+            self.pending_publishes.pop(eid, None)
+            rejections = p.get("rejections") or []
+            if rejections:
+                self._fail_publish(eid, p)
+                continue
+            self._log_relay(f"{p['label']} NOT CONFIRMED (no relay ack in 30s)")
+            GLib.idle_add(
+                self.emit,
+                "publish-result",
+                eid,
+                False,
+                "no relay acknowledged within 30s",
+                "",
+                p["label"],
+            )
 
     def publish_post(self, content, reply_to=None):
         """kind-1 text post. `reply_to` = dict(root, parent, root_pk, parent_pk)
@@ -1112,8 +1251,11 @@ class NostrClient(GObject.Object):
                 )
                 GLib.idle_add(self.emit, "dm-unreachable", peer_pubkey, event["id"])
                 return
-            self.publish_to_relays(event, relays)
-            self._track_publish(event, "DM")
+            sent = self.publish_to_relays(event, relays)
+            # DM-3: retry candidates are the peer's 10050 relays — a rejection
+            # on one retries the untried ones (connecting them on demand), and
+            # only a full round of rejections settles the publish as failed.
+            self._track_publish(event, "DM", sent_urls=sent, candidates=relays)
 
         self.resolve_dm_relays(peer_pubkey, _deliver)
 
@@ -1324,13 +1466,13 @@ class NostrClient(GObject.Object):
 
     def publish_to_relays(self, event, urls):
         """Publish an event ONLY to the relays in `urls` (NIP-17 targeting).
-        Returns how many relays accepted the send."""
-        sent = 0
+        Returns the set of relay URLs the EVENT actually went out on."""
+        sent = set()
         for url, r in self.active_relays.items():
             if url in urls and r.publish(event):
-                sent += 1
+                sent.add(url)
         self._log_relay(
-            f"EVENT {event['id'][:8]} sent to {sent}/{len(urls)} DM relay(s)"
+            f"EVENT {event['id'][:8]} sent to {len(sent)}/{len(urls)} DM relay(s)"
         )
         return sent
 
@@ -1357,8 +1499,8 @@ class NostrClient(GObject.Object):
         signed = gnostr.nostr_utils.sign_event(event, self.my_privkey)
         if not signed:
             return False
-        self.publish(signed)
-        self._track_publish(signed, "DM Relays")
+        sent = self.publish(signed)
+        self._track_publish(signed, "DM Relays", sent_urls=sent)
         return True
 
     def _handle_status(self, url, status):

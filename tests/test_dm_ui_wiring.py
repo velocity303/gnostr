@@ -482,7 +482,7 @@ class FakeClient:
     def publish(self, event):
         self.published.append(event)
 
-    def _track_publish(self, event, label):
+    def _track_publish(self, event, label, **kw):
         pass
 
 
