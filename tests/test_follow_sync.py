@@ -169,7 +169,7 @@ def test_push_sync_republishes_db_list_as_kind3(client):
     client_mod.gnostr.nostr_utils.sign_event = sign_stub
 
     # _track_publish registers into pending_publishes with label + expiry
-    def _track(event, label):
+    def _track(event, label, **kw):
         client.pending_publishes[event["id"]] = {
             "label": label,
             "expires": 1e12,
