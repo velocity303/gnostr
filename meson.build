@@ -80,4 +80,9 @@ if xvfb_run.found() and gtk_python.found()
   test('test_dm_recipient_gtk_real', xvfb_run,
     args: ['-a', gtk_python, meson.project_source_root() / 'tests/test_dm_recipient_gtk_real.py'],
     timeout: 120)
+  # Real-GTK DM back-affordance harness (DM-2): exactly one visible back
+  # control per DM navigation state on a real Adw.NavigationView.
+  test('test_dm_thread_back_gtk_real', xvfb_run,
+    args: ['-a', gtk_python, meson.project_source_root() / 'tests/test_dm_thread_back_gtk_real.py'],
+    timeout: 120)
 endif
