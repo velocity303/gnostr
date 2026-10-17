@@ -3,9 +3,10 @@
 docs/specs/nip44-nip17-dms.md, UI + composer contracts from
 @linux-desktop-researcher).
 
-Layout: AdwToolbarView. Top: AdwHeaderBar (peer name + short npub subtitle,
-back button — Phosh gesture-exclusion: back is a header button, not only an
-edge swipe). Content: vexpand GtkScrolledWindow -> GtkListBox of bubble rows
+Layout: AdwToolbarView. Top: AdwHeaderBar (peer name + short npub subtitle;
+back is the automatic Adw.NavigationView back button — exactly one back
+control, and still a header button for the Phosh gesture-exclusion
+contract). Content: vexpand GtkScrolledWindow -> GtkListBox of bubble rows
 (reverse=false, scroll-on-focus=false per contract). Bottom-bar: composer —
 single-line GtkEntry + suggested-action Send button (48x48 min). The
 bottom-bar survives the OSK on Phosh: keyboard-resize clamps the bubble
@@ -54,11 +55,14 @@ class DMThreadView(Gtk.Box):
         toolbar = Adw.ToolbarView()
 
         header = Adw.HeaderBar()
-        # Back as an explicit header button (Phosh top-bar gesture exclusion).
-        btn_back = Gtk.Button(icon_name="go-previous-symbolic")
-        btn_back.set_tooltip_text("Back")
-        btn_back.connect("clicked", lambda b: main_window.content_nav.pop())
-        header.pack_start(btn_back)
+        # Back affordance: exactly ONE. This page is always pushed onto
+        # MainWindow.content_nav (Adw.NavigationView), so the Adw.HeaderBar
+        # shows libadwaita's own back button automatically (and hides it when
+        # there is nothing to pop). A manual go-previous button packed here
+        # used to coexist with that automatic button — two back buttons
+        # stacked in the header (issue DM-2, seen on the Librem 5). The
+        # automatic button is still a header button, so the Phosh top-bar
+        # gesture-exclusion contract holds without a manual one.
         self.title = Adw.WindowTitle(title=name, subtitle=f"{npub[:16]}…")
         header.set_title_widget(self.title)
         toolbar.add_top_bar(header)
