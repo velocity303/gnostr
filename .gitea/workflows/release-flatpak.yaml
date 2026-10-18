@@ -1,117 +1,117 @@
-1|name: Release Flatpak
-2|
-3|# Tag-driven release build: push a tag like v0.2.0 and this workflow produces
-4|# amd64 + arm64 flatpak bundles and attaches them to the Gitea release for
-5|# that tag (download URLs: .../releases/download/<tag>/gnostr-<ver>-<arch>.flatpak).
-6|#
-7|# arm64 strategy: CROSS-BUILD, not emulation of the whole container. The
-8|# runner host has qemu-aarch64 binfmt registered with the F flag (persistent
-9|# into containers), so `flatpak install --arch=aarch64` + `flatpak-builder
-10|# --arch=aarch64` work on this x86_64 runner — verified end-to-end 2026-10-17
-11|# (bundle produced, correct aarch64 ref, app code present). gnostr is pure
-12|# Python + meson install_data, so there is no compiled C to cross-compile;
-13|# QEMU only runs the tiny pip/meson steps.
-14|#
-15|# Secrets required (Settings → Secrets and variables → Actions):
-16|#   TOKEN — Gitea API token with release write scope (same one CI uses)
-17|#   HOST  — Gitea host used by ci.yaml (e.g. 192.168.5.134)
-18|
-19|on:
-20|  push:
-21|    tags:
-22|      - "v*"
-23|
-24|env:
-25|  GITEA_URL: http://${{ secrets.HOST }}:3000
-26|  APP_ID: tech.livingonlinux.gnostr
-27|
-28|jobs:
-29|  build:
-30|    strategy:
-31|      fail-fast: false
-32|      matrix:
-33|        include:
-34|          - arch: x86_64
-35|            label: amd64
-36|          - arch: aarch64
-37|            label: arm64
-38|    runs-on: ubuntu-latest
-39|    container: ubuntu:22.04
-40|    timeout-minutes: 120
-41|    # gitea-runner 2.0.0 defaults run steps to sh (dash) — no pipefail.
-42|    defaults:
-43|      run:
-44|        shell: bash
-45|
-46|    steps:
-47|      - name: Bootstrap toolchain
-48|        run: |
-49|          export DEBIAN_FRONTEND=noninteractive
-50|          apt-get update
-51|          apt-get install -y curl ca-certificates git \
-52|            flatpak flatpak-builder bubblewrap python3
-53|          # actions/checkout@v4 is a node action — the bare ubuntu image has
-54|          # no node (same bootstrap ci.yaml does before its checkout step).
-55|          curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-56|          apt-get install -y nodejs
-57|
-58|      - uses: actions/checkout@v4
-59|        with:
-60|          token: ${{ secrets.TOKEN }}
-61|
-62|      - name: Build flatpak bundle (${{ matrix.label }})
-63|        run: |
-64|          set -euo pipefail
-65|          VERSION="${GITHUB_REF_NAME#v}"
-66|          ARCH="${{ matrix.arch }}"
-67|          flatpak remote-add --if-not-exists flathub \
-68|            https://flathub.org/repo/flathub.flatpakrepo
-69|          flatpak install -y flathub \
-70|            org.gnome.Platform/$ARCH/50 org.gnome.Sdk/$ARCH/50
-71|          flatpak-builder --disable-rofiles-fuse --force-clean \
-72|            --arch=$ARCH --repo=repo build_dir \
-73|            tech.livingonlinux.gnostr.json
-74|          flatpak build-export --arch=$ARCH repo build_dir "$VERSION"
-75|          # NOTE arg order: REPO FILE APP_ID BRANCH (arch goes in --arch only)
-76|          flatpak build-bundle --arch=$ARCH repo \
-77|            gnostr-${VERSION}-${{ matrix.label }}.flatpak \
-78|            $APP_ID master
-79|          sha256sum gnostr-${VERSION}-${{ matrix.label }}.flatpak \
-80|            > gnostr-${VERSION}-${{ matrix.label }}.flatpak.sha256
-81|          ls -lh gnostr-*.flatpak
-82|
-83|      - name: Upload to release
-84|        run: |
-85|          set -euo pipefail
-86|          echo "repo=$GITHUB_REPOSITORY ref=$GITHUB_REF_NAME sha=$GITHUB_SHA url=$GITEA_URL"
-87|          # Create-or-update: whichever arch finishes first creates the
-88|          # release, the other appends its asset. Print status + body so a
-89|          # scope/permission failure is visible in the log.
-90|          RESP=$(curl -s -w "\n%{http_code}" -X POST \
-91|            -H "Authorization: token *** secrets.GITHUB_TOKEN }}" \
-92|            "$GITEA_URL/api/v1/repos/$GITHUB_REPOSITORY/releases" \
-93|            -H "Content-Type: application/json" \
-94|            -d "{\"tag_name\":\"$GITHUB_REF_NAME\",\"name\":\"$GITHUB_REF_NAME\",\"draft\":false,\"prerelease\":false,\"target_commitish\":\"$GITHUB_SHA\"}") || true
-95|          echo "create-release -> $(echo "$RESP" | tail -1)"
-96|          echo "$RESP" | head -1 | head -c 300
-97|          RELEASE_ID=$(curl -s -H "Authorization: token *** secrets.GITHUB_TOKEN }}" \
-98|            "$GITEA_URL/api/v1/repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" \
-99|            | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
-100|          echo "release id: $RELEASE_ID"
-101|          for f in gnostr-*.flatpak gnostr-*.sha256; do
-102|            # replace stale asset from a previous run of the same tag
-103|            EXISTING=$(curl -sf -H "Authorization: token *** secrets.GITHUB_TOKEN }}" \
-104|              "$GITEA_URL/api/v1/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" \
-105|              | python3 -c "import json,sys;[print(a['id'],a['name']) for a in json.load(sys.stdin)]" | awk -v n="$f" '$2==n{print $1}' || true)
-106|            for id in $EXISTING; do
-107|              curl -sf -X DELETE \
-108|                -H "Authorization: token *** secrets.GITHUB_TOKEN }}" \
-109|                "$GITEA_URL/api/v1/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets/$id" \
-110|                > /dev/null || true
-111|            done
-112|            curl -sf -X POST \
-113|              -H "Authorization: token *** secrets.GITHUB_TOKEN }}" \
-114|              -F "attachment=@$f;filename=$f" \
-115|              "$GITEA_URL/api/v1/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" \
-116|              | python3 -c "import json,sys; d=json.load(sys.stdin); print('uploaded:', d['name'], d['browser_download_url'])"
-117|          done
+name: Release Flatpak
+
+# Tag-driven release build: push a tag like v0.2.0 and this workflow produces
+# amd64 + arm64 flatpak bundles and attaches them to the Gitea release for
+# that tag (download URLs: .../releases/download/<tag>/gnostr-<ver>-<arch>.flatpak).
+#
+# arm64 strategy: CROSS-BUILD, not emulation of the whole container. The
+# runner host has qemu-aarch64 binfmt registered with the F flag (persistent
+# into containers), so `flatpak install --arch=aarch64` + `flatpak-builder
+# --arch=aarch64` work on this x86_64 runner — verified end-to-end 2026-10-17
+# (bundle produced, correct aarch64 ref, app code present). gnostr is pure
+# Python + meson install_data, so there is no compiled C to cross-compile;
+# QEMU only runs the tiny pip/meson steps.
+#
+# Secrets required (Settings → Secrets and variables → Actions):
+#   TOKEN — Gitea API token with release write scope (same one CI uses)
+#   HOST  — Gitea host used by ci.yaml (e.g. 192.168.5.134)
+
+on:
+  push:
+    tags:
+      - "v*"
+
+env:
+  GITEA_URL: http://${{ secrets.HOST }}:3000
+  APP_ID: tech.livingonlinux.gnostr
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            label: amd64
+          - arch: aarch64
+            label: arm64
+    runs-on: ubuntu-latest
+    container: ubuntu:22.04
+    timeout-minutes: 120
+    # gitea-runner 2.0.0 defaults run steps to sh (dash) — no pipefail.
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Bootstrap toolchain
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y curl ca-certificates git \
+            flatpak flatpak-builder bubblewrap python3
+          # actions/checkout@v4 is a node action — the bare ubuntu image has
+          # no node (same bootstrap ci.yaml does before its checkout step).
+          curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+          apt-get install -y nodejs
+
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.TOKEN }}
+
+      - name: Build flatpak bundle (${{ matrix.label }})
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          ARCH="${{ matrix.arch }}"
+          flatpak remote-add --if-not-exists flathub \
+            https://flathub.org/repo/flathub.flatpakrepo
+          flatpak install -y flathub \
+            org.gnome.Platform/$ARCH/50 org.gnome.Sdk/$ARCH/50
+          flatpak-builder --disable-rofiles-fuse --force-clean \
+            --arch=$ARCH --repo=repo build_dir \
+            tech.livingonlinux.gnostr.json
+          flatpak build-export --arch=$ARCH repo build_dir "$VERSION"
+          # NOTE arg order: REPO FILE APP_ID BRANCH (arch goes in --arch only)
+          flatpak build-bundle --arch=$ARCH repo \
+            gnostr-${VERSION}-${{ matrix.label }}.flatpak \
+            $APP_ID master
+          sha256sum gnostr-${VERSION}-${{ matrix.label }}.flatpak \
+            > gnostr-${VERSION}-${{ matrix.label }}.flatpak.sha256
+          ls -lh gnostr-*.flatpak
+
+      - name: Upload to release
+        run: |
+          set -euo pipefail
+          echo "repo=$GITHUB_REPOSITORY ref=$GITHUB_REF_NAME sha=$GITHUB_SHA url=$GITEA_URL"
+          # Create-or-update: whichever arch finishes first creates the
+          # release, the other appends its asset. Print status + body so a
+          # scope/permission failure is visible in the log.
+          RESP=$(curl -s -w "\n%{http_code}" -X POST \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "$GITEA_URL/api/v1/repos/$GITHUB_REPOSITORY/releases" \
+            -H "Content-Type: application/json" \
+            -d "{\"tag_name\":\"$GITHUB_REF_NAME\",\"name\":\"$GITHUB_REF_NAME\",\"draft\":false,\"prerelease\":false,\"target_commitish\":\"$GITHUB_SHA\"}") || true
+          echo "create-release -> $(echo "$RESP" | tail -1)"
+          echo "$RESP" | head -1 | head -c 300
+          RELEASE_ID=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "$GITEA_URL/api/v1/repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
+          echo "release id: $RELEASE_ID"
+          for f in gnostr-*.flatpak gnostr-*.sha256; do
+            # replace stale asset from a previous run of the same tag
+            EXISTING=$(curl -sf -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              "$GITEA_URL/api/v1/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" \
+              | python3 -c "import json,sys;[print(a['id'],a['name']) for a in json.load(sys.stdin)]" | awk -v n="$f" '$2==n{print $1}' || true)
+            for id in $EXISTING; do
+              curl -sf -X DELETE \
+                -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+                "$GITEA_URL/api/v1/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets/$id" \
+                > /dev/null || true
+            done
+            curl -sf -X POST \
+              -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              -F "attachment=@$f;filename=$f" \
+              "$GITEA_URL/api/v1/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" \
+              | python3 -c "import json,sys; d=json.load(sys.stdin); print('uploaded:', d['name'], d['browser_download_url'])"
+          done
