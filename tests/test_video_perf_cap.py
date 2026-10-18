@@ -7,7 +7,33 @@ Do NOT importlib.reload(renderer) here: reload rebinds the module's Gst/Gtk
 names to fresh mocks and leaks into later tests in the same pytest process
 (the viewport-pause tests broke when run after a reload)."""
 
-from gnostr.renderer import _parse_cap
+from gnostr.renderer import _parse_cap, _parse_fps
+
+
+def test_default_fps_cap_is_30(monkeypatch):
+    monkeypatch.delenv("GNOSTR_VIDEO_FPS", raising=False)
+    assert _parse_fps() == 30
+
+
+def test_fps_env_override(monkeypatch):
+    monkeypatch.setenv("GNOSTR_VIDEO_FPS", "24")
+    assert _parse_fps() == 24
+
+
+def test_fps_zero_disables(monkeypatch):
+    monkeypatch.setenv("GNOSTR_VIDEO_FPS", "0")
+    assert _parse_fps() == 0
+
+
+def test_fps_garbage_falls_back(monkeypatch):
+    for junk in ("", "abc"):
+        monkeypatch.setenv("GNOSTR_VIDEO_FPS", junk)
+        assert _parse_fps() == 30, junk
+
+
+def test_fps_negative_clamps_to_disabled(monkeypatch):
+    monkeypatch.setenv("GNOSTR_VIDEO_FPS", "-4")
+    assert _parse_fps() == 0
 
 
 def test_default_cap_matches_physical_feed_width(monkeypatch):

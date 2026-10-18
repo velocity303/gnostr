@@ -59,6 +59,22 @@ def _parse_cap():
 
 _MAX_VIDEO_WIDTH, _MAX_VIDEO_HEIGHT = _parse_cap()
 
+# Perf pass 2 (Librem 5 rig, measured on-device): decode is free — the i.MX8M
+# VPU (v4l2slh264dec) does a 10s 720p clip in 0.29s user. The stutter is the
+# CPU videoconvert NV12->RGBA that gtk4paintablesink forces: ~14s user per 10s
+# of 720p24 (~1.4 A53 cores), which cannot sustain 60fps sources at all.
+# Dropping to 30fps BEFORE the convert halves that cost for high-fps sources
+# and is a no-op for <=30fps content. drop-only=true means videorate never
+# duplicates frames, only discards. Override with GNOSTR_VIDEO_FPS (0 disables).
+def _parse_fps():
+    try:
+        return max(0, int(os.environ.get("GNOSTR_VIDEO_FPS", "30")))
+    except Exception:
+        return 30
+
+
+_MAX_VIDEO_FPS = _parse_fps()
+
 # VID-1: mobile pre-buffer target. playbin3 forwards buffer-size/buffer-duration
 # to the buffering queue it inserts after the source, so the network stream runs
 # this far ahead of the sink before playback is allowed to starve. 5 s target;
@@ -1057,26 +1073,41 @@ class VideoPlayer:
             if _MAX_VIDEO_WIDTH and _MAX_VIDEO_HEIGHT:
                 try:
                     capfilter = Gst.ElementFactory.make("capsfilter", "mobile_res_cap")
+                    fps_clause = (
+                        f",framerate=(fraction)[0/1,{_MAX_VIDEO_FPS}/1]"
+                        if _MAX_VIDEO_FPS else ""
+                    )
                     capfilter.set_property(
                         "caps",
                         Gst.Caps.from_string(
                             f"video/x-raw,width=(int)[1,{_MAX_VIDEO_WIDTH}],"
-                            f"height=(int)[1,{_MAX_VIDEO_HEIGHT}]"
+                            f"height=(int)[1,{_MAX_VIDEO_HEIGHT}]{fps_clause}"
                         ),
                     )
                     conv = Gst.ElementFactory.make("videoconvert", "res_fmt_conv")
                     sink_bin = Gst.Bin.new()
-                    sink_bin.add(capfilter)
-                    sink_bin.add(conv)
-                    sink_bin.add(sink)
-                    capfilter.link(conv)
-                    conv.link(sink)
-                    ghost = Gst.GhostPad.new("sink", capfilter.get_static_pad("sink"))
+                    chain = [capfilter, conv, sink]
+                    # videorate FIRST: drop surplus frames before the CPU
+                    # videoconvert (the measured bottleneck). drop-only so
+                    # sub-cap sources are never frame-duplicated.
+                    if _MAX_VIDEO_FPS:
+                        vr = Gst.ElementFactory.make("videorate", "fps_cap")
+                        vr.set_property("max-rate", _MAX_VIDEO_FPS)
+                        vr.set_property("drop-only", True)
+                        vr.set_property("skip-to-first", True)
+                        chain.insert(0, vr)
+                    for el in chain:
+                        sink_bin.add(el)
+                    for a, b in zip(chain, chain[1:]):
+                        a.link(b)
+                    ghost = Gst.GhostPad.new(
+                        "sink", chain[0].get_static_pad("sink"))
                     sink_bin.add_pad(ghost)
                     video_sink = sink_bin
                     _vlog(
                         f"🎬 [Video] video-sink capped "
-                        f"≤{_MAX_VIDEO_WIDTH}x{_MAX_VIDEO_HEIGHT} +fmtconv"
+                        f"≤{_MAX_VIDEO_WIDTH}x{_MAX_VIDEO_HEIGHT}"
+                        f"{f' @{_MAX_VIDEO_FPS}fps' if _MAX_VIDEO_FPS else ''} +fmtconv"
                     )
                 except Exception:
                     video_sink = sink  # keep video working
