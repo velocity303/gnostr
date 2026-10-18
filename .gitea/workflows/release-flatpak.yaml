@@ -38,6 +38,10 @@ jobs:
     runs-on: ubuntu-latest
     container: ubuntu:22.04
     timeout-minutes: 120
+    # gitea-runner 2.0.0 defaults run steps to sh (dash) — no pipefail.
+    defaults:
+      run:
+        shell: bash
 
     steps:
       - name: Bootstrap toolchain
