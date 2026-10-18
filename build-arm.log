@@ -1,0 +1,31 @@
+fatal: not a git repository: /home/james/gnostr/.git/worktrees/gnostr-merge
+fatal: not a git repository: /home/james/gnostr/.git/worktrees/gnostr-merge
+Downloading sources
+Downloading https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0100  7484  100  7484    0     0  16538      0 --:--:-- --:--:-- --:--:-- 16893
+Downloading https://files.pythonhosted.org/packages/54/20/4d324d65cc6d9205fabedc306948156824eb9f0ee1633355a8f7ec5c66bf/pluggy-1.6.0-py3-none-any.whl
+100 20538  100 20538    0     0   390k      0 --:--:-- --:--:-- --:--:--  390k
+Downloading https://files.pythonhosted.org/packages/24/25/1de2678b631f5a49215c6c96fff41ba892b0a34df68d6d80292b1b48aa7f/pytest-9.1.1-py3-none-any.whl
+100  377k  100  377k    0     0  3678k      0 --:--:-- --:--:-- --:--:-- 3678k
+Downloading https://files.pythonhosted.org/packages/c0/1f/924e3caae75f471eae4b26bd13b698f6af2c44279f67af317439c2f4c46a/ecdsa-0.19.1.tar.gz
+100  197k  100  197k    0     0  3267k      0 --:--:-- --:--:-- --:--:-- 3267k
+Downloading https://files.pythonhosted.org/packages/94/e7/b2c673351809dca68a0e064b6af791aa332cf192da575fd474ed7d6f16a2/six-1.17.0.tar.gz
+  0 34031    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0100 34031  100 34031    0     0  1246k      0 --:--:-- --:--:-- --:--:-- 16.2M
+Downloading https://files.pythonhosted.org/packages/2c/41/aa4bf9664e4cda14c3b39865b12251e8e7d239f4cd0e3cc1b6c2ccde25c1/websocket_client-1.9.0.tar.gz
+100 70576  100 70576    0     0  2440k      0 --:--:-- --:--:-- --:--:-- 2440k
+Downloading https://files.pythonhosted.org/packages/f9/8a/cd4c9b02c10c563adfe78118310129641900e1cd6de888cfae2452072696/yt_dlp-2026.7.4-py3-none-any.whl
+100 3110k  100 3110k    0     0  6563k      0 --:--:-- --:--:-- --:--:-- 6563k
+Downloading https://files.pythonhosted.org/packages/d6/02/12c73fd423eb9577b97fc1924966b929eff7074ae6b2e15dd3d30cb9e4ae/segno-1.6.6-py3-none-any.whl
+100 76503  100 76503    0     0  2301k      0 --:--:-- --:--:-- --:--:-- 2301k
+Initializing build dir
+Committing stage init to cache
+Starting build of tech.livingonlinux.gnostr
+========================================================================
+Building module iniconfig in /src/.flatpak-builder/build/iniconfig-1
+========================================================================
+Running: pip3 install --verbose --prefix=/app --no-deps --no-build-isolation iniconfig-2.3.0-py3-none-any.whl
+bwrap: Creating new namespace failed: Invalid argument
+Error: module iniconfig: Child process exited with code 1
+EXIT=1

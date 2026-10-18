@@ -46,6 +46,10 @@ jobs:
           apt-get update
           apt-get install -y curl ca-certificates git \
             flatpak flatpak-builder bubblewrap python3
+          # actions/checkout@v4 is a node action — the bare ubuntu image has
+          # no node (same bootstrap ci.yaml does before its checkout step).
+          curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+          apt-get install -y nodejs
 
       - uses: actions/checkout@v4
         with:
