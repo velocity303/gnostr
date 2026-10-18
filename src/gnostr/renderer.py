@@ -882,6 +882,27 @@ class ImageLoader:
         return False
 
 
+def _pause_for_viewport(video):
+    """VID-2: pause a playing player and remember it was user-playing, so the
+    viewport scan can resume it when it scrolls back into view. No-op when the
+    widget is already paused (a user pause must not be resumed later)."""
+    pipeline = getattr(video, "_pipeline", None)
+    if pipeline is not None and getattr(video, "_is_playing", False):
+        pipeline.set_state(Gst.State.PAUSED)
+        video._is_playing = False
+        video._offscreen_paused = True
+
+
+def _resume_if_viewport_paused(video):
+    """VID-2 counterpart: resume ONLY players we paused for visibility — never
+    one the user paused deliberately."""
+    pipeline = getattr(video, "_pipeline", None)
+    if pipeline is not None and getattr(video, "_offscreen_paused", False):
+        pipeline.set_state(Gst.State.PLAYING)
+        video._is_playing = True
+        video._offscreen_paused = False
+
+
 class VideoLoader:
     @staticmethod
     def load_and_play(url, container, spinner, window_ref=None, autoplay=False):
@@ -1227,6 +1248,53 @@ class VideoPlayer:
                         pass
 
         callback(video)
+
+    @staticmethod
+    def scan_viewport(scrolled):
+        """VID-2: viewport-aware pause/resume sweep.
+
+        For each live player, test whether its widget intersects the
+        scrolledwindow's visible rect (translate_coordinates + widget height);
+        pause playing players that left the view (remembering they were
+        user-playing) and resume only the ones this sweep paused when they come
+        back. An unmapped/offscreen widget returns None from
+        translate_coordinates and counts as not visible.
+        """
+        if scrolled is None:
+            return
+        try:
+            vp_h = scrolled.get_height()
+        except Exception:
+            return
+        with VideoPlayer._lock:
+            players = list(VideoPlayer._cache.values())
+        for video in players:
+            if getattr(video, "_pipeline", None) is None:
+                continue  # dead widget (evicted pipeline)
+            try:
+                pos = video.translate_coordinates(scrolled, 0, 0)
+                if pos is None:
+                    visible = False
+                else:
+                    y = pos[1]
+                    h = video.get_height()
+                    visible = (y < vp_h) and (y + h > 0)
+            except Exception:
+                continue  # widget state in flux — skip this sweep
+            if visible:
+                _resume_if_viewport_paused(video)
+            else:
+                _pause_for_viewport(video)
+
+    @staticmethod
+    def pause_all_playing():
+        """VID-2: pause every playing player (feed page unmapped — navigating
+        to another page/tab). Remembers user-playing state so the next
+        viewport scan resumes them when the page maps back."""
+        with VideoPlayer._lock:
+            players = list(VideoPlayer._cache.values())
+        for video in players:
+            _pause_for_viewport(video)
 
     @staticmethod
     def _inspect_pipeline(pipeline, url):

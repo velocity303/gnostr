@@ -36,6 +36,10 @@ NEAR_TOP_PX = 120
 # feed (one scroll gesture). Bounds the work a single gesture can trigger;
 # the counter resets on the next genuine value-changing scroll.
 _BOTTOM_AUTO_CAP = 8
+# VID-2: viewport-pause settle delay (ms). The scan runs this long after the
+# last scroll tick, so a fast flick past a video never pauses it — consistent
+# with ScrollGate semantics (grace starts at motion stop, not finger-up).
+SCROLL_SETTLE_MS = 200
 
 
 class FeedView(Adw.NavigationPage):
@@ -118,6 +122,46 @@ class FeedView(Adw.NavigationPage):
             "value-changed",
             lambda adj: self._mark_scroll_stamp(adj),
         )
+        # VID-2: viewport-aware video pause/resume. Debounced timer restarted
+        # on every scroll tick, so the sweep only runs SCROLL_SETTLE_MS after
+        # motion stops — a fast flick past a video never pauses it. Unmapping
+        # (page switch/tab hide) pauses immediately; the next mapped scan
+        # resumes whatever this paused.
+        self._viewport_scan_id = None
+        self.connect("unmap", self._on_unmap_pause_videos)
+
+    # ------------------------------------------------------------------
+    # VID-2: viewport-aware video pause/resume
+    # ------------------------------------------------------------------
+
+    def _on_unmap_pause_videos(self, *_args):
+        """Page left the screen: pause everything still playing now, no
+        debounce (there will be no further scroll tick to settle on)."""
+        try:
+            from ..renderer import VideoPlayer
+
+            VideoPlayer.pause_all_playing()
+        except Exception:
+            pass  # video stack unavailable — nothing playing to pause
+
+    def _schedule_viewport_scan(self):
+        """Restart the settle timer: fires SCROLL_SETTLE_MS after the LAST
+        scroll tick of a gesture (same restart-on-tick pattern as a debounce)."""
+        if self._viewport_scan_id is not None:
+            GLib.source_remove(self._viewport_scan_id)
+        self._viewport_scan_id = GLib.timeout_add(
+            SCROLL_SETTLE_MS, self._run_viewport_scan
+        )
+
+    def _run_viewport_scan(self):
+        self._viewport_scan_id = None
+        try:
+            from ..renderer import VideoPlayer
+
+            VideoPlayer.scan_viewport(self._scrolled)
+        except Exception:
+            pass  # video stack unavailable — nothing to sweep
+        return False  # one-shot; the next scroll tick re-arms it
 
     def _mark_scroll_stamp(self, adjustment):
         """Stamp the scroll gate on a genuine value-changing scroll.
@@ -128,6 +172,7 @@ class FeedView(Adw.NavigationPage):
         """
         if self._syncing:
             return
+        self._schedule_viewport_scan()
         # Record whether this scroll was a touch drag or a wheel/pointer scroll
         # so pointer activation can bypass the cooldown (desktop edge case).
         is_touch = self._last_scroll_was_touch()
