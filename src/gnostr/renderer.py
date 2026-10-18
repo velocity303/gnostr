@@ -36,8 +36,28 @@ _DEBUG_VIDEO = os.environ.get("GNOSTR_VIDEO_LOG") == "1"
 # Cap the frame size delivered to the sink so decodebin3 scales to fit this box
 # first — cuts per-frame copy / GPU-upload cost on low-power mobile. decodebin3
 # auto-inserts videoscale to satisfy the sink caps; 0 disables the cap.
-_MAX_VIDEO_WIDTH = 1280
-_MAX_VIDEO_HEIGHT = 720
+#
+# Perf pass 2 (Librem 5 rig): decode is already HW (decodebin3 picks
+# v4l2slh264dec on the i.MX8M VPU inside the sandbox — verified via
+# GST_DEBUG=decodebin3:5). The residual stutter is POST-decode: videoconvert
+# NV12->RGBA + paintable upload run on the A53 cores at whatever size the cap
+# allows. The feed widget is 360 logical px wide = 720 physical on the Librem 5
+# (GDK scale 2), so a 1280x720 delivery converts/uploads ~3x more pixels than
+# ever reach the screen. 720x406 (16:9 at physical width) cuts that ~3x while
+# staying pixel-exact at native scale. Override for A/B on-device without a
+# rebuild: GNOSTR_VIDEO_CAP=1280x720 (or 0x0 to disable the cap entirely).
+def _parse_cap():
+    """Parse GNOSTR_VIDEO_CAP=WxH at call time (no import-time env capture, so
+    tests can monkeypatch without reloading the module). Invalid values fall
+    back to the default; negatives clamp to 0 (cap disabled)."""
+    try:
+        w, h = os.environ.get("GNOSTR_VIDEO_CAP", "").lower().split("x", 1)
+        return max(0, int(w)), max(0, int(h))
+    except Exception:
+        return 720, 406
+
+
+_MAX_VIDEO_WIDTH, _MAX_VIDEO_HEIGHT = _parse_cap()
 
 # VID-1: mobile pre-buffer target. playbin3 forwards buffer-size/buffer-duration
 # to the buffering queue it inserts after the source, so the network stream runs
