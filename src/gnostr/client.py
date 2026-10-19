@@ -428,6 +428,11 @@ class NostrClient(GObject.Object):
         # send still allowed) or "hard-stop" (send refused). UI wiring is a
         # separate card; the UI surfaces this as a toast.
         "dm-initiation-throttled": (GObject.SignalFlags.RUN_FIRST, None, (str, str)),
+        # backfill-done: (sub_id:str) — infinite-scroll phase 2: every relay
+        # that was connected when request_backfill() fired has answered EOSE
+        # (or the sweep timed the batch out). Events rode in via event-received
+        # and are already in the DB; the feed view re-queries its page.
+        "backfill-done": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
     }
 
     def __init__(self, db):
@@ -455,6 +460,9 @@ class NostrClient(GObject.Object):
         self._dm_status_batches = {}
         self._dm_status_by_sub = {}
         self._dm_status_seq = 0
+        # Infinite-scroll phase 2: one in-flight history backfill at a time
+        # (sub_id -> {"seen": set, "relay_count": int, "sent": float}).
+        self._backfill_pending = {}
         self._dm_poll_source = None  # GLib source id for the DM freshness poll
         # P5 throttle: timestamps (time.time()) of new-conversation
         # initiations in the rolling hour. In-memory only by design — a
@@ -619,6 +627,50 @@ class NostrClient(GObject.Object):
     def request_once(self, sub_id, filters):
         for r in self.active_relays.values():
             r.request_once(sub_id, filters)
+
+    # --- infinite-scroll phase 2: history backfill ---
+    BACKFILL_MIN_INTERVAL = 2.0  # s between backfill REQs (relay courtesy)
+    BACKFILL_TIMEOUT = 10.0  # s before a stalled batch settles anyway
+
+    def request_backfill(self, sub_id, filters):
+        """One-shot REQ for feed HISTORY older than the window tail.
+
+        Courtesy rules (infinite-scroll phase 2): at most ONE backfill in
+        flight per sub_id, and never two within BACKFILL_MIN_INTERVAL —
+        a user flicking the scroll to the bottom must not turn into a REQ
+        storm (issue #26 ban spiral). Returns False when throttled or
+        nothing was sent; True when at least one relay got the REQ.
+        'backfill-done' fires once every connected relay EOSEs (or the
+        sweep times the batch out).
+        """
+        if sub_id in self._backfill_pending:
+            return False
+        now = time.time()
+        for entry in self._backfill_pending.values():
+            if now - entry["sent"] < self.BACKFILL_MIN_INTERVAL:
+                return False
+        # Drop stale batches (relays that died mid-flight never EOSE).
+        for stale in [
+            s
+            for s, e in self._backfill_pending.items()
+            if now - e["sent"] > self.BACKFILL_TIMEOUT
+        ]:
+            self._settle_backfill(stale)
+        relay_count = len(self.active_relays)
+        if relay_count == 0:
+            return False
+        self._backfill_pending[sub_id] = {
+            "seen": set(),
+            "relay_count": relay_count,
+            "sent": now,
+        }
+        self.request_once(sub_id, filters)
+        return True
+
+    def _settle_backfill(self, sub_id):
+        """Resolve one backfill batch exactly once (EOSE fan-in or timeout)."""
+        if self._backfill_pending.pop(sub_id, None) is not None:
+            GLib.idle_add(self.emit, "backfill-done", sub_id)
 
     def subscribe(self, sub_id, filters, snapshot=False):
         for r in self.active_relays.values():
@@ -1443,6 +1495,13 @@ class NostrClient(GObject.Object):
         """EOSE fan-in for P4 batch probes: a chunk settles once every relay
         that was connected at REQ time has answered. Other sub_ids are not
         tracked here and are ignored."""
+        bf = getattr(self, "_backfill_pending", {}).get(sub_id)
+        if bf is not None:
+            # Infinite-scroll phase 2: same fan-in shape as the P4 probes —
+            # settle once every relay that got the REQ has answered EOSE.
+            bf["seen"].add(relay_url)
+            if len(bf["seen"]) >= bf["relay_count"]:
+                self._settle_backfill(sub_id)
         token = self._dm_status_by_sub.get(sub_id)
         if token is None:
             return

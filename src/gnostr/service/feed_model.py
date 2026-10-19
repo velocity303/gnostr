@@ -143,6 +143,20 @@ class FeedModel:
     # Live events
     # ------------------------------------------------------------------
 
+    def is_live(self, row):
+        """True when a fresh relay event belongs at the NEW end (pill).
+
+        Events older than the window tail are backfill HISTORY, not
+        'new posts' — the two-tier backfill (phase 2) pages them in from
+        the DB instead of bumping the viewport with a pill.
+        """
+        if self.cursor is None or not self.event_ids:
+            return True
+        tail = self._rows.get(self.cursor[1])
+        if tail is None:
+            return True
+        return self._is_newer(row, tail)
+
     def prepend_new(self, events):
         """Buffer newly arrived events (list of event dicts).
 

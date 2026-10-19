@@ -35,6 +35,26 @@ class FeedSource:
         return self._accepts(row)
 
 
+def backfill_filter(kind, owner_pubkey, cursor, page_size, db):
+    """NIP-01 REQ filter asking relays for history older than the window
+    tail (``until`` = tail created_at), or None when there is nothing to
+    ask for (no cursor, or a following feed with no contacts). Mirrors
+    each feed kind's live-subscription shape so relays see one consistent
+    query pattern per feed.
+    """
+    if cursor is None:
+        return None
+    base = {"kinds": [1], "until": cursor[0], "limit": page_size}
+    if kind == "global":
+        return base
+    if kind == "me":
+        return dict(base, authors=[owner_pubkey]) if owner_pubkey else None
+    contacts = db.get_following_list(owner_pubkey)[:300] if db is not None else []
+    if not contacts:
+        return None
+    return dict(base, authors=contacts)
+
+
 def make_source(kind, db, owner_pubkey):
     """Build the FeedSource for a feed kind.
 

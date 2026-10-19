@@ -4,7 +4,7 @@
 GTK widget components — all reusable UI elements for displaying Nostr data. Each widget is a self-contained GTK composite that receives data and renders it.
 
 ## Ownership
-- `feed_view.py` — FeedView: model-driven scrollable feed for ALL feed kinds (following/global/me — one FeedModel state machine over a pluggable FeedSource, infinite-scroll phase 1). Owns the scroll-trigger plumbing (near-top re-pull, near-bottom load-older, "N new posts" pill, end-of-DB sentinel, anchor capture/restore, auto-continuation while pinned at a boundary) over `service.feed_model.FeedModel`; `posts_box` mirrors the model window; also owns the touch-activation cooldown via `ScrollGate`
+- `feed_view.py` — FeedView: model-driven scrollable feed for ALL feed kinds (following/global/me — one FeedModel state machine over a pluggable FeedSource, infinite-scroll phase 1). Owns the scroll-trigger plumbing (near-top re-pull, near-bottom load-older, "N new posts" pill, end-of-DB sentinel, anchor capture/restore, auto-continuation while pinned at a boundary) over `service.feed_model.FeedModel`; `posts_box` mirrors the model window; also owns the touch-activation cooldown via `ScrollGate`. Phase 2: at end-of-DB the sentinel doubles as "Loading more…" while a relay backfill REQ is in flight (`_begin_backfill` → `client.request_backfill`; `on_backfill_done` on the `backfill-done` signal retries the page load when still pinned at the bottom)
 - `post_widget.py` — PostWidget: individual event card with interactive like/repost/reply buttons (icon + count)
 - `profile_view.py` — ProfileView: user profile display with avatar, name, bio, banner, website, nip05, lightning, external identities, badges, counts
 - `thread_view.py` — ThreadView: event thread with reply tree

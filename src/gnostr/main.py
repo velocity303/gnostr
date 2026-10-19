@@ -47,6 +47,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.client.connect("publish-result", self.on_publish_result)
         self.client.connect("relay-log-updated", self.on_relay_log_updated)
         self.client.connect("dm-unreachable", self.on_dm_unreachable)
+        self.client.connect("backfill-done", self.feed_view.on_backfill_done)
         # Poll-delivered DMs must move the sidebar badge even while the user
         # sits on the feed (inbox/thread views only refresh while visible).
         self.client.connect(
@@ -532,6 +533,13 @@ class MainWindow(Adw.ApplicationWindow):
                 # A model without a source (legacy/test fake) accepts all.
                 src = getattr(self.feed_view.feed_model, "source", None)
                 if row is not None and (src is None or src.accepts(row)):
+                    # Backfill history (older than the window tail) is NOT
+                    # a "new post" — the two-tier backfill pages it in from
+                    # the DB; a pill here would bump the viewport mid-scroll.
+                    # A model without is_live (test fake) is treated live.
+                    is_live = getattr(self.feed_view.feed_model, "is_live", None)
+                    if is_live is not None and not is_live(row):
+                        return
                     inserted = self.feed_view.feed_model.prepend_new([row])
                     if inserted:
                         # Startup freshness hold (spec Phase B2b): gap-fill
