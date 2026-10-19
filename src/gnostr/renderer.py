@@ -77,13 +77,12 @@ _MAX_VIDEO_FPS = _parse_fps()
 
 
 # Perf pass 3 (Librem 5 rig, measured on-device): two more wins on top of the
-# fps/res caps. (1) videoscale BEFORE videoconvert: the converter is the
-# bottleneck and its cost is per-pixel, so downscaling in the decoder's native
-# NV12 first shrinks the payload it converts (1080p source: 2.07M px -> 0.29M
-# px/frame). (2) videoconvert n-threads: the stock single-thread converter
+# fps/res caps. (1) videoconvert n-threads: the stock single-thread converter
 # tops out ~14 fps at 720p NV12->RGBA on one A53; the runtime's 1.28 build
 # parallelizes by image slice and n-threads=4 measured ~2x (28 fps). Clamp
 # 1..8; 0 means "let GStreamer decide" (auto). Override GNOSTR_VIDEO_THREADS.
+# (2) Scale AFTER convert, never before: NV12 videoscale measured 38 s per 10 s
+# clip (pathological) vs 10.4 s convert-then-scale — see the sink-bin builder.
 def _parse_threads():
     try:
         return min(8, max(0, int(os.environ.get("GNOSTR_VIDEO_THREADS", "4"))))
@@ -1075,18 +1074,22 @@ class VideoPlayer:
             # 0 EOS, 0 codec errors in the capture) — do not disable clock sync
             # to chase it; measure the real stall source first.
 
-            # Task 10: cap delivered frame size. Wrap the sink in a capsfilter bin so
-            # decodebin3 scales to at most _MAX_VIDEO_WIDTH x _MAX_VIDEO_HEIGHT before
-            # delivery (decode still runs at stream res, but the per-frame copy / GPU
-            # upload cost drops). Fall back to a direct sink if the bin can't build so
-            # video always works.
+            # Task 10: cap delivered frame size. Wrap the sink in a bin that
+            # converts the decoder's output to RGBA and scales it down to at
+            # most _MAX_VIDEO_WIDTH x _MAX_VIDEO_HEIGHT before delivery, so the
+            # per-frame paint/upload cost drops. Fall back to a direct sink if
+            # the bin can't build so video always works.
             #
-            # The capsfilter caps carry only a width/height range (no `format`), which
-            # otherwise makes playbin3's autoplug skip inserting videoconvert — the
-            # decoder's raw format (e.g. NV12) then hits gtk4paintablesink (RGBA-only)
-            # and errors with "unsupported pixel format". A videoconvert inside the bin
-            # guarantees format adaptation to the sink's format, so it's deterministic
-            # regardless of autoplug's negotiation.
+            # Order is measured, not guessed (pass 3, Librem 5): the bin is
+            # videorate -> videoconvert(n-threads) -> videoscale -> capsfilter.
+            # A capsfilter with a w/h range BEFORE the converter makes
+            # decodebin3 autoplug an NV12 videoscale upstream — that path is
+            # pathological on this runtime (38 s per 10 s clip vs 10.4 s for
+            # convert-then-scale). videoconvert cannot scale, so the explicit
+            # videoscale + exact caps live after it, inside the bin, where
+            # autoplug cannot reach. The caps carry no `format` below the
+            # converter's RGBA output for the same reason: format adaptation
+            # must stay deterministic regardless of autoplug's choices.
             video_sink = sink
             if _MAX_VIDEO_WIDTH and _MAX_VIDEO_HEIGHT:
                 try:
@@ -1098,7 +1101,8 @@ class VideoPlayer:
                     capfilter.set_property(
                         "caps",
                         Gst.Caps.from_string(
-                            f"video/x-raw,width=(int)[1,{_MAX_VIDEO_WIDTH}],"
+                            f"video/x-raw,format=RGBA,"
+                            f"width=(int)[1,{_MAX_VIDEO_WIDTH}],"
                             f"height=(int)[1,{_MAX_VIDEO_HEIGHT}]{fps_clause}"
                         ),
                     )
@@ -1112,11 +1116,13 @@ class VideoPlayer:
                         except Exception:
                             pass  # older GStreamer without the property
                     sink_bin = Gst.Bin.new()
-                    # videoscale BEFORE videoconvert (pass 3): the converter's
-                    # cost is per-pixel, so downscale in the decoder's native
-                    # format first and convert only the capped payload.
+                    # videoscale AFTER videoconvert (pass 3, measured): NV12
+                    # videoscale is pathological on this runtime (38 s per 10 s
+                    # clip vs 10.4 s for convert-then-scale), so convert the
+                    # decoder's NV12 to RGBA first (n-threads) and scale the
+                    # RGBA frames down to the cap.
                     scale = Gst.ElementFactory.make("videoscale", "mobile_scale")
-                    chain = [scale, capfilter, conv, sink]
+                    chain = [conv, scale, capfilter, sink]
                     # videorate FIRST: drop surplus frames before the CPU
                     # videoconvert (the measured bottleneck). drop-only so
                     # sub-cap sources are never frame-duplicated.
@@ -1138,8 +1144,9 @@ class VideoPlayer:
                         f"🎬 [Video] video-sink capped "
                         f"≤{_MAX_VIDEO_WIDTH}x{_MAX_VIDEO_HEIGHT}"
                         f"{f' @{_MAX_VIDEO_FPS}fps' if _MAX_VIDEO_FPS else ''}"
-                        f" +scale-first +fmtconv"
+                        f" +fmtconv"
                         f"{f' x{_MAX_CONVERT_THREADS}' if _MAX_CONVERT_THREADS else ''}"
+                        f" +scale-after"
                     )
                 except Exception:
                     video_sink = sink  # keep video working
