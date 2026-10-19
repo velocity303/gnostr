@@ -7,7 +7,7 @@ Do NOT importlib.reload(renderer) here: reload rebinds the module's Gst/Gtk
 names to fresh mocks and leaks into later tests in the same pytest process
 (the viewport-pause tests broke when run after a reload)."""
 
-from gnostr.renderer import _parse_cap, _parse_fps
+from gnostr.renderer import _parse_cap, _parse_fps, _parse_threads
 
 
 def test_default_fps_cap_is_30(monkeypatch):
@@ -69,3 +69,39 @@ def test_module_defaults_match_parse_cap_default(monkeypatch):
 
     monkeypatch.delenv("GNOSTR_VIDEO_CAP", raising=False)
     assert (r._MAX_VIDEO_WIDTH, r._MAX_VIDEO_HEIGHT) == _parse_cap()
+
+
+# --- perf pass 3: videoconvert n-threads (GNOSTR_VIDEO_THREADS) ---
+
+
+def test_default_threads_is_4(monkeypatch):
+    monkeypatch.delenv("GNOSTR_VIDEO_THREADS", raising=False)
+    assert _parse_threads() == 4
+
+
+def test_threads_env_override(monkeypatch):
+    monkeypatch.setenv("GNOSTR_VIDEO_THREADS", "2")
+    assert _parse_threads() == 2
+
+
+def test_threads_zero_disables(monkeypatch):
+    monkeypatch.setenv("GNOSTR_VIDEO_THREADS", "0")
+    assert _parse_threads() == 0
+
+
+def test_threads_clamped_to_8(monkeypatch):
+    monkeypatch.setenv("GNOSTR_VIDEO_THREADS", "64")
+    assert _parse_threads() == 8
+
+
+def test_threads_garbage_falls_back(monkeypatch):
+    for junk in ("", "abc"):
+        monkeypatch.setenv("GNOSTR_VIDEO_THREADS", junk)
+        assert _parse_threads() == 4, junk
+
+
+def test_module_default_threads(monkeypatch):
+    import gnostr.renderer as r
+
+    monkeypatch.delenv("GNOSTR_VIDEO_THREADS", raising=False)
+    assert r._MAX_CONVERT_THREADS == _parse_threads()

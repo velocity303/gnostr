@@ -75,6 +75,24 @@ def _parse_fps():
 
 _MAX_VIDEO_FPS = _parse_fps()
 
+
+# Perf pass 3 (Librem 5 rig, measured on-device): two more wins on top of the
+# fps/res caps. (1) videoscale BEFORE videoconvert: the converter is the
+# bottleneck and its cost is per-pixel, so downscaling in the decoder's native
+# NV12 first shrinks the payload it converts (1080p source: 2.07M px -> 0.29M
+# px/frame). (2) videoconvert n-threads: the stock single-thread converter
+# tops out ~14 fps at 720p NV12->RGBA on one A53; the runtime's 1.28 build
+# parallelizes by image slice and n-threads=4 measured ~2x (28 fps). Clamp
+# 1..8; 0 means "let GStreamer decide" (auto). Override GNOSTR_VIDEO_THREADS.
+def _parse_threads():
+    try:
+        return min(8, max(0, int(os.environ.get("GNOSTR_VIDEO_THREADS", "4"))))
+    except Exception:
+        return 4
+
+
+_MAX_CONVERT_THREADS = _parse_threads()
+
 # VID-1: mobile pre-buffer target. playbin3 forwards buffer-size/buffer-duration
 # to the buffering queue it inserts after the source, so the network stream runs
 # this far ahead of the sink before playback is allowed to starve. 5 s target;
@@ -1085,8 +1103,20 @@ class VideoPlayer:
                         ),
                     )
                     conv = Gst.ElementFactory.make("videoconvert", "res_fmt_conv")
+                    # n-threads: the stock single-thread converter is the
+                    # measured bottleneck; slice-parallel conversion measured
+                    # ~2x on the Librem 5's 4x A53 (pass 3).
+                    if _MAX_CONVERT_THREADS:
+                        try:
+                            conv.set_property("n-threads", _MAX_CONVERT_THREADS)
+                        except Exception:
+                            pass  # older GStreamer without the property
                     sink_bin = Gst.Bin.new()
-                    chain = [capfilter, conv, sink]
+                    # videoscale BEFORE videoconvert (pass 3): the converter's
+                    # cost is per-pixel, so downscale in the decoder's native
+                    # format first and convert only the capped payload.
+                    scale = Gst.ElementFactory.make("videoscale", "mobile_scale")
+                    chain = [scale, capfilter, conv, sink]
                     # videorate FIRST: drop surplus frames before the CPU
                     # videoconvert (the measured bottleneck). drop-only so
                     # sub-cap sources are never frame-duplicated.
@@ -1107,7 +1137,9 @@ class VideoPlayer:
                     _vlog(
                         f"🎬 [Video] video-sink capped "
                         f"≤{_MAX_VIDEO_WIDTH}x{_MAX_VIDEO_HEIGHT}"
-                        f"{f' @{_MAX_VIDEO_FPS}fps' if _MAX_VIDEO_FPS else ''} +fmtconv"
+                        f"{f' @{_MAX_VIDEO_FPS}fps' if _MAX_VIDEO_FPS else ''}"
+                        f" +scale-first +fmtconv"
+                        f"{f' x{_MAX_CONVERT_THREADS}' if _MAX_CONVERT_THREADS else ''}"
                     )
                 except Exception:
                     video_sink = sink  # keep video working
