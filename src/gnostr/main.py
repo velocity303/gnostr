@@ -527,7 +527,11 @@ class MainWindow(Adw.ApplicationWindow):
             # posts" pill, or flush inline when the user is at the top.
             if self.feed_view.feed_model is not None:
                 row = self.db.get_event_by_id(eid)
-                if row is not None:
+                # The subscription can be broader than the feed (global
+                # sub on the 'me' feed): the source decides membership.
+                # A model without a source (legacy/test fake) accepts all.
+                src = getattr(self.feed_view.feed_model, "source", None)
+                if row is not None and (src is None or src.accepts(row)):
                     inserted = self.feed_view.feed_model.prepend_new([row])
                     if inserted:
                         # Startup freshness hold (spec Phase B2b): gap-fill
@@ -739,8 +743,9 @@ class MainWindow(Adw.ApplicationWindow):
 
     def switch_feed(self, feed_type):
         self.active_feed_type = feed_type
-        # Model-driven "following" feed: FeedModel owns the window, cursor,
-        # and live buffer. Other feeds keep the legacy inline render.
+        # Every feed is model-driven (infinite-scroll phase 1): FeedModel
+        # owns the window, keyset cursors, and live buffer for following,
+        # global and me alike — the FeedSource picks the DB query per kind.
         if feed_type == "following" and self.pub_key:
             contacts = self.db.get_following_list(self.pub_key)
             if contacts:
@@ -748,34 +753,20 @@ class MainWindow(Adw.ApplicationWindow):
                     "sub_following",
                     {"kinds": [1], "authors": contacts[:300], "limit": 50},
                 )
-            self.feed_view.end_feed()
-            self.feed_view.start_model_feed()
-            return
-
-        self.feed_view.end_feed()
-        self.feed_view.clear_posts()
-        cached = []
-        if feed_type == "global":
+        elif feed_type == "global":
+            # limit matches the model page size so the DB has a full
+            # first page (and one backfill page) to paginate over.
             self.client.subscribe(
-                "sub_global", {"kinds": [1], "limit": 20}, snapshot=True
+                "sub_global", {"kinds": [1], "limit": 50}, snapshot=True
             )
         elif feed_type == "me" and self.pub_key:
-            cached = self.db.get_feed_for_user(self.pub_key)
             self.client.subscribe(
-                "sub_me", {"kinds": [1], "authors": [self.pub_key], "limit": 20}
+                "sub_me", {"kinds": [1], "authors": [self.pub_key], "limit": 50}
             )
-        for ev in cached:
-            w = PostWidget(
-                self,
-                ev["pubkey"],
-                ev["content"],
-                ev["id"],
-                ev.get("tags", []),
-                created_at=ev.get("created_at"),
-            )
-            # cached is newest-first (ORDER BY created_at DESC) — append builds
-            # newest→oldest top-to-bottom. No per-item sorted rebuild needed.
-            self.feed_view.posts_box.append(w)
+        else:
+            return
+        self.feed_view.end_feed()
+        self.feed_view.start_model_feed(feed_type)
 
     def make_post_widget(self, event_id):
         """Hydrate a PostWidget for a window id from the DB (the DB is the

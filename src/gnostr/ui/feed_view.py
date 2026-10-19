@@ -13,10 +13,11 @@ which is GTK-free and unit-tested headless. This view only:
       near-top    -> re-pull evicted newer posts (or auto-flush the
                      new-posts buffer when already at the top)
 
-The feed page is model-driven only for the "following" feed (the
-workstream target). "global" and "me" feeds keep the legacy inline
-render in MainWindow.switch_feed; their handlers here no-op when
-``self.feed_model`` is None, so the scroll wiring is inert for them.
+The feed page is model-driven for every feed kind (infinite-scroll
+phase 1). Every feed kind (following/global/me) is model-driven
+via `start_model_feed(kind)` — the FeedSource picks the DB query; the
+scroll wiring is inert only when ``self.feed_model`` is None (no feed
+started).
 """
 import gi
 
@@ -443,17 +444,21 @@ class FeedView(Adw.NavigationPage):
     # Feed lifecycle (called by MainWindow)
     # ------------------------------------------------------------------
 
-    def start_model_feed(self):
-        """Build a FeedModel for the active following feed and load the
-        first page. Called by MainWindow.switch_feed('following')."""
+    def start_model_feed(self, kind="following"):
+        """Build a FeedModel for `kind` ('following'|'global'|'me') and
+        load the first page. Called by MainWindow.switch_feed for every
+        feed type — one pagination state machine serves them all
+        (infinite-scroll phase 1)."""
         mw = self.main_window
         from ..service.feed_model import FeedModel
+        from ..service.feed_pagination import make_source
 
         self.feed_model = FeedModel(
             owner_pubkey=mw.pub_key,
             database=mw.db,
             page_size=50,
             max_window=100,
+            source=make_source(kind, mw.db, mw.pub_key),
         )
         self.feed_model.load_first()
         self.sync_window()

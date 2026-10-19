@@ -473,6 +473,56 @@ class Database:
                 )
             return self._rows_to_events(cursor.fetchall())
 
+    def get_feed_global(self, limit=50, before=None, after=None, pubkey=None):
+        """All kind-1 events newest first (optionally one author's only).
+
+        Same keyset-pagination contract as get_feed_following — see its
+        docstring; the (created_at, id) tuple comparison and short-page
+        end-of-DB signal are identical. `pubkey` narrows to a single
+        author (the "me" feed); None means every author (global feed).
+        No JOIN, so idx_events_created carries the ORDER BY; the kind
+        filter runs on the fetched rows' window and stays cheap at our
+        row counts.
+        """
+        if not self.conn:
+            return []
+        with self.lock:
+            cursor = self.conn.cursor()
+            author_sql = " AND pubkey = ?" if pubkey is not None else ""
+            author_args = (pubkey,) if pubkey is not None else ()
+            if after is not None:
+                after_created_at, after_id = after
+                cursor.execute(
+                    f"""
+                    SELECT * FROM events
+                    WHERE kind = 1{author_sql}
+                      AND (created_at, id) > (?, ?)
+                    ORDER BY created_at DESC, id DESC LIMIT ?
+                """,
+                    author_args + (after_created_at, after_id, limit),
+                )
+            elif before is None:
+                cursor.execute(
+                    f"""
+                    SELECT * FROM events
+                    WHERE kind = 1{author_sql}
+                    ORDER BY created_at DESC, id DESC LIMIT ?
+                """,
+                    author_args + (limit,),
+                )
+            else:
+                before_created_at, before_id = before
+                cursor.execute(
+                    f"""
+                    SELECT * FROM events
+                    WHERE kind = 1{author_sql}
+                      AND (created_at, id) < (?, ?)
+                    ORDER BY created_at DESC, id DESC LIMIT ?
+                """,
+                    author_args + (before_created_at, before_id, limit),
+                )
+            return self._rows_to_events(cursor.fetchall())
+
     def save_contacts(self, owner_pubkey, followed_pubkeys):
         if not self.conn:
             return

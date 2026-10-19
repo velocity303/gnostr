@@ -41,6 +41,7 @@ if pytest_prog.found()
   test('test_publish_ack', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_publish_ack.py'], env: test_env, timeout: 120)
   test('test_feed_pagination', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_feed_pagination.py'], env: test_env, timeout: 120)
   test('test_feed_model', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_feed_model.py'], env: test_env, timeout: 120)
+  test('test_infinite_scroll', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_infinite_scroll.py'], env: test_env, timeout: 120)
   test('test_scroll_gate', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_scroll_gate.py'], env: test_env, timeout: 120)
   test('test_scroll_gate_wiring', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_scroll_gate_wiring.py'], env: test_env, timeout: 120)
   # VID-1: mobile video buffering — prefill props, threshold-gated play,

@@ -34,9 +34,18 @@ class FeedModel:
     """Ordered feed window + bidirectional keyset cursors. GTK-free,
     unit-testable."""
 
-    def __init__(self, owner_pubkey, database, page_size=50, max_window=50):
+    def __init__(self, owner_pubkey, database, page_size=50, max_window=50,
+                 source=None):
         self.owner = owner_pubkey
         self._db = database
+        # FeedSource (service/feed_pagination.py) decides which query
+        # pages come from; default keeps the historical following-only
+        # behavior so existing callers and tests are untouched.
+        if source is None:
+            from .feed_pagination import make_source
+
+            source = make_source("following", database, owner_pubkey)
+        self.source = source
         self.page_size = page_size
         self.max_window = max_window
         self.event_ids = []  # newest first
@@ -68,9 +77,7 @@ class FeedModel:
         page. Returns the window's event ids, newest first.
         """
         self.reset()
-        rows = self._db.get_feed_following(
-            self.owner, limit=self.page_size, before=None
-        )
+        rows = self.source.page(self.page_size)
         for row in rows:
             self._append_window(row)
         # Initial page: the viewport is at the TOP (newest), so bounding
@@ -90,9 +97,7 @@ class FeedModel:
         """
         if self.exhausted or self.cursor is None:
             return None
-        rows = self._db.get_feed_following(
-            self.owner, limit=self.page_size, before=self.cursor
-        )
+        rows = self.source.page(self.page_size, before=self.cursor)
         added = []
         for row in rows:
             if self._append_window(row):
@@ -117,9 +122,7 @@ class FeedModel:
         """
         if self.at_top or self.top_key is None:
             return None
-        rows = self._db.get_feed_following(
-            self.owner, limit=self.page_size, after=self.top_key
-        )
+        rows = self.source.page(self.page_size, after=self.top_key)
         added = []
         # rows arrive newest-first; prepend reversed so the newest lands at
         # index 0 LAST (insert(0) each time).
