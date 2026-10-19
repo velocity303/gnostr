@@ -44,6 +44,8 @@ def _unbound(rel_path, cls_name, method_name):
         "Adw": MagicMock(),
         "Gdk": MagicMock(),
         "Pango": MagicMock(),
+        "GLib": MagicMock(),
+        "SCROLL_SETTLE_MS": 200,  # VID-2: _schedule_viewport_scan constant
         "ScrollGate": ScrollGate,
     }
     exec(compile(mod, path, "exec"), ns)
@@ -162,6 +164,9 @@ class FakeFeedView:
         self._scroll_gate = ScrollGate(clock=time.monotonic, grace_ms=600)
         self._scrolled = MagicMock()
         self._scrolled.get_last_event.return_value = last_event
+        # VID-2: plain attribute (not a method) — __getattr__ below would
+        # otherwise try to ast-extract it and fail.
+        self._viewport_scan_id = None
 
     def __getattr__(self, name):
         if name.startswith("_") or name in ("on_scroll_changed",):

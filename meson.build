@@ -43,6 +43,11 @@ if pytest_prog.found()
   test('test_feed_model', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_feed_model.py'], env: test_env, timeout: 120)
   test('test_scroll_gate', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_scroll_gate.py'], env: test_env, timeout: 120)
   test('test_scroll_gate_wiring', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_scroll_gate_wiring.py'], env: test_env, timeout: 120)
+  # VID-1: mobile video buffering — prefill props, threshold-gated play,
+  # BUFFERING UX transitions + mid-playback pause-and-resume (mocked bus).
+  test('test_video_buffering', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_video_buffering.py'], env: test_env, timeout: 120)
+  test('test_video_viewport_pause', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_video_viewport_pause.py'], env: test_env, timeout: 120)
+  test('test_video_perf_cap', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_video_perf_cap.py'], env: test_env, timeout: 120)
   test('test_dm_relay_targeting', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_dm_relay_targeting.py'], env: test_env, timeout: 120)
   test('test_dm_protocol_hardening', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_dm_protocol_hardening.py'], env: test_env, timeout: 120)
   test('test_dm_recipient_view', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_dm_recipient_view.py'], env: test_env, timeout: 120)
