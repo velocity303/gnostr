@@ -10,6 +10,7 @@ install_data(
     'client.py',
     'database.py',
     'dialogs.py',
+    'markup.py',
     'key_manager.py',
     'nip49.py',
     'nostr_utils.py',
