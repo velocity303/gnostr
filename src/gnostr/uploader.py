@@ -112,7 +112,81 @@ def image_dimensions(path):
     return None
 
 
-# -- auth (BUD-01) ------------------------------------------------------------
+# -- EXIF strip (privacy) -------------------------------------------------------
+
+
+def strip_exif(path):
+    """Return a path to upload for `path`, with JPEG EXIF/XMP (APP1) segments
+    removed — phone photos embed GPS coordinates there. Non-JPEG files and
+    JPEGs without APP1 are returned unchanged (no temp file created). On any
+    parse surprise the ORIGINAL path is returned: never block an upload over
+    metadata surgery.
+
+    Caller is responsible for deleting a returned temp file (a different path
+    than the input means we created it).
+    """
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+    except OSError:
+        return path
+    if data[:2] != b"\xff\xd8":  # not a JPEG
+        return path
+    out = bytearray(data[:2])
+    i = 2
+    stripped = False
+    n = len(data)
+    try:
+        while i < n - 1:
+            if data[i] != 0xFF:
+                return path  # not a marker boundary — bail, upload original
+            # run of 0xFF padding bytes
+            j = i
+            while j < n and data[j] == 0xFF:
+                j += 1
+            if j >= n:
+                return path
+            m = data[j]
+            marker = data[i : j + 1]
+            j += 1
+            if m == 0xD9:  # EOI: copy the rest verbatim
+                out += data[i:]
+                break
+            if m == 0xDA:  # SOS: entropy-coded data follows; every APP1
+                out += data[i:]  # segment precedes SOS, so stop parsing
+                break
+            if m == 0x01 or 0xD0 <= m <= 0xD7:  # standalone markers
+                out += marker
+                i = j
+                continue
+            if j + 2 > n:
+                return path
+            (size,) = struct.unpack(">H", data[j : j + 2])
+            if size < 2 or j + size > n:
+                return path  # corrupt/truncated — upload original
+            segment = data[i : j + size]
+            if m in (0xE1, 0xE5):  # APP1 = EXIF/XMP, APP5 = priv markers
+                stripped = True
+            else:
+                out += segment
+            i = j + size
+    except (IndexError, struct.error):
+        return path
+    if not stripped:
+        return path
+    import tempfile
+
+    fd, tmp = tempfile.mkstemp(prefix="gnostr-", suffix=".jpg")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(bytes(out))
+    except OSError:
+        os.unlink(tmp)
+        return path
+    return tmp
+
+
+# -- auth (BUD-01) --------------------------------------------------------------
 
 
 def blossom_auth_event(server_url, kind=24242):
@@ -237,6 +311,21 @@ def upload_file(path, sign_fn=None):
     """
     if not path or not os.path.isfile(path):
         raise UploadError("File not found")
+    # Privacy: strip JPEG EXIF (GPS etc.) before anything touches the wire.
+    # strip_exif returns the original path when there's nothing to do.
+    clean = strip_exif(path)
+    try:
+        return _upload_clean(clean, sign_fn)
+    finally:
+        if clean != path:
+            try:
+                os.unlink(clean)
+            except OSError:
+                pass
+
+
+def _upload_clean(path, sign_fn):
+    """upload_file() core; `path` is already EXIF-stripped."""
     size = os.path.getsize(path)
     max_mb = settings_get("upload-max-mb", DEFAULT_MAX_MB)
     if max_mb and size > max_mb * 1024 * 1024:

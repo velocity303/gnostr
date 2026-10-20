@@ -75,8 +75,16 @@ Core application layer — GTK4 window, app lifecycle, Nostr client wiring, and 
   (ComposeWindow, post reply, DM thread) pass them through
   `client.publish_post/publish_dm(extra_tags=...)`. The DM composer is now
   RichComposeBox(compact=True) — grows to ~3 lines then scrolls; Send
-  disable-while-blank + stay-focused contracts unchanged. Phase 3 next:
-  paste/drag-drop images, EXIF strip before upload, preview chip row.
+  disable-while-blank + stay-focused contracts unchanged.
+  Phase 3 LANDED: `uploader.strip_exif(path)` drops JPEG APP1 (EXIF/XMP incl.
+  GPS) into a temp file before upload — non-JPEG and no-APP1 files pass
+  through untouched, any parse surprise returns the ORIGINAL (never block an
+  upload over metadata surgery), SOS scan data is copied verbatim. Media also
+  enters RichComposeBox via Ctrl+V `Gdk.FileList`, a pasted media path (the
+  insert-text hook fires only for a whole-chunk existing media path;
+  programmatic writes go through the guarded `_set_text`), and Gtk.DropTarget.
+  Each uploaded URL gets a removable preview chip above the entry; removing a
+  chip strips its URL line + imeta tag.
 
 ## Verification
 - `pytest tests/test_gateway.py tests/test_profile_service.py tests/test_profile_metadata_service.py tests/test_resource_management.py` — core service tests pass

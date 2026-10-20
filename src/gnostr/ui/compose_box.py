@@ -16,13 +16,24 @@ Media attach (phase 2): Gtk.FileChooserNative -> uploader.upload_file on a
 worker thread (network never blocks the GTK main loop); the bare URL lands
 in the text and the NIP-92 imeta tag accumulates in self.media_tags for the
 host to attach at publish time.
+
+Phase 3: images/videos also enter via paste (OSK clipboard button) and
+drag-drop. Paste has two shapes: a Gdk.FileList/Gio.File on the clipboard
+(Ctrl+V intercepted before the text view sees it) and a pasted *path* as
+text — the insert-text hook fires only when the whole inserted chunk is one
+existing media path, so typing a path one keystroke at a time never
+triggers an attach. Drag-drop takes Gio.File directly. Every attached URL
+gets a removable preview chip above the entry; removing a chip deletes its
+URL line and its imeta tag.
 """
+
+import os
 
 import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
 from ..markup import SUPPORTED_FEATURES, apply_marker, insert_at  # noqa: E402
 from .icons import resolve_icon  # noqa: E402
@@ -47,6 +58,25 @@ _ICON_CANDIDATES = {
 }
 
 
+_MEDIA_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".mp4", ".webm")
+
+
+def _as_media_path(text):
+    """Absolute path to an existing image/video file if `text` is exactly
+    one, else None. Whitespace is trimmed; anything with a newline or a
+    scheme (http://…) is not a local path."""
+    if not text:
+        return None
+    t = text.strip()
+    if not t.startswith("/") or "\n" in t or "\t" in t:
+        return None
+    if not t.lower().endswith(_MEDIA_EXTS):
+        return None
+    if not os.path.isfile(t):
+        return None
+    return t
+
+
 class RichComposeBox(Gtk.Box):
     """Multiline text view + context-aware formatting bar.
 
@@ -62,8 +92,10 @@ class RichComposeBox(Gtk.Box):
     def __init__(self, placeholder="", compact=False, sign_fn=None):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.media_tags = []
+        self._chips = []
         self.sign_fn = sign_fn
         self._uploading = False
+        self._suppress_insert_hook = False
 
         self.text_view = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD, top_margin=12)
         if placeholder:
@@ -74,7 +106,41 @@ class RichComposeBox(Gtk.Box):
             scrolled.set_max_content_height(120)
             scrolled.set_propagate_natural_height(True)
         scrolled.set_child(self.text_view)
+
+        # Preview chip row (phase 3): one removable chip per attached URL,
+        # above the text. Hidden until the first attach.
+        self.media_bar = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            spacing=6,
+            margin_start=6,
+            margin_end=6,
+        )
+        self.media_bar.set_visible(False)
+        chip_scroll = Gtk.ScrolledWindow(
+            hscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
+            vscrollbar_policy=Gtk.PolicyType.NEVER,
+        )
+        chip_scroll.set_child(self.media_bar)
+        chip_scroll.set_visible(False)
+        self._chip_scroll = chip_scroll
+        self.append(chip_scroll)
         self.append(scrolled)
+
+        # Paste a Gio.File / FileList (file manager copy, screenshot tools):
+        # intercept Ctrl+V before the text view inserts it as text.
+        key = Gtk.EventControllerKey()
+        key.connect("key-pressed", self._on_key_pressed)
+        self.text_view.add_controller(key)
+
+        # Paste a media PATH as text (OSK clipboard paste of a path string):
+        # fires only when the whole inserted chunk is one existing media
+        # path, so ordinary typing never trips it.
+        self.text_view.get_buffer().connect("insert-text", self._on_insert_text)
+
+        # Drag-drop a file onto the text view.
+        drop = Gtk.DropTarget.new(Gio.File, Gdk.DragAction.COPY)
+        drop.connect("drop", self._on_drop)
+        self.text_view.add_controller(drop)
 
         bar = Gtk.Box(
             orientation=Gtk.Orientation.HORIZONTAL,
@@ -134,7 +200,7 @@ class RichComposeBox(Gtk.Box):
         return self.text_view.get_buffer().get_text(start, end, False)
 
     def set_text(self, text):
-        self.text_view.get_buffer().set_text(text)
+        self._set_text(text)
 
     def grab_focus(self):
         self.text_view.grab_focus()
@@ -142,8 +208,111 @@ class RichComposeBox(Gtk.Box):
     def clear_media(self):
         """Called by the host after a successful publish."""
         self.media_tags = []
+        for chip, _url in list(self._chips):
+            chip.unparent()
+        self._chips = []
+        self.media_bar.set_visible(False)
+        self._chip_scroll.set_visible(False)
+
+    # -- phase 3: paste / drag-drop entry points ---------------------------
+
+    def _on_key_pressed(self, _ctrl, keyval, _keycode, state):
+        """Ctrl+V with a FILE on the clipboard attaches it instead of pasting
+        text. The read is async; if no FileList is present we've already
+        returned False and the normal text paste proceeds untouched."""
+        if keyval not in (Gdk.KEY_v, Gdk.KEY_V) or not (
+            state & Gdk.ModifierType.CONTROL_MASK
+        ):
+            return False
+        clip = self.text_view.get_clipboard()
+        clip.read_value_async(
+            Gdk.FileList, GLib.PRIORITY_DEFAULT, None, self._on_paste_files, None
+        )
+        return False
+
+    def _on_paste_files(self, clip, res, _data):
+        try:
+            gvalue = clip.read_value_finish(res)
+        except GLib.Error:
+            return  # clipboard holds no file list — normal text paste happened
+        file_list = gvalue.get_object()
+        if file_list is None:
+            return
+        for f in file_list.get_files():
+            path = f.get_path()
+            if path and _as_media_path(path):
+                self._start_upload(path)
+                return  # first media file only, same as drag-drop
+
+    def _on_insert_text(self, _buf, _location, text, _length):
+        """A pasted *path string* (OSK clipboard paste): fires only when the
+        whole inserted chunk is one existing media path, so typing a path
+        one keystroke at a time never trips this. Returning True swallows
+        the insertion — the path becomes an upload, not text."""
+        if self._suppress_insert_hook or "\n" in text:
+            return False
+        path = _as_media_path(text)
+        if not path:
+            return False
+        self._start_upload(path)
+        return True
+
+    def _on_drop(self, _target, value, _x, _y):
+        path = value.get_path() if isinstance(value, Gio.File) else None
+        if path and _as_media_path(path):
+            self._start_upload(path)
+            return True
+        return False
+
+    # -- preview chips ------------------------------------------------------
+
+    def _add_media_chip(self, url):
+        chip = Gtk.Box(
+            css_classes=["toolbar"], spacing=4, margin_top=2, margin_bottom=2
+        )
+        chip.add_css_class("flat")
+        name = url.rsplit("/", 1)[-1] or url
+        label = Gtk.Label(label=name if len(name) <= 24 else name[:21] + "…")
+        label.set_tooltip_text(url)
+        remove = Gtk.Button(icon_name="list-remove-symbolic")
+        remove.add_css_class("flat")
+        remove.add_css_class("dim-label")
+        remove.set_valign(Gtk.Align.CENTER)
+        remove.connect("clicked", self._on_chip_remove, url)
+        chip.append(label)
+        chip.append(remove)
+        self._chips.append((chip, url))
+        self.media_bar.append(chip)
+        self.media_bar.set_visible(True)
+        self._chip_scroll.set_visible(True)
+
+    def _on_chip_remove(self, _btn, url):
+        # Drop the URL line from the text and the matching imeta tag.
+        buf = self.text_view.get_buffer()
+        text = buf.get_text(*buf.get_bounds(), False)
+        kept = [ln for ln in text.split("\n") if ln.strip() != url]
+        if len(kept) != len(text.split("\n")):
+            self._set_text("\n".join(kept))
+        self.media_tags = [t for t in self.media_tags if f"url={url}" not in t[1]]
+        for chip, chip_url in list(self._chips):
+            if chip_url == url:
+                chip.unparent()
+                self._chips.remove((chip, url))
+        if not self._chips:
+            self.media_bar.set_visible(False)
+            self._chip_scroll.set_visible(False)
 
     # -- internals -------------------------------------------------------
+
+    def _set_text(self, text):
+        """Programmatic buffer write that must not trip the paste-path hook
+        (set_text emits insert-text; a buffer whose whole content happens to
+        be a media path would otherwise re-trigger an upload)."""
+        self._suppress_insert_hook = True
+        try:
+            self.text_view.get_buffer().set_text(text)
+        finally:
+            self._suppress_insert_hook = False
 
     def _sync_button_sensitivity(self, *_args):
         has_sel = self.text_view.get_buffer().get_has_selection()
@@ -152,7 +321,7 @@ class RichComposeBox(Gtk.Box):
 
     def _apply(self, new_text, sel_start, sel_end):
         buf = self.text_view.get_buffer()
-        buf.set_text(new_text)
+        self._set_text(new_text)
         if sel_start != sel_end:
             buf.select_range(
                 buf.get_iter_at_offset(sel_start), buf.get_iter_at_offset(sel_end)
@@ -177,7 +346,7 @@ class RichComposeBox(Gtk.Box):
         text = buf.get_text(*buf.get_bounds(), False)
         pos = buf.get_iter_at_mark(buf.get_insert()).get_offset()
         new_text, caret = insert_at(text, pos, url)
-        buf.set_text(new_text)
+        self._set_text(new_text)
         buf.place_cursor(buf.get_iter_at_offset(caret))
         self._link_entry.set_text("")
         self._link_btn.get_popover().popdown()
@@ -269,8 +438,9 @@ class RichComposeBox(Gtk.Box):
         before = text[:pos]
         sep = "\n" if before and not before.endswith("\n") else ""
         new_text, caret = insert_at(text, pos, sep + url)
-        buf.set_text(new_text)
+        self._set_text(new_text)
         buf.place_cursor(buf.get_iter_at_offset(caret))
+        self._add_media_chip(url)
         self._notify("media-uploaded", result["url"])
         return False
 

@@ -146,3 +146,64 @@ def test_blossom_auth_event_shape():
     assert ev["kind"] == 24242
     assert ["t", "upload"] in ev["tags"]
     assert any(t[0] == "expiration" for t in ev["tags"])
+
+
+# -- EXIF strip (phase 3) ------------------------------------------------------
+
+
+def _jpeg(path, with_exif=True, with_sos=False):
+    """Minimal marker sequence: SOI [+APP1] [+DQT] [+SOS+scan] EOI."""
+    seg = bytearray(b"\xff\xd8")
+    if with_exif:
+        payload = b"Exif\x00\x00" + b"GPSDATA" * 4
+        seg += b"\xff\xe1" + struct.pack(">H", len(payload) + 2) + payload
+    dqt = b"\x00\x11" + b"\x00" * 8
+    seg += b"\xff\xdb" + struct.pack(">H", len(dqt) + 2) + dqt
+    if with_sos:
+        sos = b"\x00\x0c\x03\x01\x00\x02\x11\x03\x11\x00\x3f\x00"
+        seg += b"\xff\xda" + struct.pack(">H", len(sos) + 2) + sos
+        seg += b"\xde\xad\xbe\xef\xff\x00\xff\xd9"  # fake scan data + EOI
+    else:
+        seg += b"\xff\xd9"
+    with open(path, "wb") as f:
+        f.write(bytes(seg))
+    return str(path)
+
+
+def test_strip_exif_removes_app1(tmp_path):
+    src = _jpeg(tmp_path / "a.jpg")
+    out = uploader.strip_exif(src)
+    assert out != src  # temp file created
+    data = open(out, "rb").read()
+    assert b"GPSDATA" not in data
+    assert data[:2] == b"\xff\xd8"
+    assert b"\xff\xdb" in data  # DQT survived
+    os.unlink(out)
+
+
+def test_strip_exif_keeps_sos_scan_data(tmp_path):
+    src = _jpeg(tmp_path / "b.jpg", with_sos=True)
+    out = uploader.strip_exif(src)
+    data = open(out, "rb").read()
+    assert b"GPSDATA" not in data
+    assert b"\xff\xda" in data and b"\xde\xad\xbe\xef" in data  # scan intact
+    os.unlink(out)
+
+
+def test_strip_exif_noop_without_app1(tmp_path):
+    src = _jpeg(tmp_path / "c.jpg", with_exif=False)
+    assert uploader.strip_exif(src) == src
+
+
+def test_strip_exif_noop_for_png(tmp_path):
+    src = str(tmp_path / "d.png")
+    _png(src, 4, 4)
+    assert uploader.strip_exif(src) == src
+
+
+def test_strip_exif_survives_garbage_jpeg(tmp_path):
+    # truncated marker data must return the original, never raise
+    src = str(tmp_path / "e.jpg")
+    with open(src, "wb") as f:
+        f.write(b"\xff\xd8\xff\xe1\x00\xffgarbage")
+    assert uploader.strip_exif(src) == src

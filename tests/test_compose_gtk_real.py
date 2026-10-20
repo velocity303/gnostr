@@ -23,7 +23,7 @@ try:
 
     gi.require_version("Gtk", "4.0")
     gi.require_version("Adw", "1")
-    from gi.repository import Gtk, Adw
+    from gi.repository import Adw, Gtk
 except Exception as e:
     print("SKIP: real GTK4/Adw unavailable (%s)" % e)
     sys.exit(77)
@@ -188,12 +188,69 @@ def run(_app):
     )
     box.clear_media()
     check("clear_media empties tags", box.media_tags == [])
+    check(
+        "clear_media clears chips",
+        box._chips == [] and not box._chip_scroll.get_visible(),
+    )
     # upload error path must not raise and must not touch text
     box._on_upload_done(None, "Upload server error (500)")
     check(
         "error path keeps text",
         box.get_text() == "https://cdn/x.png\nhttps://cdn/y.mp4",
     )
+
+    # -- phase 3: preview chips --------------------------------------------
+    box.set_text("")
+    box._on_upload_done(
+        {"url": "https://cdn/z.png", "mime": "image/png", "dim": None, "sha256": ""},
+        None,
+    )
+    check("chip row visible after upload", box._chip_scroll.get_visible())
+    check("one chip per upload", len(box._chips) == 1)
+    check("URL line in text", box.get_text() == "https://cdn/z.png")
+    box._on_chip_remove(None, "https://cdn/z.png")
+    check(
+        "chip remove strips URL line", box.get_text() == "", f"got {box.get_text()!r}"
+    )
+    check("chip remove drops imeta tag", box.media_tags == [])
+    check("chip row hides when empty", not box._chip_scroll.get_visible())
+
+    # -- phase 3: pasted-path detection -------------------------------------
+    import tempfile
+
+    tmpdir = tempfile.mkdtemp()
+    real = os.path.join(tmpdir, "shot.png")
+    with open(real, "wb") as f:
+        f.write(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)
+
+    calls = []
+    box._start_upload = calls.append
+    check(
+        "pasted path swallowed -> upload",
+        box._on_insert_text(None, None, real, len(real)) is True and calls == [real],
+        f"calls={calls}",
+    )
+    check(
+        "plain text not swallowed",
+        box._on_insert_text(None, None, "hello", 5) is False,
+    )
+    check(
+        "missing file not swallowed",
+        box._on_insert_text(None, None, "/tmp/nope.png", 12) is False,
+    )
+    check(
+        "url text not swallowed",
+        box._on_insert_text(None, None, "https://x/y.png", 15) is False,
+    )
+    check(
+        "as_media_path rejects url",
+        compose_box._as_media_path("https://x/y.png") is None,
+    )
+    check("as_media_path accepts file", compose_box._as_media_path(real) == real)
+    # programmatic set_text of a media path must NOT re-trigger an upload
+    box.set_text(real)
+    check("set_text guarded against hook", calls == [real], f"calls={calls}")
+    box.set_text("")
 
     win.destroy()
     app.quit()
