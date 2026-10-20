@@ -9,7 +9,7 @@ separate modules and is exercised under xvfb by the existing real-GTK suite.
 
 import time
 
-from gnostr.util.scroll_gate import ScrollGate
+from gnostr.util.scroll_gate import SWIPE_THRESHOLD_PX, ScrollGate
 
 
 def test_fresh_gate_is_not_in_cooldown():
@@ -116,3 +116,88 @@ def test_is_touch_source_returns_false_without_gdk():
     """is_touch_source must never raise in a headless context (no Gdk)."""
     # With gi/Gdk unavailable the lazy import fails -> default False.
     assert ScrollGate.is_touch_source(None) is False
+
+
+# ---------------------------------------------------------------------------
+# Slice 3: geometric swipe guard (press -> release travel)
+# ---------------------------------------------------------------------------
+# The cooldown above is temporal and cannot catch a swipe that starts where the
+# feed cannot scroll (top of feed, rubber-band): no value-changed fires, the
+# gate is never stamped, in_cooldown() stays False, and the swipe's release
+# opens the thread. These tests cover the position-independent guard.
+
+
+def _fake_clock(box):
+    def clock():
+        return box[0]
+
+    return clock
+
+
+def test_no_press_recorded_never_reports_swipe():
+    """A caller that never wired 'pressed' behaves exactly as before rather
+    than swallowing every tap."""
+    g = ScrollGate(clock=time.monotonic, grace_ms=600)
+    assert g.swipe_since_press(500, 900) is False
+
+
+def test_tap_in_place_is_not_a_swipe():
+    clock = [1000.0]
+    g = ScrollGate(clock=_fake_clock(clock), grace_ms=600)
+    g.note_press(360, 700)
+    assert g.swipe_since_press(362, 704) is False
+
+
+def test_vertical_swipe_is_a_swipe():
+    """The exact failure: press at the top of the feed, drag up, release. The
+    feed could not scroll (already at top) so the cooldown never engaged."""
+    clock = [1000.0]
+    g = ScrollGate(clock=_fake_clock(clock), grace_ms=600)
+    g.note_press(360, 1200)
+    assert g.in_cooldown() is False  # never stamped — temporal gate is inert
+    assert g.swipe_since_press(360, 800) is True
+
+
+def test_horizontal_swipe_is_a_swipe():
+    clock = [1000.0]
+    g = ScrollGate(clock=_fake_clock(clock), grace_ms=600)
+    g.note_press(200, 500)
+    assert g.swipe_since_press(260, 505) is True
+
+
+def test_travel_at_threshold_is_not_a_swipe():
+    """Strict '>' comparison: exactly threshold travel is still a tap."""
+    g = ScrollGate(clock=time.monotonic, grace_ms=600)
+    g.note_press(100, 100)
+    assert g.swipe_since_press(100 + SWIPE_THRESHOLD_PX, 100) is False
+    assert g.swipe_since_press(100 + SWIPE_THRESHOLD_PX + 1, 100) is True
+
+
+def test_reset_clears_press_origin():
+    """Switching feeds must not carry a stale press origin into the new page."""
+    g = ScrollGate(clock=time.monotonic, grace_ms=600)
+    g.note_press(100, 100)
+    g.reset()
+    assert g.swipe_since_press(900, 900) is False
+
+
+def test_swipe_guard_is_independent_of_cooldown():
+    """The two guards are complementary, not redundant: a swipe with travel is
+    caught by the geometric guard even when the cooldown has expired, and a
+    stationary tap right after a scroll is caught by the cooldown alone."""
+    clock = [1000.0]
+    g = ScrollGate(clock=_fake_clock(clock), grace_ms=600)
+    # Case A: cooldown expired, but the gesture travelled -> swipe guard fires.
+    g.mark_scroll(is_touch=True)
+    clock[0] = 1002.0
+    g.note_press(360, 1200)
+    assert g.in_cooldown() is False
+    assert g.swipe_since_press(360, 600) is True
+    # Case B: no travel, inside the grace window -> cooldown fires, swipe guard
+    # must not (a deliberate tap must still work right after the glide).
+    g.reset()
+    g.mark_scroll(is_touch=True)
+    clock[0] = 1000.3
+    g.note_press(360, 700)
+    assert g.in_cooldown() is True
+    assert g.swipe_since_press(361, 702) is False

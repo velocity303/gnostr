@@ -47,7 +47,8 @@ class MainWindow(Adw.ApplicationWindow):
         self.client.connect("publish-result", self.on_publish_result)
         self.client.connect("relay-log-updated", self.on_relay_log_updated)
         self.client.connect("dm-unreachable", self.on_dm_unreachable)
-        self.client.connect("backfill-done", self.feed_view.on_backfill_done)
+        # NOTE: backfill-done is connected AFTER feed_view is constructed below —
+        # referencing self.feed_view here crashed MainWindow.__init__ at startup.
         # Poll-delivered DMs must move the sidebar badge even while the user
         # sits on the feed (inbox/thread views only refresh while visible).
         self.client.connect(
@@ -107,6 +108,8 @@ class MainWindow(Adw.ApplicationWindow):
         self.scroll_gate = None
         self.feed_view._scroll_gate.reset()
         self.scroll_gate = self.feed_view._scroll_gate
+        # Must come after FeedView exists (see note above the client wiring).
+        self.client.connect("backfill-done", self.feed_view.on_backfill_done)
         self.content_nav = Adw.NavigationView()
 
         # Overlay wraps the navigation view, FAB floats on top
