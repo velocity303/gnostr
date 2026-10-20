@@ -873,9 +873,10 @@ class NostrClient(GObject.Object):
                 p["label"],
             )
 
-    def publish_post(self, content, reply_to=None):
+    def publish_post(self, content, reply_to=None, extra_tags=None):
         """kind-1 text post. `reply_to` = dict(root, parent, root_pk, parent_pk)
-        to thread a reply per NIP-01 (root e-tag first, direct parent last)."""
+        to thread a reply per NIP-01 (root e-tag first, direct parent last).
+        `extra_tags` = additional tag lists (e.g. NIP-92 imeta for media)."""
         if reply_to:
             tags = [
                 ["e", reply_to["root"]],
@@ -885,6 +886,8 @@ class NostrClient(GObject.Object):
             ]
         else:
             tags = []
+        if extra_tags:
+            tags.extend(extra_tags)
         return self._build_and_publish(1, content, tags, label="Post")
 
     def publish_reaction(self, target_event_id, target_pubkey, content="+"):
@@ -1297,7 +1300,7 @@ class NostrClient(GObject.Object):
             pass  # a missed tick is fine; the next one is a minute away
         return True
 
-    def publish_dm(self, peer_pubkey, plaintext):
+    def publish_dm(self, peer_pubkey, plaintext, extra_tags=None):
         """Encrypt + publish a DM to `peer_pubkey`. Returns the signed rumor
         dict (its id keys the UI's optimistic bubble) or None on failure.
 
@@ -1327,7 +1330,10 @@ class NostrClient(GObject.Object):
             print(f"❌ DM encrypt failed: {e}")
             return None
         event = gnostr.nostr_utils.build_event(
-            self.my_pubkey, 4, ciphertext, [["p", peer_pubkey]]
+            self.my_pubkey,
+            4,
+            ciphertext,
+            [["p", peer_pubkey]] + (extra_tags or []),
         )
         signed = gnostr.nostr_utils.sign_event(event, self.my_privkey)
         if not signed:

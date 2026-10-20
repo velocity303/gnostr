@@ -341,7 +341,6 @@ class FeedView(Adw.NavigationPage):
         else:
             self._sync_window()
 
-
     def _on_near_top(self):
         """At the top edge: re-pull the evicted newer posts, or auto-flush
         the new-posts buffer when we're already at the absolute top."""

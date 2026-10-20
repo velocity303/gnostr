@@ -62,6 +62,7 @@ def _load(name, relpath):
 
 
 _load("gnostr.markup", "markup.py")
+_load("gnostr.uploader", "uploader.py")
 _load("gnostr.ui.icons", "ui/icons.py")
 compose_box = _load("gnostr.ui.compose_box", "ui/compose_box.py")
 RichComposeBox = compose_box.RichComposeBox
@@ -153,6 +154,46 @@ def run(_app):
     # get/set round-trip
     box.set_text("round trip")
     check("set/get round-trip", box.get_text() == "round trip")
+
+    # media upload completion path (no network: call the idle handler
+    # directly, exactly as GLib.idle_add would from the worker thread)
+    box.set_text("")
+    box._on_upload_done(
+        {"url": "https://cdn/x.png", "mime": "image/png", "dim": "8x8", "sha256": "aa"},
+        None,
+    )
+    check(
+        "upload inserts URL",
+        box.get_text() == "https://cdn/x.png",
+        f"got {box.get_text()!r}",
+    )
+    check(
+        "upload records imeta tag",
+        box.media_tags
+        == [["imeta", "url=https://cdn/x.png", "m=image/png", "dim=8x8", "x=aa"]],
+        f"got {box.media_tags!r}",
+    )
+    box._on_upload_done(
+        {"url": "https://cdn/y.mp4", "mime": "video/mp4", "dim": None, "sha256": ""},
+        None,
+    )
+    check(
+        "second upload appends on new line",
+        box.get_text() == "https://cdn/x.png\nhttps://cdn/y.mp4",
+        f"got {box.get_text()!r}",
+    )
+    check(
+        "second imeta minimal",
+        box.media_tags[-1] == ["imeta", "url=https://cdn/y.mp4", "m=video/mp4"],
+    )
+    box.clear_media()
+    check("clear_media empties tags", box.media_tags == [])
+    # upload error path must not raise and must not touch text
+    box._on_upload_done(None, "Upload server error (500)")
+    check(
+        "error path keeps text",
+        box.get_text() == "https://cdn/x.png\nhttps://cdn/y.mp4",
+    )
 
     win.destroy()
     app.quit()

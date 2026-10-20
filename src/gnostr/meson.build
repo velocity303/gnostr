@@ -11,6 +11,7 @@ install_data(
     'database.py',
     'dialogs.py',
     'markup.py',
+    'uploader.py',
     'key_manager.py',
     'nip49.py',
     'nostr_utils.py',

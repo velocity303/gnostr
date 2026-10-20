@@ -448,8 +448,8 @@ class MainWindow(Adw.ApplicationWindow):
     def on_fab_post_clicked(self, button):
         from gnostr.dialogs import ComposeWindow
 
-        def handle_post(text):
-            if self.client.publish_post(text):
+        def handle_post(text, media_tags=None):
+            if self.client.publish_post(text, extra_tags=media_tags):
                 self.add_toast(Adw.Toast(title="Post Published"))
             else:
                 self.add_toast(Adw.Toast(title="Failed to Publish Post"))

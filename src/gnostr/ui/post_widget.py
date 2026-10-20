@@ -358,7 +358,7 @@ class PostWidget(Adw.Bin):
             return
         from gnostr.dialogs import ComposeWindow
 
-        def handle_post(text):
+        def handle_post(text, media_tags=None):
             # Reply to this post: root = thread root, parent = this post.
             root = self._root_id or self.event_id
             root_pk = self._root_pk or self.pubkey
@@ -370,6 +370,7 @@ class PostWidget(Adw.Bin):
                     "parent": self.event_id,
                     "parent_pk": self.pubkey,
                 },
+                extra_tags=media_tags,
             )
             if ok:
                 self.main_window.add_toast(Adw.Toast(title="Reply Published"))

@@ -236,11 +236,16 @@ class ComposeWindow(Adw.Window):
         hb = Adw.HeaderBar()
         box.append(hb)
 
-        # Rich composer: markdown-lite marker bar (bold/italic/code/link),
-        # scope: ~/Briefcase/gnostr-scopes/editor-gtk-scope.md phase 1
+        # Rich composer: markdown-lite marker bar (bold/italic/code/link) +
+        # media attach (imeta), scope: ~/Briefcase/gnostr-scopes/editor-gtk-scope.md
         from gnostr.ui.compose_box import RichComposeBox
 
-        self.compose = RichComposeBox(placeholder="What's happening?")
+        parent_window = self.get_transient_for()
+        sign_fn = None
+        client = getattr(parent_window, "client", None) if parent_window else None
+        if client is not None and hasattr(client, "_sign"):
+            sign_fn = client._sign
+        self.compose = RichComposeBox(placeholder="What's happening?", sign_fn=sign_fn)
         self.text_view = self.compose.text_view
         box.append(self.compose)
 
@@ -256,7 +261,7 @@ class ComposeWindow(Adw.Window):
     def on_post_clicked(self, b):
         text = self.compose.get_text()
         if text.strip():
-            self.on_post_callback(text)
+            self.on_post_callback(text, list(self.compose.media_tags))
             self.close()
 
 

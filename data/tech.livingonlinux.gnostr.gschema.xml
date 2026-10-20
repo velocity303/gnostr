@@ -1,5 +1,23 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <schemalist gettext-domain="Gnostr">
 	<schema id="tech.livingonlinux.gnostr" path="/me/velocitynet/Gnostr/">
+		<!-- Media upload backend (rich editor scope: gnostr-scopes/editor-gtk-scope.md).
+		     Configurable because nostr.build capacity/funding can change; the
+		     app must not hard-code a single server. -->
+		<key name="upload-backend" type="s">
+			<default>'nostr.build'</default>
+			<summary>Media upload backend</summary>
+			<description>'nostr.build' uses the legacy NIP-96-style multipart endpoint; 'blossom' uses BUD-02 PUT with BUD-01 nostr-auth against upload-server-url.</description>
+		</key>
+		<key name="upload-server-url" type="s">
+			<default>'https://nostr.build/api/v2/blossom'</default>
+			<summary>Blossom server base URL</summary>
+			<description>Used when upload-backend is 'blossom' (BUD-02 PUT &lt;server&gt;/upload).</description>
+		</key>
+		<key name="upload-max-mb" type="i">
+			<default>20</default>
+			<summary>Maximum upload size in megabytes</summary>
+			<description>Files larger than this are refused before any network I/O. 0 disables the local gate (server limits still apply).</description>
+		</key>
 	</schema>
 </schemalist>

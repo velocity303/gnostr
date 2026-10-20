@@ -32,6 +32,7 @@ DM_FILES = [
     "dm_recipient_view.py",
     "followers_list_view.py",
     "icons.py",
+    "compose_box.py",
 ]
 
 
