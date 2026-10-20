@@ -6,13 +6,15 @@ miku's spec: emphasis hugs non-whitespace, never nests, never spans newlines,
 never fires intra-word for underscores (snake_case stays literal).
 """
 
-import sys
 import os
+import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
+sys.path.insert(
+    0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src")
+)
 
-from gnostr.markup import SUPPORTED_FEATURES, apply_marker, emphasis_to_pango, insert_at
-
+from gnostr.markup import (SUPPORTED_FEATURES, apply_marker, emphasis_to_pango,
+                           insert_at)
 
 # -- emphasis_to_pango -------------------------------------------------------
 
@@ -69,6 +71,7 @@ def test_supported_features_locked():
 
 # -- apply_marker ------------------------------------------------------------
 
+
 def test_wrap_selection():
     text = "hello world"
     new, s, e = apply_marker(text, 0, 5, "bold")
@@ -95,7 +98,33 @@ def test_italic_and_code_markers():
 
 # -- insert_at ---------------------------------------------------------------
 
+
 def test_insert_at():
     new, caret = insert_at("ab", 1, "XY")
     assert new == "aXYb"
     assert caret == 3
+
+
+# -- renderer wiring guard ----------------------------------------------------
+
+
+def test_renderer_applies_emphasis_to_plain_text():
+    """Source scan: every plain-text fragment in renderer.render() must pass
+    through emphasis_to_pango(escape(...)). The mocked suite can't execute the
+    real render path, so a dropped call would silently ship raw ** markers."""
+    import os
+
+    path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "..", "src", "gnostr", "renderer.py"
+    )
+    src = open(path, encoding="utf-8").read()
+    assert "from .markup import emphasis_to_pango" in src
+    # Every text_fragments plain-text append is emphasis-processed. Scan with
+    # whitespace collapsed so black's line wrapping can't fool a naive match.
+    flat = " ".join(src.split())
+    assert "(None, GLib.markup_escape_text(" not in flat, (
+        "a raw escaped fragment bypasses the emphasis pass"
+    )
+    import re
+
+    assert len(re.findall(r"emphasis_to_pango\(\s*GLib\.markup_escape_text\(", flat)) >= 6

@@ -10,6 +10,7 @@ display is unavailable.
 
 Usage:  xvfb-run -a python3 tests/test_compose_gtk_real.py
 """
+
 import os
 import sys
 import tempfile
@@ -35,7 +36,35 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if os.path.join(ROOT, "src") not in sys.path:
     sys.path.insert(0, os.path.join(ROOT, "src"))
 
-from gnostr.ui.compose_box import RichComposeBox  # noqa: E402
+# Load ONLY markup.py + compose_box.py (+ icons.py) via importlib against
+# stub packages: importing the real `gnostr` package runs __init__, which
+# pulls in window.ui (a compiled GResource only present in an installed
+# build). Same isolation pattern as test_clipboard_gtk_real.py.
+import importlib.util
+import types
+
+_pkg = types.ModuleType("gnostr")
+_pkg.__path__ = [os.path.join(ROOT, "src", "gnostr")]
+sys.modules["gnostr"] = _pkg
+_ui = types.ModuleType("gnostr.ui")
+_ui.__path__ = [os.path.join(ROOT, "src", "gnostr", "ui")]
+sys.modules["gnostr.ui"] = _ui
+
+
+def _load(name, relpath):
+    spec = importlib.util.spec_from_file_location(
+        name, os.path.join(ROOT, "src", "gnostr", relpath)
+    )
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_load("gnostr.markup", "markup.py")
+_load("gnostr.ui.icons", "ui/icons.py")
+compose_box = _load("gnostr.ui.compose_box", "ui/compose_box.py")
+RichComposeBox = compose_box.RichComposeBox
 
 FAILS = []
 
@@ -62,32 +91,49 @@ def run(_app):
     buf = box.text_view.get_buffer()
 
     # emphasis buttons insensitive with no selection (locked design decision)
-    check("buttons insensitive without selection",
-          all(not b.get_sensitive() for b in box._feature_buttons.values()))
+    check(
+        "buttons insensitive without selection",
+        all(not b.get_sensitive() for b in box._feature_buttons.values()),
+    )
 
     # type text, select "hello", press bold -> **hello**
     buf.set_text("hello world")
     buf.select_range(buf.get_iter_at_offset(0), buf.get_iter_at_offset(5))
     while Gtk.events_pending():
         Gtk.main_iteration()
-    check("buttons sensitive with selection",
-          all(b.get_sensitive() for b in box._feature_buttons.values()))
+    check(
+        "buttons sensitive with selection",
+        all(b.get_sensitive() for b in box._feature_buttons.values()),
+    )
     box._on_feature_clicked(None, "bold")
-    check("bold wraps selection", box.get_text() == "**hello** world",
-          f"got {box.get_text()!r}")
-    check("selection covers wrapped text",
-          box.get_text()[buf.get_selection_bounds()[0].get_offset():buf.get_selection_bounds()[1].get_offset()]
-          == "**hello**")
+    check(
+        "bold wraps selection",
+        box.get_text() == "**hello** world",
+        f"got {box.get_text()!r}",
+    )
+    check(
+        "selection covers wrapped text",
+        box.get_text()[
+            buf.get_selection_bounds()[0]
+            .get_offset() : buf.get_selection_bounds()[1]
+            .get_offset()
+        ]
+        == "**hello**",
+    )
 
     # press bold again on the exact wrapped selection -> unwrap (toggle)
     box._on_feature_clicked(None, "bold")
-    check("bold toggles off", box.get_text() == "hello world", f"got {box.get_text()!r}")
+    check(
+        "bold toggles off", box.get_text() == "hello world", f"got {box.get_text()!r}"
+    )
 
     # italic + code
     buf.set_text("ab cd")
     buf.select_range(buf.get_iter_at_offset(3), buf.get_iter_at_offset(5))
     box._on_feature_clicked(None, "italic")
-    check("italic wraps selection", box.get_text() == "ab _cd_", f"got {box.get_text()!r}")
+    check(
+        "italic wraps selection", box.get_text() == "ab _cd_", f"got {box.get_text()!r}"
+    )
     buf.set_text("xy")
     buf.select_range(buf.get_iter_at_offset(0), buf.get_iter_at_offset(2))
     box._on_feature_clicked(None, "code")
@@ -98,8 +144,11 @@ def run(_app):
     buf.place_cursor(buf.get_iter_at_offset(6))
     box._link_entry.set_text("https://example.com")
     box._on_link_insert()
-    check("link inserted at caret", box.get_text() == "link: https://example.com",
-          f"got {box.get_text()!r}")
+    check(
+        "link inserted at caret",
+        box.get_text() == "link: https://example.com",
+        f"got {box.get_text()!r}",
+    )
 
     # get/set round-trip
     box.set_text("round trip")

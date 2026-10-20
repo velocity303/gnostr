@@ -17,7 +17,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, Adw  # noqa: E402
+from gi.repository import Adw, Gtk  # noqa: E402
 
 from ..markup import SUPPORTED_FEATURES, apply_marker, insert_at  # noqa: E402
 from .icons import resolve_icon  # noqa: E402
@@ -27,8 +27,16 @@ from .icons import resolve_icon  # noqa: E402
 # (verified in the flatpak), utilities-terminal-symbolic is present.
 _ICON_CANDIDATES = {
     "bold": ("format-text-bold-symbolic", "format-text-bold", "list-add-symbolic"),
-    "italic": ("format-text-italic-symbolic", "format-text-italic", "list-add-symbolic"),
-    "code": ("format-text-code-symbolic", "utilities-terminal-symbolic", "list-add-symbolic"),
+    "italic": (
+        "format-text-italic-symbolic",
+        "format-text-italic",
+        "list-add-symbolic",
+    ),
+    "code": (
+        "format-text-code-symbolic",
+        "utilities-terminal-symbolic",
+        "list-add-symbolic",
+    ),
     "link": ("insert-link-symbolic", "insert-link", "list-add-symbolic"),
 }
 
@@ -70,7 +78,9 @@ class RichComposeBox(Gtk.Box):
             self._feature_buttons[feature] = btn
 
         # Link: MenuButton + popover entry — bare URL inserted at caret.
-        self._link_btn = Gtk.MenuButton(icon_name=resolve_icon(_ICON_CANDIDATES["link"]))
+        self._link_btn = Gtk.MenuButton(
+            icon_name=resolve_icon(_ICON_CANDIDATES["link"])
+        )
         self._link_btn.set_tooltip_text("Insert link URL at cursor")
         pop = Gtk.Popover()
         pl = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, margin=6)
@@ -127,7 +137,9 @@ class RichComposeBox(Gtk.Box):
         buf = self.text_view.get_buffer()
         start, end = buf.get_selection_bounds()
         text = buf.get_text(buf.get_bounds()[0], buf.get_bounds()[1], False)
-        new_text, s, e = apply_marker(text, start.get_offset(), end.get_offset(), feature)
+        new_text, s, e = apply_marker(
+            text, start.get_offset(), end.get_offset(), feature
+        )
         self._apply(new_text, s, e)
 
     def _on_link_insert(self, *_args):

@@ -60,6 +60,7 @@ def _parse_cap():
 
 _MAX_VIDEO_WIDTH, _MAX_VIDEO_HEIGHT = _parse_cap()
 
+
 # Perf pass 2 (Librem 5 rig, measured on-device): decode is free — the i.MX8M
 # VPU (v4l2slh264dec) does a 10s 720p clip in 0.29s user. The stutter is the
 # CPU videoconvert NV12->RGBA that gtk4paintablesink forces: ~14s user per 10s
@@ -420,16 +421,26 @@ class ContentRenderer:
                                 )
                                 if trailing:
                                     text_fragments.append(
-                                        (None, emphasis_to_pango(GLib.markup_escape_text(trailing)))
+                                        (
+                                            None,
+                                            emphasis_to_pango(
+                                                GLib.markup_escape_text(trailing)
+                                            ),
                                         )
+                                    )
                                 continue
                             # malformed profile uri -> plain link
                             flush_text()
                             ContentRenderer._add_link(box, clean_part)
                             if trailing:
                                 text_fragments.append(
-                                    (None, emphasis_to_pango(GLib.markup_escape_text(trailing)))
+                                    (
+                                        None,
+                                        emphasis_to_pango(
+                                            GLib.markup_escape_text(trailing)
+                                        ),
                                     )
+                                )
                             continue
                         # nostr:naddr -> addressable-event quote card (NIP-19/NIP-33)
                         if "naddr" in clean_part:
@@ -439,8 +450,13 @@ class ContentRenderer:
                             )
                             if trailing:
                                 text_fragments.append(
-                                    (None, emphasis_to_pango(GLib.markup_escape_text(trailing)))
+                                    (
+                                        None,
+                                        emphasis_to_pango(
+                                            GLib.markup_escape_text(trailing)
+                                        ),
                                     )
+                                )
                             continue
                         # nostr:nrelay -> plain link (deprecated NIP-19 type)
                         if "nrelay" in clean_part:
@@ -448,8 +464,13 @@ class ContentRenderer:
                             ContentRenderer._add_link(box, clean_part)
                             if trailing:
                                 text_fragments.append(
-                                    (None, emphasis_to_pango(GLib.markup_escape_text(trailing)))
+                                    (
+                                        None,
+                                        emphasis_to_pango(
+                                            GLib.markup_escape_text(trailing)
+                                        ),
                                     )
+                                )
                             continue
                         # nostr event quote -> block card
                         flush_text()
@@ -458,8 +479,13 @@ class ContentRenderer:
                         )
                         if trailing:
                             text_fragments.append(
-                                (None, emphasis_to_pango(GLib.markup_escape_text(trailing)))
+                                (
+                                    None,
+                                    emphasis_to_pango(
+                                        GLib.markup_escape_text(trailing)
+                                    ),
                                 )
+                            )
                         continue
                     # http(s) link / media -> block widget
                     flush_text()
@@ -475,9 +501,13 @@ class ContentRenderer:
                     else:
                         ContentRenderer._add_link(box, clean_part)
                     if trailing:
-                        text_fragments.append((None, emphasis_to_pango(GLib.markup_escape_text(trailing))))
+                        text_fragments.append(
+                            (None, emphasis_to_pango(GLib.markup_escape_text(trailing)))
+                        )
                 else:
-                    text_fragments.append((None, emphasis_to_pango(GLib.markup_escape_text(part))))
+                    text_fragments.append(
+                        (None, emphasis_to_pango(GLib.markup_escape_text(part)))
+                    )
             flush_text()
 
         except Exception as e:
@@ -1097,7 +1127,8 @@ class VideoPlayer:
                     capfilter = Gst.ElementFactory.make("capsfilter", "mobile_res_cap")
                     fps_clause = (
                         f",framerate=(fraction)[0/1,{_MAX_VIDEO_FPS}/1]"
-                        if _MAX_VIDEO_FPS else ""
+                        if _MAX_VIDEO_FPS
+                        else ""
                     )
                     capfilter.set_property(
                         "caps",
@@ -1137,8 +1168,7 @@ class VideoPlayer:
                         sink_bin.add(el)
                     for a, b in zip(chain, chain[1:]):
                         a.link(b)
-                    ghost = Gst.GhostPad.new(
-                        "sink", chain[0].get_static_pad("sink"))
+                    ghost = Gst.GhostPad.new("sink", chain[0].get_static_pad("sink"))
                     sink_bin.add_pad(ghost)
                     video_sink = sink_bin
                     _vlog(
