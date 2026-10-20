@@ -100,4 +100,9 @@ if xvfb_run.found() and gtk_python.found()
   test('test_compose_gtk_real', xvfb_run,
     args: ['-a', gtk_python, meson.project_source_root() / 'tests/test_compose_gtk_real.py'],
     timeout: 120)
+  # Real-GTK DM composer harness (rich editor phase 2): DMThreadView builds
+  # with RichComposeBox(compact), Send enable/disable + publish_dm(extra_tags).
+  test('test_dm_composer_gtk_real', xvfb_run,
+    args: ['-a', gtk_python, meson.project_source_root() / 'tests/test_dm_composer_gtk_real.py'],
+    timeout: 120)
 endif
