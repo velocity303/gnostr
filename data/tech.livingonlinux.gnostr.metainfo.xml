@@ -57,6 +57,13 @@
   </requires>
 
   <releases>
+    <release version="0.2.0" date="2026-10-21">
+      <description>
+        <p>Rich composer: bold/italic markup, image and video attachments with thumbnails, drag-and-drop and paste.</p>
+        <p>Media uploads now use Blossom servers (BUD-01/BUD-02 signed uploads); the backend, server URL and size limit are user-configurable in Settings.</p>
+        <p>Feed fixes: infinite scroll now triggers reliably; profile chips show avatars.</p>
+      </description>
+    </release>
     <release version="0.1.0" date="2025-10-27">
       <description>
         <p>Initial release of Gnostr.</p>
