@@ -25,15 +25,25 @@ existing media path, so typing a path one keystroke at a time never
 triggers an attach. Drag-drop takes Gio.File directly. Every attached URL
 gets a removable preview chip above the entry; removing a chip deletes its
 URL line and its imeta tag.
+
+Phase 4: chips carry a 40px thumbnail (GdkPixbuf decode for images, icon for
+video); the clipboard is probed for raw image BYTES after the FileList read
+fails (screenshot tools put image/png there, not a file), saved to a temp
+file that is deleted once the upload has read it; and every entry point
+(picker, paste, drop) takes MULTIPLE files — uploads run concurrently and
+the media button stays insensitive until the last one lands.
 """
 
 import os
+import tempfile
+import threading
 
 import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
+gi.require_version("GdkPixbuf", "2.0")
+from gi.repository import Adw, Gdk, GdkPixbuf, Gio, GLib, Gtk  # noqa: E402
 
 from ..markup import SUPPORTED_FEATURES, apply_marker, insert_at  # noqa: E402
 from .icons import resolve_icon  # noqa: E402
@@ -55,10 +65,18 @@ _ICON_CANDIDATES = {
     ),
     "link": ("insert-link-symbolic", "insert-link", "list-add-symbolic"),
     "media": ("insert-image-symbolic", "image-x-generic-symbolic", "list-add-symbolic"),
+    "video": ("video-x-generic-symbolic", "media-video-symbolic", "list-add-symbolic"),
 }
 
 
 _MEDIA_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".mp4", ".webm")
+_VIDEO_EXTS = (".mp4", ".webm")
+
+# Cap per paste/drop action — a whole folder dragged in should not open a
+# dozen concurrent uploads on a phone connection.
+MAX_ATTACHMENTS = 4
+
+_CHIP_THUMB_PX = 40
 
 
 def _as_media_path(text):
@@ -94,18 +112,43 @@ class RichComposeBox(Gtk.Box):
         self.media_tags = []
         self._chips = []
         self.sign_fn = sign_fn
-        self._uploading = False
+        self._pending = 0  # in-flight uploads (button stays down until all land)
         self._suppress_insert_hook = False
 
         self.text_view = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD, top_margin=12)
-        if placeholder:
-            self.text_view.set_placeholder_text(placeholder)
         scrolled = Gtk.ScrolledWindow(vexpand=not compact)
         if compact:
             # DM bottom bar: grow to ~3 lines, then scroll (OSK-safe).
             scrolled.set_max_content_height(120)
             scrolled.set_propagate_natural_height(True)
         scrolled.set_child(self.text_view)
+
+        # Placeholder: GtkTextView:placeholder-text is GTK 4.24+; the Librem 5
+        # runtime is 4.22 and set_placeholder_text raises AttributeError there
+        # (found by the real-GTK harness — a manual overlay label instead).
+        text_area = scrolled
+        self._placeholder_label = None
+        if placeholder:
+            overlay = Gtk.Overlay()
+            overlay.set_child(scrolled)
+            lbl = Gtk.Label(
+                label=placeholder,
+                xalign=0,
+                wrap=True,
+                sensitive=False,
+                valign=Gtk.Align.START,
+                halign=Gtk.Align.START,
+                margin_top=12,
+                margin_start=5,
+            )
+            lbl.add_css_class("dim-label")
+            # 4.18+: make the label fully transparent to picking so taps
+            # always reach the text view underneath.
+            if hasattr(lbl, "set_can_target"):
+                lbl.set_can_target(False)
+            overlay.add_overlay(lbl)
+            self._placeholder_label = lbl
+            text_area = overlay
 
         # Preview chip row (phase 3): one removable chip per attached URL,
         # above the text. Hidden until the first attach.
@@ -124,7 +167,7 @@ class RichComposeBox(Gtk.Box):
         chip_scroll.set_visible(False)
         self._chip_scroll = chip_scroll
         self.append(chip_scroll)
-        self.append(scrolled)
+        self.append(text_area)
 
         # Paste a Gio.File / FileList (file manager copy, screenshot tools):
         # intercept Ctrl+V before the text view inserts it as text.
@@ -166,7 +209,14 @@ class RichComposeBox(Gtk.Box):
         )
         self._link_btn.set_tooltip_text("Insert link URL at cursor")
         pop = Gtk.Popover()
-        pl = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, margin=6)
+        pl = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=6,
+            margin_top=6,
+            margin_bottom=6,
+            margin_start=6,
+            margin_end=6,
+        )
         self._link_entry = Gtk.Entry(placeholder_text="https://…")
         self._link_entry.set_hexpand(True)
         self._link_entry.connect("activate", self._on_link_insert)
@@ -214,7 +264,7 @@ class RichComposeBox(Gtk.Box):
         self.media_bar.set_visible(False)
         self._chip_scroll.set_visible(False)
 
-    # -- phase 3: paste / drag-drop entry points ---------------------------
+    # -- phase 3/4: paste / drag-drop entry points --------------------------
 
     def _on_key_pressed(self, _ctrl, keyval, _keycode, state):
         """Ctrl+V with a FILE on the clipboard attaches it instead of pasting
@@ -234,15 +284,53 @@ class RichComposeBox(Gtk.Box):
         try:
             gvalue = clip.read_value_finish(res)
         except GLib.Error:
-            return  # clipboard holds no file list — normal text paste happened
+            # No file list — phase 4: screenshot tools put raw image BYTES on
+            # the clipboard, not a file. Probe for a Pixbuf before giving up.
+            clip.read_value_async(
+                GdkPixbuf.Pixbuf, GLib.PRIORITY_DEFAULT, None, self._on_paste_image, None
+            )
+            return
         file_list = gvalue.get_object()
         if file_list is None:
+            clip.read_value_async(
+                GdkPixbuf.Pixbuf, GLib.PRIORITY_DEFAULT, None, self._on_paste_image, None
+            )
             return
+        paths = []
         for f in file_list.get_files():
             path = f.get_path()
             if path and _as_media_path(path):
-                self._start_upload(path)
-                return  # first media file only, same as drag-drop
+                paths.append(path)
+            if len(paths) >= MAX_ATTACHMENTS:
+                break
+        if paths:
+            self._start_uploads(paths)
+
+    def _on_paste_image(self, clip, res, _data):
+        """Raw image bytes on the clipboard (GNOME Screenshot, GIMP copy):
+        write the pixbuf to a temp PNG, upload it, delete the temp file once
+        the worker has read it."""
+        try:
+            gvalue = clip.read_value_finish(res)
+        except GLib.Error:
+            return  # clipboard holds no image either — normal text paste happened
+        pixbuf = gvalue.get_object()
+        if pixbuf is None:
+            return
+        fd, tmp = tempfile.mkstemp(prefix="gnostr-paste-", suffix=".png")
+        os.close(fd)
+        try:
+            pixbuf.savev(tmp, "png", [], [])
+        except GLib.Error:
+            os.unlink(tmp)
+            return
+        try:
+            thumb = pixbuf.scale_simple(
+                _CHIP_THUMB_PX, _CHIP_THUMB_PX, GdkPixbuf.InterpType.BILINEAR
+            )
+        except Exception:
+            thumb = None
+        self._start_upload(tmp, cleanup=True, thumb=thumb)
 
     def _on_insert_text(self, _buf, _location, text, _length):
         """A pasted *path string* (OSK clipboard paste): fires only when the
@@ -258,6 +346,18 @@ class RichComposeBox(Gtk.Box):
         return True
 
     def _on_drop(self, _target, value, _x, _y):
+        if isinstance(value, Gdk.FileList):
+            paths = []
+            for f in value.get_files():
+                path = f.get_path()
+                if path and _as_media_path(path):
+                    paths.append(path)
+                if len(paths) >= MAX_ATTACHMENTS:
+                    break
+            if paths:
+                self._start_uploads(paths)
+                return True
+            return False
         path = value.get_path() if isinstance(value, Gio.File) else None
         if path and _as_media_path(path):
             self._start_upload(path)
@@ -266,11 +366,32 @@ class RichComposeBox(Gtk.Box):
 
     # -- preview chips ------------------------------------------------------
 
-    def _add_media_chip(self, url):
+    def _add_media_chip(self, url, local_path=None, thumb_pixbuf=None):
+        """One removable chip per attached URL. Phase 4: a 40px thumbnail —
+        video gets a static icon (a real first-frame grab needs a GStreamer
+        pipeline per file; not worth it on the phone), images decode the
+        LOCAL file async so a big photo never stalls the main loop."""
         chip = Gtk.Box(
             css_classes=["toolbar"], spacing=4, margin_top=2, margin_bottom=2
         )
         chip.add_css_class("flat")
+        if url.lower().rsplit("?", 1)[0].endswith(_VIDEO_EXTS) or (
+            local_path and local_path.lower().endswith(_VIDEO_EXTS)
+        ):
+            thumb = Gtk.Image.new_from_icon_name(resolve_icon(_ICON_CANDIDATES["video"]))
+            thumb.set_pixel_size(_CHIP_THUMB_PX)
+            chip.append(thumb)
+        elif thumb_pixbuf is not None:
+            thumb = Gtk.Image.new_from_pixbuf(thumb_pixbuf)
+            chip.append(thumb)
+        else:
+            thumb = Gtk.Image.new_from_icon_name(
+                resolve_icon(_ICON_CANDIDATES["media"])
+            )
+            thumb.set_pixel_size(_CHIP_THUMB_PX)
+            chip.append(thumb)
+            if local_path and os.path.isfile(local_path):
+                self._load_chip_thumb(thumb, local_path)
         name = url.rsplit("/", 1)[-1] or url
         label = Gtk.Label(label=name if len(name) <= 24 else name[:21] + "…")
         label.set_tooltip_text(url)
@@ -285,6 +406,28 @@ class RichComposeBox(Gtk.Box):
         self.media_bar.append(chip)
         self.media_bar.set_visible(True)
         self._chip_scroll.set_visible(True)
+
+    def _load_chip_thumb(self, image, path):
+        """Decode a 40px thumbnail off the main thread (GdkPixbuf on a
+        multi-MB phone photo is measurable on the A53s). The image may be
+        destroyed before the decode lands — Gtk.Image.is_valid() guards it."""
+
+        def worker():
+            try:
+                pb = GdkPixbuf.Pixbuf.new_from_file_at_size(
+                    path, _CHIP_THUMB_PX, _CHIP_THUMB_PX
+                )
+            except Exception:
+                return
+            GLib.idle_add(self._set_chip_thumb, image, pb)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    @staticmethod
+    def _set_chip_thumb(image, pb):
+        if image.is_valid():
+            image.set_from_pixbuf(pb)
+        return False
 
     def _on_chip_remove(self, _btn, url):
         # Drop the URL line from the text and the matching imeta tag.
@@ -315,9 +458,14 @@ class RichComposeBox(Gtk.Box):
             self._suppress_insert_hook = False
 
     def _sync_button_sensitivity(self, *_args):
-        has_sel = self.text_view.get_buffer().get_has_selection()
+        buf = self.text_view.get_buffer()
+        has_sel = buf.get_has_selection()
         for btn in self._feature_buttons.values():
             btn.set_sensitive(has_sel)
+        if self._placeholder_label is not None:
+            # GTK placeholder semantics: visible only when the buffer is
+            # completely empty — whitespace is text and hides it.
+            self._placeholder_label.set_visible(buf.get_char_count() == 0)
 
     def _apply(self, new_text, sel_start, sel_end):
         buf = self.text_view.get_buffer()
@@ -354,7 +502,7 @@ class RichComposeBox(Gtk.Box):
     # -- media attach (phase 2) -------------------------------------------
 
     def _on_attach_clicked(self, _btn):
-        if self._uploading:
+        if self._pending:
             return
         parent = self.get_root()
         chooser = Gtk.FileChooserNative.new(
@@ -364,6 +512,7 @@ class RichComposeBox(Gtk.Box):
             "_Open",
             "_Cancel",
         )
+        chooser.set_select_multiple(True)
         img = Gtk.FileFilter()
         img.set_name("Images")
         img.add_mime_type("image/png")
@@ -386,20 +535,31 @@ class RichComposeBox(Gtk.Box):
         chooser.show()
 
     def _on_chooser_response(self, chooser, response):
-        path = None
+        paths = []
         if response == Gtk.ResponseType.ACCEPT:
-            file = chooser.get_file()
-            path = file.get_path() if file else None
+            files = chooser.get_files()
+            for f in files:
+                path = f.get_path() if f else None
+                if path:
+                    paths.append(path)
         chooser.destroy()
         self._chooser = None
-        if not path:
-            return
-        self._start_upload(path)
+        if paths:
+            self._start_uploads(paths)
 
-    def _start_upload(self, path):
+    def _start_uploads(self, paths):
+        """Fire every file off at once — uploads run concurrently on their own
+        worker threads and the button stays down until the LAST one lands."""
+        for p in paths:
+            self._start_upload(p)
+
+    def _start_upload(self, path, cleanup=False, thumb=None):
+        """Spawn a worker upload. `cleanup=True` means the file is ours (a
+        raw-paste temp PNG) and is deleted once the worker has read it.
+        `thumb` is an already-decoded pixbuf (raw paste) for the chip."""
         from .. import uploader
 
-        self._uploading = True
+        self._pending += 1
         self._media_btn.set_sensitive(False)
         self._media_btn.set_tooltip_text("Uploading…")
         sign_fn = self.sign_fn
@@ -407,20 +567,27 @@ class RichComposeBox(Gtk.Box):
         def worker():
             try:
                 result = uploader.upload_file(path, sign_fn=sign_fn)
-                GLib.idle_add(self._on_upload_done, result, None)
+                GLib.idle_add(self._on_upload_done, result, None, path, thumb)
             except uploader.UploadError as e:
-                GLib.idle_add(self._on_upload_done, None, str(e))
+                GLib.idle_add(self._on_upload_done, None, str(e), path, thumb)
             except Exception as e:  # never kill the worker silently
-                GLib.idle_add(self._on_upload_done, None, f"Upload failed: {e}")
-
-        import threading
+                GLib.idle_add(
+                    self._on_upload_done, None, f"Upload failed: {e}", path, thumb
+                )
+            finally:
+                if cleanup:
+                    try:
+                        os.unlink(path)
+                    except OSError:
+                        pass
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _on_upload_done(self, result, error):
-        self._uploading = False
-        self._media_btn.set_sensitive(True)
-        self._media_btn.set_tooltip_text("Attach image or video")
+    def _on_upload_done(self, result, error, local_path=None, thumb=None):
+        self._pending = max(0, self._pending - 1)
+        if self._pending == 0:
+            self._media_btn.set_sensitive(True)
+            self._media_btn.set_tooltip_text("Attach image or video")
         if error:
             self._notify("media-error", error)
             return False
@@ -440,7 +607,7 @@ class RichComposeBox(Gtk.Box):
         new_text, caret = insert_at(text, pos, sep + url)
         self._set_text(new_text)
         buf.place_cursor(buf.get_iter_at_offset(caret))
-        self._add_media_chip(url)
+        self._add_media_chip(url, local_path=local_path, thumb_pixbuf=thumb)
         self._notify("media-uploaded", result["url"])
         return False
 

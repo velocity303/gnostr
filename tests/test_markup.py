@@ -91,6 +91,17 @@ def test_toggle_unwraps():
     assert (s, e) == (0, 5)
 
 
+def test_toggle_unwraps_marker_inclusive_selection():
+    # The state right after a wrap: _apply re-selects the WHOLE **x** span,
+    # so the second click sees a selection that INCLUDES the markers.
+    new, s, e = apply_marker("**hello** world", 0, 9, "bold")
+    assert new == "hello world"
+    assert (s, e) == (0, 5)
+    # italic/code use the same rule
+    assert apply_marker("_hi_", 0, 4, "italic")[0] == "hi"
+    assert apply_marker("`hi`", 0, 4, "code")[0] == "hi"
+
+
 def test_italic_and_code_markers():
     assert apply_marker("hi", 0, 2, "italic")[0] == "_hi_"
     assert apply_marker("hi", 0, 2, "code")[0] == "`hi`"

@@ -81,6 +81,16 @@ def apply_marker(text, start, end, feature):
     ):
         new = text[: start - len(open_m)] + text[start:end] + text[end + len(close_m) :]
         return new, start - len(open_m), end - len(open_m)
+    # selection INCLUDES the markers (the state right after a wrap re-selects
+    # the whole `**x**` span) -> unwrap the outer pair too, so a second click
+    # always toggles off regardless of which side of the marker the caret is on
+    if (
+        end - start >= len(open_m) + len(close_m)
+        and text[start : start + len(open_m)] == open_m
+        and text[end - len(close_m) : end] == close_m
+    ):
+        inner = text[start + len(open_m) : end - len(close_m)]
+        return text[:start] + inner + text[end:], start, start + len(inner)
     inner = text[start:end]
     new = text[:start] + open_m + inner + close_m + text[end:]
     if inner:

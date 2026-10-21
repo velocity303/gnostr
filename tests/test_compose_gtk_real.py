@@ -23,7 +23,8 @@ try:
 
     gi.require_version("Gtk", "4.0")
     gi.require_version("Adw", "1")
-    from gi.repository import Adw, Gtk
+    gi.require_version("GdkPixbuf", "2.0")
+    from gi.repository import Adw, Gdk, GdkPixbuf, Gio, GLib, Gtk
 except Exception as e:
     print("SKIP: real GTK4/Adw unavailable (%s)" % e)
     sys.exit(77)
@@ -68,26 +69,39 @@ compose_box = _load("gnostr.ui.compose_box", "ui/compose_box.py")
 RichComposeBox = compose_box.RichComposeBox
 
 FAILS = []
+CHECKS_RUN = [0]
 
 
 def check(name, cond, detail=""):
+    CHECKS_RUN[0] += 1
     if cond:
-        print(f"  ok: {name}")
+        print(f"  ok: {name}", flush=True)
     else:
         FAILS.append(name)
-        print(f"  FAIL: {name} {detail}")
+        print(f"  FAIL: {name} {detail}", flush=True)
 
 
-app = Gtk.Application(application_id="test.compose.gtkreal")
+app = Gtk.Application(
+    application_id="test.compose.gtkreal",
+    # Inside the flatpak sandbox the session bus may be unavailable and
+    # registration fails; without NON_UNIQUE, app.run() returns without ever
+    # activating and the whole harness silently skips to PASS.
+    flags=Gio.ApplicationFlags.NON_UNIQUE,
+)
 
 
 def run(_app):
+    ctx = GLib.MainContext.default()
+
+    def pump():
+        while ctx.pending():
+            ctx.iteration(False)
+
     win = Gtk.Window()
     box = RichComposeBox(placeholder="test")
     win.set_child(box)
     win.present()
-    while Gtk.events_pending():
-        Gtk.main_iteration()
+    pump()
 
     buf = box.text_view.get_buffer()
 
@@ -100,8 +114,7 @@ def run(_app):
     # type text, select "hello", press bold -> **hello**
     buf.set_text("hello world")
     buf.select_range(buf.get_iter_at_offset(0), buf.get_iter_at_offset(5))
-    while Gtk.events_pending():
-        Gtk.main_iteration()
+    pump()
     check(
         "buttons sensitive with selection",
         all(b.get_sensitive() for b in box._feature_buttons.values()),
@@ -154,6 +167,20 @@ def run(_app):
     # get/set round-trip
     box.set_text("round trip")
     check("set/get round-trip", box.get_text() == "round trip")
+
+    # placeholder overlay (GtkTextView placeholder-text is 4.24+; the phone
+    # is 4.22 — the overlay label must track buffer emptiness)
+    check("placeholder hidden when text present", not box._placeholder_label.get_visible())
+    box.set_text("")
+    check("placeholder visible when empty", box._placeholder_label.get_visible())
+    box.set_text("x")
+    check("placeholder hides on typing", not box._placeholder_label.get_visible())
+    box.set_text("   ")
+    check(
+        "placeholder hidden for whitespace-only",
+        not box._placeholder_label.get_visible(),
+    )
+    box.set_text("")
 
     # media upload completion path (no network: call the idle handler
     # directly, exactly as GLib.idle_add would from the worker thread)
@@ -252,13 +279,136 @@ def run(_app):
     check("set_text guarded against hook", calls == [real], f"calls={calls}")
     box.set_text("")
 
+    # -- phase 4: multi-file fan-out ---------------------------------------
+    calls.clear()
+    box._start_uploads([real, real, "/tmp/other.jpg"])
+    check(
+        "multi-file: one upload per path",
+        calls == [real, real, "/tmp/other.jpg"],
+        f"calls={calls}",
+    )
+
+    # pending counter: button stays insensitive until the LAST upload lands
+    # (_start_upload is what disables it; the fake above never ran, so mimic it)
+    box._pending = 2
+    box._media_btn.set_sensitive(False)
+    box._on_upload_done(
+        {"url": "https://cdn/m1.png", "mime": "image/png", "dim": None, "sha256": ""},
+        None,
+    )
+    check(
+        "button still busy after first of two",
+        box._pending == 1 and not box._media_btn.get_sensitive(),
+    )
+    box._on_upload_done(
+        {"url": "https://cdn/m2.png", "mime": "image/png", "dim": None, "sha256": ""},
+        None,
+    )
+    check(
+        "button re-enabled after last",
+        box._pending == 0 and box._media_btn.get_sensitive(),
+    )
+    box.clear_media()
+    box.set_text("")
+
+    # -- phase 4: chip thumbnails -------------------------------------------
+    box._add_media_chip("https://cdn/thumb.png", local_path=real)
+    chip_box = box._chips[-1][0]
+    thumb_img = chip_box.get_first_child()
+    check("chip starts with placeholder icon", thumb_img is not None)
+    # the async decode lands via GLib.idle_add — pump the main context
+    import time as _time
+
+    deadline = _time.time() + 5
+    while _time.time() < deadline:
+        pump()
+        if thumb_img.get_storage_type() == Gtk.ImageType.PIXBUF:
+            break
+    check(
+        "image chip gets pixbuf thumbnail",
+        thumb_img.get_storage_type() == Gtk.ImageType.PIXBUF,
+        f"storage={thumb_img.get_storage_type()}",
+    )
+    box._on_chip_remove(None, "https://cdn/thumb.png")
+
+    box._add_media_chip("https://cdn/clip.mp4")
+    vimg = box._chips[-1][0].get_first_child()
+    check(
+        "video chip gets static icon",
+        vimg.get_storage_type() == Gtk.ImageType.ICON_NAME,
+    )
+    box._on_chip_remove(None, "https://cdn/clip.mp4")
+
+    # -- phase 4: raw image-bytes paste --------------------------------------
+    class _FakeGValue:
+        def __init__(self, obj):
+            self._obj = obj
+
+        def get_object(self):
+            return self._obj
+
+    class _FakeClip:
+        def __init__(self, obj):
+            self._obj = obj
+
+        def read_value_finish(self, _res):
+            return _FakeGValue(self._obj)
+
+    pixbuf = GdkPixbuf.Pixbuf.new_from_file(real)
+    paste_calls = []
+
+    def _capture_upload(path, cleanup=False, thumb=None):
+        paste_calls.append((path, cleanup, thumb))
+
+    box._start_upload = _capture_upload
+    box._on_paste_image(_FakeClip(pixbuf), None, None)
+    check("raw paste fired one upload", len(paste_calls) == 1, f"{paste_calls}")
+    if paste_calls:
+        tmp_path, cleanup, thumb = paste_calls[0]
+        check("raw paste temp file exists at upload time", os.path.isfile(tmp_path))
+        check("raw paste temp marked for cleanup", cleanup is True)
+        check(
+            "raw paste chip thumb pre-decoded",
+            thumb is not None and thumb.get_width() == 40,
+        )
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+    # FileList paste with MULTIPLE media files fans out (capped)
+    list_calls = []
+    box._start_upload = lambda p, **kw: list_calls.append(p)
+    gfiles = [Gio.File.new_for_path(real) for _ in range(6)]
+    fl = Gdk.FileList.new(gfiles)
+    box._on_paste_files(_FakeClip(fl), None, None)
+    check(
+        "file-list paste capped at MAX_ATTACHMENTS",
+        len(list_calls) == compose_box.MAX_ATTACHMENTS,
+        f"got {len(list_calls)}",
+    )
+
+    # drag-drop of a FileList fans out too
+    drop_calls = []
+    box._start_upload = lambda p, **kw: drop_calls.append(p)
+    check(
+        "FileList drop accepted",
+        box._on_drop(None, Gdk.FileList.new(gfiles), 0, 0) is True,
+    )
+    check("FileList drop fans out", len(drop_calls) == compose_box.MAX_ATTACHMENTS)
+
+    box.clear_media()
     win.destroy()
     app.quit()
 
 
 app.connect("activate", run)
 app.run(None)
+# A harness that never activated (bus/GTK surprise) must never report PASS.
+if CHECKS_RUN[0] == 0:
+    print("FAILED: activate never ran — zero checks executed")
+    sys.exit(1)
 if FAILS:
     print(f"FAILED: {len(FAILS)} checks: {FAILS}")
     sys.exit(1)
-print("PASS: all compose-box real-GTK checks")
+print(f"PASS: all {CHECKS_RUN[0]} compose-box real-GTK checks")

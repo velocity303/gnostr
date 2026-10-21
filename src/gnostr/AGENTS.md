@@ -85,6 +85,28 @@ Core application layer — GTK4 window, app lifecycle, Nostr client wiring, and 
   programmatic writes go through the guarded `_set_text`), and Gtk.DropTarget.
   Each uploaded URL gets a removable preview chip above the entry; removing a
   chip strips its URL line + imeta tag.
+  Phase 4 LANDED: chips carry a 40px thumbnail — images decode the LOCAL file
+  async (`GdkPixbuf.new_from_file_at_size` on a worker thread, `is_valid()`
+  guard on the idle apply), video gets a static icon (a first-frame grab
+  needs a GStreamer pipeline per file; not worth it on the phone). Ctrl+V
+  falls back to raw image BYTES (GdkPixbuf on the clipboard — screenshot
+  tools): saved to a temp PNG, uploaded, deleted once the worker has read it
+  (`cleanup=True`), chip thumb pre-decoded from the pixbuf (the temp file may
+  be gone before a deferred decode). EVERY entry point is multi-file: picker
+  `set_select_multiple` + `get_files()`, FileList paste/drop fan out through
+  `_start_uploads` (capped `MAX_ATTACHMENTS=4`), uploads run concurrently and
+  a `_pending` counter keeps the media button insensitive until the LAST one
+  lands. `apply_marker` also unwraps a marker-INCLUSIVE selection (the state
+  right after a wrap re-selects `**x**`) — before this the toggle-off click
+  double-wrapped. Placeholder is an overlay label (GtkTextView
+  placeholder-text is 4.24+, phone is 4.22), visible only at char_count==0.
+  HARNESS LESSON: both *_gtk_real harnesses silently skipped to PASS inside
+  the flatpak sandbox — no session bus -> Gtk.Application registration fails
+  -> activate never runs. Fixed with NON_UNIQUE flags + a zero-checks guard
+  (exit 1 if activate never ran). The first real run then caught three genuine
+  device bugs the mocks never saw: TextView.set_placeholder_text (4.24+),
+  Gtk.Box `margin=` property (not a construct property), Gtk.events_pending
+  (removed 4.14 — pump GLib.MainContext.default() instead).
 
 ## Verification
 - `pytest tests/test_gateway.py tests/test_profile_service.py tests/test_profile_metadata_service.py tests/test_resource_management.py` — core service tests pass

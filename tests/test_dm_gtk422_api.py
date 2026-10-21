@@ -24,6 +24,11 @@ BANNED = [
         ".get_children(",
         "removed in GTK 4.10; walk get_first_child()/get_next_sibling()",
     ),
+    (
+        "text_view.set_placeholder_text",
+        "GtkTextView placeholder is GTK 4.24+; compose_box uses an overlay label "
+        "(Gtk.Entry.set_placeholder_text is fine — this ban is TextView-only)",
+    ),
 ]
 
 DM_FILES = [
