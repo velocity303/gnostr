@@ -247,18 +247,19 @@ class FakeThread:
         self._seen_ids = set()
         self._pending = {}
         self._new_since_view = 0
-        self.entry = MagicMock()
+        self.compose = MagicMock()
+        self.compose.media_tags = []
         self.btn_send = MagicMock()
         self.bubble_box = MagicMock()
         self.unread_pill = MagicMock()
 
-    def _on_entry_changed(self, entry):
+    def _on_entry_changed(self, *_args):
         fn = _class_method(
             os.path.join(_UI_DIR, "dm_thread_view.py"),
             "DMThreadView",
             "_on_entry_changed",
         )
-        return fn(self, entry)
+        return fn(self)
 
     def _on_send(self):
         fn = _class_method(
@@ -266,11 +267,11 @@ class FakeThread:
         )
         return fn(self)
 
-    def _send_text(self, text):
+    def _send_text(self, text, media_tags=None):
         fn = _class_method(
             os.path.join(_UI_DIR, "dm_thread_view.py"), "DMThreadView", "_send_text"
         )
-        return fn(self, text)
+        return fn(self, text, media_tags)
 
     def _append_msg(self, msg, status=None):
         fn = _class_method(
@@ -307,12 +308,11 @@ class FakeThread:
 
 def test_send_disabled_while_entry_blank():
     view = FakeThread()
-    entry = MagicMock()
-    entry.get_text.return_value = "   "
-    view._on_entry_changed(entry)
+    view.compose.get_text.return_value = "   "
+    view._on_entry_changed()
     view.btn_send.set_sensitive.assert_called_with(False)
-    entry.get_text.return_value = "hi"
-    view._on_entry_changed(entry)
+    view.compose.get_text.return_value = "hi"
+    view._on_entry_changed()
     view.btn_send.set_sensitive.assert_called_with(True)
     # disabled, never hidden
     assert not view.btn_send.hide.called
@@ -323,11 +323,16 @@ def test_optimistic_send_inserts_sending_bubble():
     view.main_window.pub_key = "me" * 32
     signed = {"id": "e" * 64, "pubkey": "me" * 32, "created_at": 123}
     view.main_window.client.publish_dm.return_value = signed
-    view._send_text("hello")
+    view.compose.get_text.return_value = "hello"
+    view._on_send()
     assert "e" * 64 in view._pending
     view.bubble_box.append.assert_called()
-    # entry cleared + refocused (OSK stays up)
-    view.main_window.client.publish_dm.assert_called_once_with("c" * 64, "hello")
+    # composer cleared + refocused (OSK stays up)
+    view.compose.set_text.assert_called_with("")
+    view.compose.grab_focus.assert_called()
+    view.main_window.client.publish_dm.assert_called_once_with(
+        "c" * 64, "hello", extra_tags=[]
+    )
 
 
 def test_publish_ack_solidifies_bubble():

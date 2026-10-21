@@ -41,8 +41,13 @@ if pytest_prog.found()
   test('test_publish_ack', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_publish_ack.py'], env: test_env, timeout: 120)
   test('test_feed_pagination', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_feed_pagination.py'], env: test_env, timeout: 120)
   test('test_feed_model', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_feed_model.py'], env: test_env, timeout: 120)
+  test('test_infinite_scroll', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_infinite_scroll.py'], env: test_env, timeout: 120)
+  test('test_backfill_phase2', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_backfill_phase2.py'], env: test_env, timeout: 120)
   test('test_scroll_gate', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_scroll_gate.py'], env: test_env, timeout: 120)
   test('test_scroll_gate_wiring', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_scroll_gate_wiring.py'], env: test_env, timeout: 120)
+  test('test_main_init_order', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_main_init_order.py'], env: test_env, timeout: 120)
+  test('test_markup', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_markup.py'], env: test_env, timeout: 120)
+  test('test_uploader', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_uploader.py'], env: test_env, timeout: 120)
   # VID-1: mobile video buffering — prefill props, threshold-gated play,
   # BUFFERING UX transitions + mid-playback pause-and-resume (mocked bus).
   test('test_video_buffering', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_video_buffering.py'], env: test_env, timeout: 120)
@@ -89,5 +94,15 @@ if xvfb_run.found() and gtk_python.found()
   # control per DM navigation state on a real Adw.NavigationView.
   test('test_dm_thread_back_gtk_real', xvfb_run,
     args: ['-a', gtk_python, meson.project_source_root() / 'tests/test_dm_thread_back_gtk_real.py'],
+    timeout: 120)
+  # Real-GTK compose-box harness (rich editor phase 1): marker wrap/unwrap,
+  # selection sensitivity, link insert against a real Gtk.TextBuffer.
+  test('test_compose_gtk_real', xvfb_run,
+    args: ['-a', gtk_python, meson.project_source_root() / 'tests/test_compose_gtk_real.py'],
+    timeout: 120)
+  # Real-GTK DM composer harness (rich editor phase 2): DMThreadView builds
+  # with RichComposeBox(compact), Send enable/disable + publish_dm(extra_tags).
+  test('test_dm_composer_gtk_real', xvfb_run,
+    args: ['-a', gtk_python, meson.project_source_root() / 'tests/test_dm_composer_gtk_real.py'],
     timeout: 120)
 endif

@@ -236,11 +236,18 @@ class ComposeWindow(Adw.Window):
         hb = Adw.HeaderBar()
         box.append(hb)
 
-        # Text input
-        self.text_view = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD, top_margin=12)
-        scrolled = Gtk.ScrolledWindow(vexpand=True)
-        scrolled.set_child(self.text_view)
-        box.append(scrolled)
+        # Rich composer: markdown-lite marker bar (bold/italic/code/link) +
+        # media attach (imeta), scope: ~/Briefcase/gnostr-scopes/editor-gtk-scope.md
+        from gnostr.ui.compose_box import RichComposeBox
+
+        parent_window = self.get_transient_for()
+        sign_fn = None
+        client = getattr(parent_window, "client", None) if parent_window else None
+        if client is not None and hasattr(client, "_sign"):
+            sign_fn = client._sign
+        self.compose = RichComposeBox(placeholder="What's happening?", sign_fn=sign_fn)
+        self.text_view = self.compose.text_view
+        box.append(self.compose)
 
         # Footer button
         btn_post = Gtk.Button(label="Post", css_classes=["pill", "suggested-action"])
@@ -249,13 +256,12 @@ class ComposeWindow(Adw.Window):
         box.append(btn_post)
 
         self.on_post_callback = on_post_callback
+        self.compose.grab_focus()
 
     def on_post_clicked(self, b):
-        buffer = self.text_view.get_buffer()
-        start, end = buffer.get_bounds()
-        text = buffer.get_text(start, end, False)
+        text = self.compose.get_text()
         if text.strip():
-            self.on_post_callback(text)
+            self.on_post_callback(text, list(self.compose.media_tags))
             self.close()
 
 

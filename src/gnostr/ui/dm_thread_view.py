@@ -8,7 +8,8 @@ back is the automatic Adw.NavigationView back button — exactly one back
 control, and still a header button for the Phosh gesture-exclusion
 contract). Content: vexpand GtkScrolledWindow -> GtkListBox of bubble rows
 (reverse=false, scroll-on-focus=false per contract). Bottom-bar: composer —
-single-line GtkEntry + suggested-action Send button (48x48 min). The
+RichComposeBox (compact: grows to ~3 lines then scrolls; marker bar + media
+attach, editor scope phase 2) + suggested-action Send button (48x48 min). The
 bottom-bar survives the OSK on Phosh: keyboard-resize clamps the bubble
 ScrolledWindow, never truncates the composer. No modal compose reuse.
 
@@ -33,6 +34,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gtk, Pango
 
 from ..nostr_utils import hex_to_npub
+from .compose_box import RichComposeBox
 from .dm_inbox_view import format_relative_time
 
 PAGE_SIZE = 50
@@ -104,24 +106,24 @@ class DMThreadView(Gtk.Box):
         overlay.add_overlay(self.unread_pill)
         toolbar.set_content(overlay)
 
-        # Composer: bottom-bar (OSK-safe), entry + Send. Send is disabled,
-        # never hidden, while the entry is blank.
+        # Composer: bottom-bar (OSK-safe), rich compose box + Send. Send is
+        # disabled, never hidden, while the text is blank. RichComposeBox in
+        # compact mode: grows to ~3 lines then scrolls; same marker bar +
+        # media attach as the post composer (editor scope phase 2).
         composer = Gtk.Box(spacing=8)
         composer.set_margin_start(12)
         composer.set_margin_end(12)
         composer.set_margin_top(6)
         composer.set_margin_bottom(6)
 
-        self.entry = Gtk.Entry()  # Gtk.Entry is single-line by default
-        self.entry.set_placeholder_text("Message…")
-        self.entry.set_hexpand(True)
-        # set_enable_ime was removed in GTK 4.16; IME input is always enabled
-        # for editable text, so the call was a no-op that raised AttributeError
-        # on the Librem 5 runtime.
-        self.entry.connect("changed", self._on_entry_changed)
-        # Send sensitive on Enter (desktop).
-        self.entry.connect("activate", lambda e: self._on_send())
-        composer.append(self.entry)
+        self.compose = RichComposeBox(
+            placeholder="Message…",
+            compact=True,
+            sign_fn=getattr(main_window.client, "_sign", None),
+        )
+        self.compose.set_hexpand(True)
+        self.compose.text_view.get_buffer().connect("changed", self._on_entry_changed)
+        composer.append(self.compose)
 
         self.btn_send = Gtk.Button(label="Send")
         self.btn_send.add_css_class("suggested-action")
@@ -152,9 +154,9 @@ class DMThreadView(Gtk.Box):
         main_window.update_dm_badge()
 
         self.load_thread()
-        # Keep the entry focused so the OSK comes up on tap without stealing
+        # Keep the composer focused so the OSK comes up on tap without stealing
         # focus away after send (contract).
-        self.entry.grab_focus()
+        self.compose.grab_focus()
 
     # ------------------------------------------------------------------
     # bubbles
@@ -268,20 +270,26 @@ class DMThreadView(Gtk.Box):
     # composer
     # ------------------------------------------------------------------
 
-    def _on_entry_changed(self, entry):
+    def _on_entry_changed(self, *_args):
         # Disable (never hide) Send while blank — layout shift breaks the OSK.
-        self.btn_send.set_sensitive(bool(entry.get_text().strip()))
+        # Reads the compose box directly: the signal fires on the TextBuffer,
+        # whose get_text() needs bounds args, so never trust the sender arg.
+        self.btn_send.set_sensitive(bool(self.compose.get_text().strip()))
 
     def _on_send(self):
-        text = self.entry.get_text().strip()
+        text = self.compose.get_text().strip()
         if not text:
             return
-        self.entry.set_text("")
-        self.entry.grab_focus()  # entry stays focused/empty after send (contract)
-        self._send_text(text)
+        media_tags = list(self.compose.media_tags)
+        self.compose.set_text("")
+        self.compose.clear_media()
+        self.compose.grab_focus()  # composer stays focused/empty after send (contract)
+        self._send_text(text, media_tags)
 
-    def _send_text(self, text):
-        signed = self.main_window.client.publish_dm(self.peer_pubkey, text)
+    def _send_text(self, text, media_tags=None):
+        signed = self.main_window.client.publish_dm(
+            self.peer_pubkey, text, extra_tags=media_tags
+        )
         if signed is None:
             self._show_failed(
                 {

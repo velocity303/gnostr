@@ -13,11 +13,14 @@ which is GTK-free and unit-tested headless. This view only:
       near-top    -> re-pull evicted newer posts (or auto-flush the
                      new-posts buffer when already at the top)
 
-The feed page is model-driven only for the "following" feed (the
-workstream target). "global" and "me" feeds keep the legacy inline
-render in MainWindow.switch_feed; their handlers here no-op when
-``self.feed_model`` is None, so the scroll wiring is inert for them.
+The feed page is model-driven for every feed kind (infinite-scroll
+phase 1). Every feed kind (following/global/me) is model-driven
+via `start_model_feed(kind)` — the FeedSource picks the DB query; the
+scroll wiring is inert only when ``self.feed_model`` is None (no feed
+started).
 """
+import time
+
 import gi
 
 gi.require_version("Gtk", "4.0")
@@ -49,6 +52,8 @@ class FeedView(Adw.NavigationPage):
         # Set by MainWindow for the "following" feed (None otherwise).
         self.feed_model = None
         self._loading_older = False
+        # sub_id of the in-flight relay backfill REQ (phase 2), else None.
+        self._backfill_inflight = None
         self._syncing = False
         # Scroll-trigger state: the last scroll value seen. A zone fires
         # only when the value actually changes — i.e. a real user scroll.
@@ -247,7 +252,12 @@ class FeedView(Adw.NavigationPage):
         if self._loading_older:
             return
         m = self.feed_model
-        if m is None or m.exhausted:
+        if m is None:
+            return
+        if m.exhausted:
+            # Two-tier backfill (phase 2): the DB has nothing older, so
+            # ask the relays for history and re-query when they answer.
+            self._begin_backfill()
             return
         self._loading_older = True
         try:
@@ -265,7 +275,12 @@ class FeedView(Adw.NavigationPage):
     def _maybe_continue_bottom(self):
         """Continue paging to end-of-DB while the user stays at the bottom."""
         m = self.feed_model
-        if m is None or m.exhausted or self._bottom_auto >= _BOTTOM_AUTO_CAP:
+        if (
+            m is None
+            or m.exhausted
+            or self._backfill_inflight
+            or self._bottom_auto >= _BOTTOM_AUTO_CAP
+        ):
             return
         upper = self._vadj.get_upper()
         page = self._vadj.get_page_size()
@@ -275,6 +290,56 @@ class FeedView(Adw.NavigationPage):
             self._bottom_auto += 1
             GLib.idle_add(self._on_near_bottom)
 
+    # ------------------------------------------------------------------
+    # Two-tier backfill (infinite-scroll phase 2)
+    # ------------------------------------------------------------------
+
+    def _begin_backfill(self):
+        """Ask the relays for history older than the window tail.
+
+        The DB tier is exhausted; the relay tier pages in events that were
+        never seen (older than the live subscription, pruned cache).
+        Events land in the DB via the normal event-received path; the
+        'backfill-done' signal (all relays EOSE'd) re-triggers the page
+        load. One in flight per feed; the client throttles the REQ rate.
+        """
+        m = self.feed_model
+        if m is None or self._backfill_inflight:
+            return
+        from ..service.feed_pagination import backfill_filter
+
+        kind = m.source.kind if getattr(m, "source", None) else "following"
+        mw = self.main_window
+        filt = backfill_filter(kind, mw.pub_key, m.cursor, m.page_size, mw.db)
+        if filt is None:
+            return
+        sub_id = f"backfill_{kind}_{int(time.time() * 1000)}"
+        if not mw.client.request_backfill(sub_id, filt):
+            return  # throttled or no relays — next scroll re-arms
+        self._backfill_inflight = sub_id
+        self._sentinel.set_label("Loading more…")
+        self._sentinel.set_visible(True)
+
+    def on_backfill_done(self, client, sub_id):
+        """A backfill REQ finished (all relays EOSE'd). The events it
+        carried are already in the DB — retry the page load if the user
+        is still parked at the bottom; otherwise the next scroll re-fires
+        the trigger naturally."""
+        if self._backfill_inflight != sub_id:
+            return  # stale (feed switched mid-flight)
+        self._backfill_inflight = None
+        self._sentinel.set_label("You're all caught up")
+        m = self.feed_model
+        if m is None:
+            return
+        m.exhausted = False  # relays may have produced older rows
+        upper = self._vadj.get_upper()
+        page = self._vadj.get_page_size()
+        value = self._vadj.get_value()
+        if (upper - page) - value <= NEAR_BOTTOM_PX:
+            GLib.idle_add(self._on_near_bottom)
+        else:
+            self._sync_window()
 
     def _on_near_top(self):
         """At the top edge: re-pull the evicted newer posts, or auto-flush
@@ -443,17 +508,21 @@ class FeedView(Adw.NavigationPage):
     # Feed lifecycle (called by MainWindow)
     # ------------------------------------------------------------------
 
-    def start_model_feed(self):
-        """Build a FeedModel for the active following feed and load the
-        first page. Called by MainWindow.switch_feed('following')."""
+    def start_model_feed(self, kind="following"):
+        """Build a FeedModel for `kind` ('following'|'global'|'me') and
+        load the first page. Called by MainWindow.switch_feed for every
+        feed type — one pagination state machine serves them all
+        (infinite-scroll phase 1)."""
         mw = self.main_window
         from ..service.feed_model import FeedModel
+        from ..service.feed_pagination import make_source
 
         self.feed_model = FeedModel(
             owner_pubkey=mw.pub_key,
             database=mw.db,
             page_size=50,
             max_window=100,
+            source=make_source(kind, mw.db, mw.pub_key),
         )
         self.feed_model.load_first()
         self.sync_window()
@@ -463,6 +532,7 @@ class FeedView(Adw.NavigationPage):
         if self.feed_model is not None:
             self.feed_model.reset()
             self.feed_model = None
+        self._backfill_inflight = None
         for eid in list(self.main_window.event_widgets):
             self.main_window.event_widgets.pop(eid, None)
         self.clear_posts()

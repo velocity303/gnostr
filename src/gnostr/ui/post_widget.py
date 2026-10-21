@@ -175,6 +175,14 @@ class PostWidget(Adw.Bin):
         # Interaction
         if not is_hero:
             ctrl = Gtk.GestureClick()
+            # Slice 3 (issue #22): record the press origin so _on_card_clicked
+            # can tell a swipe from a tap by travel distance. The cooldown gate
+            # alone misses swipes that start where the feed can't scroll (top
+            # of feed: no value-changed, no stamp, gate never engages).
+            ctrl.connect(
+                "pressed",
+                lambda g, n, x, y: self._note_press_for_gate(x, y),
+            )
             ctrl.connect(
                 "released",
                 lambda c, n, x, y: self._on_card_clicked(
@@ -196,6 +204,14 @@ class PostWidget(Adw.Bin):
             # lp's widget is only set once it's added to a controller host.
             self.add_controller(lp)
             ctrl.group(lp)
+
+    def _note_press_for_gate(self, x, y):
+        """Record the press origin on the feed's ScrollGate so the release
+        handler can measure travel distance (slice 3, issue #22). No-op when
+        no gate is wired (thread hero, tests)."""
+        gate = getattr(self.main_window, "scroll_gate", None)
+        if gate is not None:
+            gate.note_press(x, y)
 
     def _activation_gated(self, gesture_node=None):
         """Return True if this card tap is inside the post-scroll cooldown AND
@@ -235,6 +251,15 @@ class PostWidget(Adw.Bin):
         # because opening the thread is cheap but spurious here.
         if self._activation_gated(n):
             print("[scroll-gate] swallowed card activation")
+            return
+        # Slice 3 (issue #22): geometric swipe guard. The cooldown above is
+        # temporal and misses swipes that start where the feed cannot scroll
+        # (top of feed, rubber-band) — no value-changed, no stamp, gate inert.
+        # Travel distance is position-independent: a release >30 logical px
+        # from the press is a swipe no matter what the adjustment did.
+        gate = getattr(self.main_window, "scroll_gate", None)
+        if gate is not None and gate.swipe_since_press(x, y):
+            print("[scroll-gate] swallowed card activation (swipe travel)")
             return
         # Open the thread on a normal click, UNLESS the click landed on one of
         # the footer action buttons (like/repost/reply). Those buttons have
@@ -333,7 +358,7 @@ class PostWidget(Adw.Bin):
             return
         from gnostr.dialogs import ComposeWindow
 
-        def handle_post(text):
+        def handle_post(text, media_tags=None):
             # Reply to this post: root = thread root, parent = this post.
             root = self._root_id or self.event_id
             root_pk = self._root_pk or self.pubkey
@@ -345,6 +370,7 @@ class PostWidget(Adw.Bin):
                     "parent": self.event_id,
                     "parent_pk": self.pubkey,
                 },
+                extra_tags=media_tags,
             )
             if ok:
                 self.main_window.add_toast(Adw.Toast(title="Reply Published"))

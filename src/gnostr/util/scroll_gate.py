@@ -24,7 +24,12 @@ Design (see issue #22, spec comment by hermes):
 """
 
 from dataclasses import dataclass, field
+from typing import Optional
 import time
+
+# Minimum press→release travel (logical px) that classifies a gesture as a
+# swipe rather than a tap. See ScrollGate.note_press / swipe_since_press.
+SWIPE_THRESHOLD_PX = 30
 
 
 @dataclass
@@ -44,6 +49,8 @@ class ScrollGate:
     grace_ms: int = 600
     last_stamp: float = 0.0
     last_scroll_was_touch: bool = False
+    _press_x: Optional[float] = None
+    _press_y: Optional[float] = None
 
     def mark_scroll(self, is_touch=True):
         """Stamp the current time as the last scroll event and record whether
@@ -63,6 +70,42 @@ class ScrollGate:
         """Clear the stamp entirely — used in tests and when switching feeds."""
         self.last_stamp = 0.0
         self.last_scroll_was_touch = False
+        self._press_x = None
+        self._press_y = None
+
+    # ------------------------------------------------------------------
+    # Swipe guard (issue #22 slice 3)
+    # ------------------------------------------------------------------
+    # The time-since-scroll cooldown above cannot catch a swipe that starts
+    # where the feed CANNOT scroll — at the top of the feed (or during a
+    # rubber-band overscroll) the vadjustment never moves, no value-changed
+    # fires, the gate is never stamped, and the swipe's release lands as a
+    # "tap" that opens the thread. This guard is geometric instead of
+    # temporal: a press that travels more than SWIPE_THRESHOLD_PX before
+    # release is a swipe, no matter what the scroll position was doing.
+    # GTK4's GestureClick fires ``released`` regardless of travel distance,
+    # so callers must do this themselves: call :meth:`note_press` on the
+    # gesture's ``pressed`` and :meth:`swipe_since_press` on ``released``.
+    # Threshold is in *logical* px (GDK event coords); the Librem 5's scale
+    # factor 2 means 30 logical px = 60 physical — comfortably above an
+    # accidental finger wobble (~5-10px) and below any deliberate swipe.
+
+    def note_press(self, x, y):
+        """Record where a press began (call from GestureClick ``pressed``)."""
+        self._press_x = x
+        self._press_y = y
+
+    def swipe_since_press(self, x, y, threshold=SWIPE_THRESHOLD_PX):
+        """Return True if the release point is farther than ``threshold``
+        logical px from the recorded press — i.e. the gesture was a swipe,
+        not a tap. Returns False (allow activation) when no press was
+        recorded, so a caller that never wired ``pressed`` behaves exactly
+        as before rather than swallowing every tap."""
+        if self._press_x is None or self._press_y is None:
+            return False
+        dx = abs(x - self._press_x)
+        dy = abs(y - self._press_y)
+        return (dx * dx + dy * dy) > threshold * threshold
 
     @staticmethod
     def is_touch_source(source):

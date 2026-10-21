@@ -14,6 +14,7 @@ install_data(
     'dm_thread_view.py',
     'icons.py',
     'derive_key.py',
+    'compose_box.py',
   ],
   install_dir: pkgdatadir / pkg_name / 'ui'
 )
