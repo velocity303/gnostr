@@ -90,7 +90,7 @@ app = Gtk.Application(
 )
 
 
-def run(_app):
+def _run_checks(app):
     ctx = GLib.MainContext.default()
 
     def pump():
@@ -244,11 +244,31 @@ def run(_app):
 
     # -- phase 3: pasted-path detection -------------------------------------
     import tempfile
+    import zlib
 
     tmpdir = tempfile.mkdtemp()
     real = os.path.join(tmpdir, "shot.png")
+
+    # Real 1x1 PNG (the phone's glycin loader rejects magic-only fakes;
+    # the thumbnail check actually decodes this file).
+    def _chunk(ctype, data):
+        c = ctype + data
+        return (
+            len(data).to_bytes(4, "big")
+            + c
+            + zlib.crc32(c).to_bytes(4, "big")
+        )
+
+    ihdr = (1).to_bytes(4, "big") + (1).to_bytes(4, "big") + b"\x08\x06\x00\x00\x00"
+    # 1 scanline: filter byte 0 + one RGBA pixel (color type 6 = 4 bytes)
+    idat = zlib.compress(b"\x00\xff\x00\x00\xff")
     with open(real, "wb") as f:
-        f.write(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)
+        f.write(
+            b"\x89PNG\r\n\x1a\n"
+            + _chunk(b"IHDR", ihdr)
+            + _chunk(b"IDAT", idat)
+            + _chunk(b"IEND", b"")
+        )
 
     calls = []
     box._start_upload = calls.append
@@ -322,11 +342,11 @@ def run(_app):
     deadline = _time.time() + 5
     while _time.time() < deadline:
         pump()
-        if thumb_img.get_storage_type() == Gtk.ImageType.PIXBUF:
+        if thumb_img.get_storage_type() == Gtk.ImageType.PAINTABLE:
             break
     check(
         "image chip gets pixbuf thumbnail",
-        thumb_img.get_storage_type() == Gtk.ImageType.PIXBUF,
+        thumb_img.get_storage_type() == Gtk.ImageType.PAINTABLE,
         f"storage={thumb_img.get_storage_type()}",
     )
     box._on_chip_remove(None, "https://cdn/thumb.png")
@@ -380,7 +400,7 @@ def run(_app):
     list_calls = []
     box._start_upload = lambda p, **kw: list_calls.append(p)
     gfiles = [Gio.File.new_for_path(real) for _ in range(6)]
-    fl = Gdk.FileList.new(gfiles)
+    fl = Gdk.FileList.new_from_list(gfiles)
     box._on_paste_files(_FakeClip(fl), None, None)
     check(
         "file-list paste capped at MAX_ATTACHMENTS",
@@ -393,13 +413,24 @@ def run(_app):
     box._start_upload = lambda p, **kw: drop_calls.append(p)
     check(
         "FileList drop accepted",
-        box._on_drop(None, Gdk.FileList.new(gfiles), 0, 0) is True,
+        box._on_drop(None, Gdk.FileList.new_from_list(gfiles), 0, 0) is True,
     )
     check("FileList drop fans out", len(drop_calls) == compose_box.MAX_ATTACHMENTS)
 
     box.clear_media()
     win.destroy()
     app.quit()
+
+
+def run(app):
+    # PyGObject swallows exceptions raised inside signal handlers (prints a
+    # traceback, app.run still returns 0) — a mid-run crash used to exit 0 as
+    # a false green. Any surprise must surface as a FAILED check instead.
+    try:
+        _run_checks(app)
+    except Exception as exc:  # noqa: BLE001
+        check("harness ran to completion", False, f"{type(exc).__name__}: {exc}")
+        app.quit()
 
 
 app.connect("activate", run)

@@ -29,6 +29,18 @@ BANNED = [
         "GtkTextView placeholder is GTK 4.24+; compose_box uses an overlay label "
         "(Gtk.Entry.set_placeholder_text is fine — this ban is TextView-only)",
     ),
+    (
+        "ImageType.PIXBUF",
+        "GTK3 legacy enum; GTK4 stores pixbufs as PAINTABLE",
+    ),
+    (
+        ".is_valid()",
+        "Gtk.Image.is_valid is GTK3-only; detached-widget guard is get_parent()",
+    ),
+    (
+        "FileList.new(",
+        "Gdk.FileList has no plain new(); use new_from_list/new_from_array",
+    ),
 ]
 
 DM_FILES = [
