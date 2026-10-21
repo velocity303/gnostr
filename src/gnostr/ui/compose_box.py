@@ -1,7 +1,7 @@
 # src/gnostr/ui/compose_box.py
 """RichComposeBox — the one composer widget for posts and DMs.
 
-Scope: ~/Briefcase/gnostr-scopes/editor-gtk-scope.md. Gtk.TextView has no
+Scope: editor-gtk-scope (rich editor spec). Gtk.TextView has no
 rich text; the bar inserts markdown-lite MARKERS around the selection and
 the wire content stays plain text (NIP-01). The marker set comes from
 markup.SUPPORTED_FEATURES — the single source of truth shared with the

@@ -2,7 +2,7 @@
 """Markdown-lite subset shared by the composer and the renderer.
 
 Single source of truth for the emphasis subset gnostr emits and renders
-(spec: ~/Briefcase/gnostr-scopes/editor-scope-spec.md, miku's
+(spec: editor-scope-spec (rich editor spec), miku's
 gnostr-editor-markup-media-v1). The compose bar and the renderer both read
 SUPPORTED_FEATURES, so the bar literally cannot offer what the spec forbids.
 

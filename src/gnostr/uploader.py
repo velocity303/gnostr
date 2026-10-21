@@ -1,7 +1,7 @@
 # src/gnostr/uploader.py
 """Media upload: local file -> {url, mime, dim, sha256} (rich editor phase 2).
 
-Scope: ~/Briefcase/gnostr-scopes/editor-gtk-scope.md. NIP-96 is `unrecommended`
+Scope: editor-gtk-scope (rich editor spec). NIP-96 is `unrecommended`
 (deprecated for NIP-B7/Blossom) but nostr.build et al still dominate deployed
 hosts, so both transports exist and the backend is GSettings-configurable
 (upload-backend / upload-server-url / upload-max-mb) — future-proofing against

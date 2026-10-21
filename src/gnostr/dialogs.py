@@ -317,7 +317,7 @@ class ComposeWindow(Adw.Window):
         box.append(hb)
 
         # Rich composer: markdown-lite marker bar (bold/italic/code/link) +
-        # media attach (imeta), scope: ~/Briefcase/gnostr-scopes/editor-gtk-scope.md
+        # media attach (imeta), scope: editor-gtk-scope (rich editor spec)
         from gnostr.ui.compose_box import RichComposeBox
 
         parent_window = self.get_transient_for()
