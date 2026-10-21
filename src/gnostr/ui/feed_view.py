@@ -115,7 +115,11 @@ class FeedView(Adw.NavigationPage):
 
         # Scroll plumbing.
         self._vadj = self._scrolled.get_vadjustment()
-        self._vadj.connect("changed", self.on_scroll_changed)
+        # "value-changed", NOT "changed": Gtk.Adjustment.set_value() emits
+        # value-changed only — "changed" fires solely for upper/page_size/
+        # step changes. Connecting the pagination trigger to "changed" (the
+        # old wiring) meant scrolling never paged: the handler never ran.
+        self._vadj.connect("value-changed", self.on_scroll_changed)
         # Touch-activation cooldown after scroll momentum. Stamped on the vadj's
         # "value-changed" (not "changed") so the kinetic glide phase naturally
         # starts the grace window at motion stop, not finger-up. A separate
