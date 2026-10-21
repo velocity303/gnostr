@@ -101,7 +101,7 @@ app = Adw.Application(
 )
 
 
-def on_activate(a):
+def _run_checks(a):
     win = Gtk.Window()
     win.set_default_size(360, 640)
     try:
@@ -142,6 +142,17 @@ def on_activate(a):
 
     win.destroy()
     a.quit()
+
+
+def on_activate(a):
+    # PyGObject swallows exceptions in signal handlers (traceback printed,
+    # app.run still returns 0) — a mid-run crash must surface as a FAILED
+    # check, never a false green.
+    try:
+        _run_checks(a)
+    except Exception as exc:  # noqa: BLE001
+        check("harness ran to completion", False, f"{type(exc).__name__}: {exc}")
+        a.quit()
 
 
 app.connect("activate", on_activate)

@@ -86,8 +86,8 @@ Core application layer — GTK4 window, app lifecycle, Nostr client wiring, and 
   Each uploaded URL gets a removable preview chip above the entry; removing a
   chip strips its URL line + imeta tag.
   Phase 4 LANDED: chips carry a 40px thumbnail — images decode the LOCAL file
-  async (`GdkPixbuf.new_from_file_at_size` on a worker thread, `is_valid()`
-  guard on the idle apply), video gets a static icon (a first-frame grab
+  async (`GdkPixbuf.new_from_file_at_size` on a worker thread, detached-widget
+  guard via get_parent() — Gtk.Image.is_valid is GTK3-only and raises on 4.22), video gets a static icon (a first-frame grab
   needs a GStreamer pipeline per file; not worth it on the phone). Ctrl+V
   falls back to raw image BYTES (GdkPixbuf on the clipboard — screenshot
   tools): saved to a temp PNG, uploaded, deleted once the worker has read it
@@ -106,7 +106,17 @@ Core application layer — GTK4 window, app lifecycle, Nostr client wiring, and 
   (exit 1 if activate never ran). The first real run then caught three genuine
   device bugs the mocks never saw: TextView.set_placeholder_text (4.24+),
   Gtk.Box `margin=` property (not a construct property), Gtk.events_pending
-  (removed 4.14 — pump GLib.MainContext.default() instead).
+  (removed 4.14 — pump GLib.MainContext.default() instead). ROUND 2 (spider-man
+  gate review of PR 45 caught the false green): PyGObject swallows exceptions
+  raised inside signal handlers — a mid-run crash still exited 0, so both
+  harnesses now wrap the check body and surface any exception as a FAILED
+  check. With checks 38+ finally executing, three more device-only bugs
+  surfaced: Gtk.ImageType.PIXBUF doesn't exist on 4 (pixbuf-backed image is
+  PAINTABLE), Gtk.Image.is_valid is GTK3-only (chip-thumb guard is
+  get_parent() — thumbnails silently never applied), Gdk.FileList has no
+  plain new() (new_from_list). Magic-only PNG fixtures are rejected by the
+  phone's glycin loader — harness fixtures must be real decodable PNGs.
+  Device harness now runs 46 real checks.
 
 ## Verification
 - `pytest tests/test_gateway.py tests/test_profile_service.py tests/test_profile_metadata_service.py tests/test_resource_management.py` — core service tests pass

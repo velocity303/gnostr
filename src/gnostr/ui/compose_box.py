@@ -410,7 +410,8 @@ class RichComposeBox(Gtk.Box):
     def _load_chip_thumb(self, image, path):
         """Decode a 40px thumbnail off the main thread (GdkPixbuf on a
         multi-MB phone photo is measurable on the A53s). The image may be
-        destroyed before the decode lands — Gtk.Image.is_valid() guards it."""
+        destroyed before the decode lands — a widget detached from the tree
+        has no parent (Gtk.Image's GTK3 is_valid check does not exist here)."""
 
         def worker():
             try:
@@ -425,7 +426,7 @@ class RichComposeBox(Gtk.Box):
 
     @staticmethod
     def _set_chip_thumb(image, pb):
-        if image.is_valid():
+        if image.get_parent() is not None:
             image.set_from_pixbuf(pb)
         return False
 
