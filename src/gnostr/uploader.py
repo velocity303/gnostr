@@ -43,16 +43,27 @@ class UploadError(Exception):
     """User-presentable failure reason (safe to show in a toast)."""
 
 
-def settings_get(key, fallback):
-    """GSettings read with a hard fallback: unpackaged/dev runs and a missing
-    compiled schema must never break the composer."""
+def _settings():
+    """Gio.Settings for the app schema, or None when unavailable (dev run,
+    unpackaged tree, missing compiled schema)."""
     try:
         import gi
 
         gi.require_version("Gio", "2.0")
         from gi.repository import Gio
 
-        s = Gio.Settings.new(APP_ID)
+        return Gio.Settings.new(APP_ID)
+    except Exception:
+        return None
+
+
+def settings_get(key, fallback):
+    """GSettings read with a hard fallback: unpackaged/dev runs and a missing
+    compiled schema must never break the composer."""
+    s = _settings()
+    if s is None:
+        return fallback
+    try:
         if key == "upload-backend":
             return s.get_string("upload-backend") or fallback
         if key == "upload-server-url":
@@ -68,13 +79,10 @@ def settings_set(key, value):
     """GSettings write for the in-app Media Upload preferences. Returns True
     on success; False when the schema is unavailable (dev run) so the UI can
     tell the user the change could not be persisted."""
+    s = _settings()
+    if s is None:
+        return False
     try:
-        import gi
-
-        gi.require_version("Gio", "2.0")
-        from gi.repository import Gio
-
-        s = Gio.Settings.new(APP_ID)
         if key == "upload-max-mb":
             s.set_int(key, int(value))
         else:
@@ -214,8 +222,9 @@ def strip_exif(path):
 
 
 def blossom_auth_event(server_url, kind=24242):
-    """Unsigned BUD-01 auth event. kind 24242; content is empty; tags:
-    t=upload, x=<sha256 of the file>, expiration. Callers sign it with the
+    """Unsigned BUD-01 auth event. kind 24242; content is the human-readable
+    request description BUD-01 asks for; tags: t=upload, x=<sha256 of the
+    file> (appended by the caller), expiration. Callers sign it with the
     normal signing funnel (client._sign) — works with remote backends too."""
     import time
 
@@ -226,7 +235,7 @@ def blossom_auth_event(server_url, kind=24242):
             ["t", "upload"],
             ["expiration", str(int(time.time()) + 600)],
         ],
-        "content": "",
+        "content": f"Upload to {server_url}",
     }
 
 

@@ -45,7 +45,10 @@ class RelayPreferencesWindow(Adw.PreferencesWindow):
     # uploader.py; every read falls back so a missing schema never crashes
     # the dialog.
 
-    _BACKENDS = [("blossom", "Blossom (recommended)"), ("nostr.build", "nostr.build (legacy)")]
+    _BACKENDS = [
+        ("blossom", "Blossom (recommended)"),
+        ("nostr.build", "nostr.build (legacy)"),
+    ]
 
     def _build_upload_group(self, page):
         from . import uploader
@@ -58,19 +61,28 @@ class RelayPreferencesWindow(Adw.PreferencesWindow):
 
         # Gtk.StringList, not Adw.StringList — the latter is libadwaita 1.6+
         # and absent from the phone runtime (verified on device).
-        self.backend_row = Adw.ComboRow(title="Backend", model=Gtk.StringList(strings=[label for _, label in self._BACKENDS]))
+        self.backend_row = Adw.ComboRow(
+            title="Backend",
+            model=Gtk.StringList(strings=[label for _, label in self._BACKENDS]),
+        )
         cur_backend = uploader.settings_get("upload-backend", uploader.DEFAULT_BACKEND)
         names = [name for name, _ in self._BACKENDS]
-        self.backend_row.set_selected(max(0, names.index(cur_backend) if cur_backend in names else 0))
+        self.backend_row.set_selected(
+            max(0, names.index(cur_backend) if cur_backend in names else 0)
+        )
         g.add(self.backend_row)
 
         self.server_row = Adw.EntryRow(title="Server URL")
-        self.server_row.set_text(uploader.settings_get("upload-server-url", uploader.DEFAULT_SERVER_URL))
+        self.server_row.set_text(
+            uploader.settings_get("upload-server-url", uploader.DEFAULT_SERVER_URL)
+        )
         g.add(self.server_row)
 
         self.maxmb_row = Adw.SpinRow.new_with_range(0, 200, 1)
         self.maxmb_row.set_title("Max file size (MB)")
-        self.maxmb_row.set_value(float(uploader.settings_get("upload-max-mb", uploader.DEFAULT_MAX_MB)))
+        self.maxmb_row.set_value(
+            float(uploader.settings_get("upload-max-mb", uploader.DEFAULT_MAX_MB))
+        )
         g.add(self.maxmb_row)
 
         save = Adw.ActionRow(title="Save upload settings")
@@ -90,7 +102,10 @@ class RelayPreferencesWindow(Adw.PreferencesWindow):
             return
         ok = uploader.settings_set("upload-backend", backend)
         ok = uploader.settings_set("upload-server-url", url) and ok
-        ok = uploader.settings_set("upload-max-mb", int(self.maxmb_row.get_value())) and ok
+        ok = (
+            uploader.settings_set("upload-max-mb", int(self.maxmb_row.get_value()))
+            and ok
+        )
         self.add_toast(
             Adw.Toast(title="Upload settings saved")
             if ok
