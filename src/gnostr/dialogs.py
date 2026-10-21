@@ -13,7 +13,7 @@ class RelayPreferencesWindow(Adw.PreferencesWindow):
         super().__init__()
         self.set_transient_for(parent_window)
         self.set_modal(True)
-        self.set_title("Relay Management")
+        self.set_title("Settings")
         self.client = nostr_client
         self.relay_rows = []
         page = Adw.PreferencesPage()
@@ -35,8 +35,73 @@ class RelayPreferencesWindow(Adw.PreferencesWindow):
         r2.add_suffix(self.entry)
         r2.add_suffix(b2)
         g2.add(r2)
+        self._build_upload_group(page)
         self.refresh()
         self.client.connect("relay-list-updated", self.refresh)
+
+    # -- Media Upload settings (rich editor scope) ---------------------------
+    # The upload backend/server are GSettings-backed so users can move to
+    # another server when capacity or funding changes. Defaults live in
+    # uploader.py; every read falls back so a missing schema never crashes
+    # the dialog.
+
+    _BACKENDS = [("blossom", "Blossom (recommended)"), ("nostr.build", "nostr.build (legacy)")]
+
+    def _build_upload_group(self, page):
+        from . import uploader
+
+        g = Adw.PreferencesGroup(
+            title="Media Upload",
+            description="Where attached images and videos are hosted.",
+        )
+        page.add(g)
+
+        # Gtk.StringList, not Adw.StringList — the latter is libadwaita 1.6+
+        # and absent from the phone runtime (verified on device).
+        self.backend_row = Adw.ComboRow(title="Backend", model=Gtk.StringList(strings=[label for _, label in self._BACKENDS]))
+        cur_backend = uploader.settings_get("upload-backend", uploader.DEFAULT_BACKEND)
+        names = [name for name, _ in self._BACKENDS]
+        self.backend_row.set_selected(max(0, names.index(cur_backend) if cur_backend in names else 0))
+        g.add(self.backend_row)
+
+        self.server_row = Adw.EntryRow(title="Server URL")
+        self.server_row.set_text(uploader.settings_get("upload-server-url", uploader.DEFAULT_SERVER_URL))
+        g.add(self.server_row)
+
+        self.maxmb_row = Adw.SpinRow.new_with_range(0, 200, 1)
+        self.maxmb_row.set_title("Max file size (MB)")
+        self.maxmb_row.set_value(float(uploader.settings_get("upload-max-mb", uploader.DEFAULT_MAX_MB)))
+        g.add(self.maxmb_row)
+
+        save = Adw.ActionRow(title="Save upload settings")
+        btn = Gtk.Button(label="Save", css_classes=["suggested-action"])
+        btn.connect("clicked", self.on_save_upload_settings)
+        save.add_suffix(btn)
+        g.add(save)
+
+    def on_save_upload_settings(self, _btn):
+        from . import uploader
+
+        names = [name for name, _ in self._BACKENDS]
+        backend = names[min(self.backend_row.get_selected(), len(names) - 1)]
+        url = self.server_row.get_text().strip()
+        if backend == "blossom" and not url.startswith("https://"):
+            self.add_toast(Adw.Toast(title="Server URL must start with https://"))
+            return
+        ok = uploader.settings_set("upload-backend", backend)
+        ok = uploader.settings_set("upload-server-url", url) and ok
+        ok = uploader.settings_set("upload-max-mb", int(self.maxmb_row.get_value())) and ok
+        self.add_toast(
+            Adw.Toast(title="Upload settings saved")
+            if ok
+            else Adw.Toast(title="Could not save (settings schema unavailable)")
+        )
+
+    def add_toast(self, toast):
+        parent = self.get_transient_for()
+        overlay = getattr(parent, "toast_overlay", None) if parent else None
+        if overlay is not None:
+            overlay.add_toast(toast)
 
     def on_import(self, b):
         self.client.fetch_user_relays()

@@ -27,8 +27,12 @@ import urllib.error
 import urllib.request
 
 APP_ID = "tech.livingonlinux.gnostr"
-DEFAULT_BACKEND = "nostr.build"
-DEFAULT_SERVER_URL = "https://nostr.build/api/v2/blossom"
+# Blossom is the default: nostr.build's legacy anonymous multipart endpoint
+# (/api/v2/nostrbuild) now answers 405 Method Not Allowed — verified live
+# 2026-10-20 — so the old default silently failed every attach. Blossom
+# (BUD-02 PUT + BUD-01 auth) works; blossom.primal.net verified live.
+DEFAULT_BACKEND = "blossom"
+DEFAULT_SERVER_URL = "https://blossom.primal.net"
 DEFAULT_MAX_MB = 20
 
 # Uploads run on a worker thread; generous but bounded (mobile networks).
@@ -58,6 +62,26 @@ def settings_get(key, fallback):
     except Exception:
         return fallback
     return fallback
+
+
+def settings_set(key, value):
+    """GSettings write for the in-app Media Upload preferences. Returns True
+    on success; False when the schema is unavailable (dev run) so the UI can
+    tell the user the change could not be persisted."""
+    try:
+        import gi
+
+        gi.require_version("Gio", "2.0")
+        from gi.repository import Gio
+
+        s = Gio.Settings.new(APP_ID)
+        if key == "upload-max-mb":
+            s.set_int(key, int(value))
+        else:
+            s.set_string(key, str(value))
+        return True
+    except Exception:
+        return False
 
 
 # -- header-only dimension sniffing (no Pillow) ------------------------------

@@ -64,10 +64,18 @@ Core application layer — GTK4 window, app lifecycle, Nostr client wiring, and 
   highlights. `renderer.py` applies it to text_fragments + trailing.
   `src/gnostr/ui/compose_box.py` RichComposeBox = GtkTextView + marker bar
   (bold/italic/code/link wrap selection, caret-safe on empty selection).
-  Phase 2 LANDED (a9a39d4): `src/gnostr/uploader.py` — nostr.build (default)
-  + Blossom B-lost backends behind GSettings (`upload-backend`,
+  Phase 2 LANDED (a9a39d4): `src/gnostr/uploader.py` — blossom (default)
+  + nostr.build backends behind GSettings (`upload-backend`,
   `upload-server-url`, `upload-max-mb` in data/*.gschema.xml; every read
-  falls back so a missing schema never breaks the composer). Header-only
+  falls back so a missing schema never breaks the composer). DEFAULT
+  SWITCHED to blossom 2026-10-20: nostr.build's anonymous multipart
+  endpoint (/api/v2/nostrbuild) now returns 405 — every attach silently
+  failed; blossom BUD-02 PUT + BUD-01 auth verified live against
+  blossom.primal.net. `settings_set()` companion writes the keys;
+  RelayPreferencesWindow (title now "Settings") carries a "Media Upload"
+  group (backend ComboRow + server EntryRow + max-mb SpinRow + Save) so
+  users can move servers without a rebuild. Adw.StringList is 1.6+ and
+  ABSENT on the phone runtime — use Gtk.StringList for Adw.ComboRow models. Header-only
   image dim sniff (PNG/GIF/JPEG SOF — no Pillow). Upload runs on a worker
   thread, completes via GLib.idle_add. RichComposeBox media button
   (image/video filters, inline spinner) inserts the URL at the caret on its
