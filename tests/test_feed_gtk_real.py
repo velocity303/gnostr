@@ -167,11 +167,12 @@ def main():
         return ids
 
     def scroll_bottom():
+        # No direct on_scroll_changed() call: set_value must fire the real
+        # 'value-changed' signal and the connected handler must page. A
+        # direct call masked the wrong-signal wiring bug (PR #45 review).
         va = view._vadj
         va.set_value(max(0.0, va.get_upper() - va.get_page_size()))
-        pump(60)
-        view.on_scroll_changed(va)
-        pump(100)
+        pump(120)
 
     def wheel_bottom():
         """Simulate a real wheel-down scroll toward the bottom.
@@ -184,17 +185,13 @@ def main():
         va = view._vadj
         bottom = max(0.0, va.get_upper() - va.get_page_size())
         va.set_value(min(bottom, va.get_value() + 150.0))
-        pump(60)
-        view.on_scroll_changed(va)
-        pump(100)
+        pump(120)
         return view.feed_model is not None and view.feed_model.exhausted
 
     def scroll_top():
         va = view._vadj
         va.set_value(0.0)
-        pump(60)
-        view.on_scroll_changed(va)
-        pump(100)
+        pump(120)
 
     print("[1] load_first")
     m = FeedModel(owner_pubkey=OWN, database=db, page_size=12, max_window=20)
