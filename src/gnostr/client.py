@@ -523,7 +523,13 @@ class NostrClient(GObject.Object):
 
     def _sign(self, event):
         """Single signing funnel: backend if installed, else legacy local key
-        (kept for the mocked-GObject test fakes that set my_privkey directly)."""
+        (kept for the mocked-GObject test fakes that set my_privkey directly).
+        Fills a missing pubkey: compute_event_id requires it and not every
+        builder sets it (blossom BUD-01 auth events arrive without one)."""
+        if not event.get("pubkey"):
+            pub = getattr(self, "my_pubkey", None)
+            if pub:
+                event = {**event, "pubkey": pub}
         backend = getattr(self, "signer", None)
         if backend is not None:
             return backend.sign_event(event)
