@@ -197,10 +197,14 @@ def resolve_lnurl_endpoint(lud16: str):
     """Resolve a lightning address (user@domain) to its lnurl-pay endpoint.
 
     Returns the well-known lnurlp URL, or None if the address is malformed.
+    LUD-16 normative rule (spec gnostr-tor-onion-support-v1 §1 T3): onion
+    domains use plain http:// — the onion layer is already authenticated,
+    and public CA issuance for .onion does not exist.
     """
     if not lud16 or "@" not in lud16:
         return None
     user, _, domain = lud16.rpartition("@")
     if not user or not domain:
         return None
-    return f"https://{domain}/.well-known/lnurlp/{user}"
+    scheme = "http" if domain.lower().endswith(".onion") else "https"
+    return f"{scheme}://{domain}/.well-known/lnurlp/{user}"

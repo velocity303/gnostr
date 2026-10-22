@@ -23,6 +23,7 @@ except Exception as e:
 from gi.repository import Gtk, Adw, GLib, Gdk, GdkPixbuf, Pango, Gst, GstApp, Gio
 
 from . import nostr_utils
+from . import proxy_opener
 from .markup import emphasis_to_pango
 
 # Set to True to enable verbose 🎬 debug logging. Now env-driven so the whole
@@ -923,7 +924,12 @@ class ImageLoader:
         try:
             if url.startswith("http"):
                 req = urllib.request.Request(url, headers={"User-Agent": "Gnostr/1.0"})
-                with urllib.request.urlopen(req, timeout=15) as r:
+                # Media routes through the shared SOCKS5 opener when the
+                # proxy is on (spec gnostr-tor-onion-support-v1 §3 T7: an
+                # unrouted image fetch leaks the user IP to every image
+                # host). Disabled (default) = plain direct opener.
+                opener = proxy_opener.proxy_opener()
+                with opener.open(req, timeout=15) as r:
                     data = r.read()
                 loader = GdkPixbuf.PixbufLoader()
                 loader.write(data)
