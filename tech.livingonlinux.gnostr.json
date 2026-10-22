@@ -152,13 +152,13 @@
             "name": "yt-dlp",
             "buildsystem": "simple",
             "build-commands": [
-                "pip3 install --verbose --prefix=/app --no-deps --no-build-isolation yt_dlp-2026.7.4-py3-none-any.whl"
+                "pip3 install --verbose --prefix=/app --no-deps --no-build-isolation yt_dlp-2026.10.21-py3-none-any.whl"
             ],
             "sources": [
                 {
                     "type": "file",
-                    "url": "https://files.pythonhosted.org/packages/f9/8a/cd4c9b02c10c563adfe78118310129641900e1cd6de888cfae2452072696/yt_dlp-2026.7.4-py3-none-any.whl",
-                    "sha256": "f11f2b11d5a8ac4059f9bdf29fa4407dc7c6bb00c5097e95ca22a7a9db518266"
+                    "url": "https://files.pythonhosted.org/packages/b7/75/ae700ddc7e0b1095fd06cf7e251627dcf4cafcaff460cce92cdc08023b13/yt_dlp-2026.10.21-py3-none-any.whl",
+                    "sha256": "94a3a3e2c423129d0bbd2f1be000c4171fa1226c29e251c84aff868f2851c247"
                 }
             ]
         },

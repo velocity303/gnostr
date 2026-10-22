@@ -494,10 +494,12 @@ class ContentRenderer:
                         ContentRenderer._add_image(box, clean_part, window_ref)
                     elif ContentRenderer.is_video_url(clean_part):
                         ContentRenderer._add_video(box, clean_part, window_ref)
-                    elif "youtube.com/watch" in clean_part or "youtu.be/" in clean_part:
-                        raw_stream_url = get_youtube_stream(clean_part)
+                    elif _is_youtube(clean_part):
+                        # Defer everything to play time: rendering a feed must
+                        # never block on yt-dlp (the old get_youtube_stream call
+                        # resolved on the main thread for every YT post).
                         ContentRenderer._add_video(
-                            box, raw_stream_url, window_ref, clean_part
+                            box, clean_part, window_ref, clean_part
                         )
                     else:
                         ContentRenderer._add_link(box, clean_part)
@@ -828,18 +830,69 @@ def _launch_ext(win, s):
         pass
 
 
-def get_youtube_stream(url):
+def _is_youtube(url):
+    return "youtube.com/" in url or "youtu.be/" in url
+
+
+# Muxed YouTube files live in the app cache dir; keep a small LRU set so
+# re-watching a video is instant without letting the cache grow unbounded.
+_YT_KEEP = 8
+
+
+def _youtube_cache_dir():
+    return os.path.join(GLib.get_user_cache_dir(), "gnostr", "yt")
+
+
+def _youtube_download(url):
+    """Mux a YouTube video locally with yt-dlp; return a file:// URI or None.
+
+    YouTube retired combined A/V progressive streams (Oct 2026): the old
+    `best[ext=mp4]` selector resolves a URL that 403s at fetch time, and the
+    remaining HLS muxed variants reach PLAYING but die in tsdemux on this
+    GStreamer build (Apple's HLS plays fine — the failure is YouTube-specific).
+    yt-dlp's DASH pair muxed to a local file by the bundled ffmpeg is the only
+    path verified end-to-end on the Librem 5 (PLAYING, sustained).
+    """
     try:
-        result = subprocess.run(
-            ["yt-dlp", "-g", "-f", "best[ext=mp4]", url],
+        out_dir = _youtube_cache_dir()
+        os.makedirs(out_dir, exist_ok=True)
+        subprocess.run(
+            [
+                "yt-dlp",
+                "--no-warnings",
+                "--no-progress",
+                "--no-playlist",
+                "-f",
+                "bv*[height<=720]+ba/b[height<=720]/b",
+                "-o",
+                os.path.join(out_dir, "%(id)s.%(ext)s"),
+                url,
+            ],
             capture_output=True,
             text=True,
+            timeout=300,
             check=True,
         )
-        return result.stdout.strip()
-    except subprocess.CalledProcessError as e:
-        print(f"Failed to resolve YouTube URL: {e}")
-        return url
+        files = sorted(
+            (
+                os.path.join(out_dir, f)
+                for f in os.listdir(out_dir)
+                if not f.endswith((".part", ".ytdl"))
+            ),
+            key=os.path.getmtime,
+            reverse=True,
+        )
+        for stale in files[_YT_KEEP:]:
+            try:
+                os.remove(stale)
+            except OSError:
+                pass
+        if not files:
+            return None
+        return Gio.File.new_for_path(files[0]).get_uri()
+    except Exception as e:
+        print(f"Failed to download YouTube video: {e}")
+        return None
 
 
 class ImageLoader:
@@ -1004,6 +1057,7 @@ class VideoLoader:
 class VideoPlayer:
     _cache = OrderedDict()  # bounded LRU of live players
     _lock = threading.Lock()
+    _executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
     _CACHE_MAX = 6  # tear down decoders once they scroll far out of view
 
     @staticmethod
@@ -1063,6 +1117,36 @@ class VideoPlayer:
                     callback(cached_video)
                     return
 
+        if _is_youtube(url):
+            # YouTube has no stream playbin3 can consume directly on this
+            # runtime (see _youtube_download): mux locally off the main
+            # thread, then build the pipeline from the file on the main loop.
+            VideoPlayer._executor.submit(
+                VideoPlayer._prepare_youtube, url, callback, original_url, autoplay
+            )
+            return
+        VideoPlayer._build_and_deliver(url, callback, original_url, autoplay=autoplay)
+
+    @staticmethod
+    def _prepare_youtube(url, callback, original_url, autoplay):
+        """Worker-thread step: download+mux, then hand off to the main loop."""
+        local_uri = _youtube_download(url)
+        if local_uri is None:
+            GLib.idle_add(callback, None)
+            return
+        GLib.idle_add(
+            VideoPlayer._build_and_deliver,
+            local_uri,
+            callback,
+            original_url or url,
+            autoplay,
+            url,
+        )
+
+    @staticmethod
+    def _build_and_deliver(
+        url, callback, original_url=None, autoplay=False, cache_key=None
+    ):
         video = None
         try:
             _vlog(f"🎬 [Video] Building pipeline for: {url[:80]}...")
@@ -1339,8 +1423,8 @@ class VideoPlayer:
 
         if video:
             with VideoPlayer._lock:
-                VideoPlayer._cache[url] = video
-                VideoPlayer._cache.move_to_end(url)
+                VideoPlayer._cache[cache_key or url] = video
+                VideoPlayer._cache.move_to_end(cache_key or url)
                 # Tear down oldest players so decoders don't accumulate on mobile.
                 # The evicted widget is scrolled out of view; it will re-create if revisited.
                 while len(VideoPlayer._cache) > VideoPlayer._CACHE_MAX:
