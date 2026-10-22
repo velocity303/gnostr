@@ -1,0 +1,41 @@
+# tor-v1-tests V4 (spec gnostr-tor-onion-support-v1 §6): synthetic onion e2e.
+# Fully local — no real relays, no real node, no secrets (spec §7-Q5).
+# The spec named goldstein/tor / petertduggan/tor; neither exists on Docker
+# Hub anymore (verified 2026-10-22), so tor is alpine + apk tor — same
+# SOCKS5 + hidden-service surface, deterministic build.
+# strfry gets a STATIC IP because tor 0.4.9 parses HiddenServicePort targets
+# at config time and cannot use Docker's embedded DNS (127.0.0.11).
+name: gnostr-tor-e2e
+
+services:
+  strfry:
+    image: dockurr/strfry
+    restart: "no"
+    volumes:
+      # dockurr/strfry aborts with mdb_env_open if /app/strfry-db is absent
+      - strfry-db:/app/strfry-db
+    networks:
+      tor-e2e:
+        ipv4_address: 172.30.77.10
+    # dockurr/strfry generates its config on first run and listens on 7777
+
+  tor:
+    build: ./tor
+    restart: "no"
+    depends_on:
+      - strfry
+    networks:
+      - tor-e2e
+    ports:
+      # host SOCKS5 port for the test client (9150 so it never collides
+      # with a system tor on 9050)
+      - "127.0.0.1:9150:9050"
+
+networks:
+  tor-e2e:
+    ipam:
+      config:
+        - subnet: 172.30.77.0/24
+
+volumes:
+  strfry-db:

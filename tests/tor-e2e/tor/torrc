@@ -1,0 +1,7 @@
+# Hidden-service e2e torrc (spec §6 V4): SOCKS5 for the test client +
+# a v3 hidden service mapping 8011 -> strfry:7777 inside the compose net.
+SOCKSPort 0.0.0.0:9050
+SocksPolicy accept *
+HiddenServiceDir /var/lib/tor/hidden_service
+HiddenServiceVersion 3
+HiddenServicePort 8011 172.30.77.10:7777
