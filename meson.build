@@ -72,18 +72,10 @@ if pytest_prog.found()
   # Relay usage economy (issue #26): REQ token bucket, queue dedup, CLOSED
   # handling, reconnect backoff, live-sub replay, idle parking.
   test('test_relay_usage_economy', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_relay_usage_economy.py'], env: test_env, timeout: 120)
-<<<<<<< HEAD
-  # Tor/.onion relay WS (tor-v1-ws): socks_proxy_kwargs contract, websocket-client
-  # socks5h proxy_info, host-based .onion check, ws:// scheme policy hard-fail.
-  test('test_tor_ws_proxy', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_tor_ws_proxy.py'], env: test_env, timeout: 120)
-=======
->>>>>>> origin/feat/tor-v1-tests
   # tor-v1-status (spec gnostr-tor-onion-support-v1): host_is_onion vectors,
   # SOCKS5 greeting probe (mock server + sent-bytes capture), skip gate,
   # state transitions, toast dedup, sidebar icon contract.
   test('test_tor_state', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_tor_state.py'], env: test_env, timeout: 120)
-<<<<<<< HEAD
-=======
   # Tor/.onion relay WS (tor-v1-ws): socks_proxy_kwargs contract, websocket-client
   # socks5h proxy_info, host-based .onion check, ws:// scheme policy hard-fail.
   test('test_tor_ws_proxy', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_tor_ws_proxy.py'], env: test_env, timeout: 120)
@@ -93,7 +85,6 @@ if pytest_prog.found()
   # tor-v1-tests V4 (spec §6): docker-compose onion e2e (tor + strfry).
   # Self-skips without GNOSTR_TOR_E2E=1 / a docker daemon — nightly opt-in.
   test('test_tor_e2e_compose', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_tor_e2e_compose.py'], env: test_env, timeout: 600)
->>>>>>> origin/feat/tor-v1-tests
   endif
 
 # Real-GTK feed harness (tier 2): exercises ui.feed_view.FeedView against a
