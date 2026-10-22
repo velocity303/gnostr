@@ -15,6 +15,7 @@ Core application layer — GTK4 window, app lifecycle, Nostr client wiring, and 
 - `key_health.py` — last-backup-verified timestamp store (`key_health.json` beside gnostr.db). Stores NO key material — only a unix ts written by ExportKeyDialog when a backup artifact is produced; Settings/sidebar renders it via `format_last_backup`
 - `nostr_utils.py` — bech32 encode/decode, key derivation, event signing
 - `profile_nips.py` — profile NIP helpers (NIP-05 verify, NIP-39 identities, NIP-58 badges, LUD-16)
+- `proxy_settings.py` — SOCKS5 proxy GSettings access (spec gnostr-tor-onion-support-v1 §4): `proxy_get(key)` / `proxy_set(key, value)` over `proxy-enabled`(b,false) / `proxy-host`(s,'127.0.0.1') / `proxy-port`(i,9050) / `proxy-remote-dns`(b,true). Same hard-fallback contract as uploader.settings_get: missing schema ⇒ reads return defaults, writes return False. Consumers (tor-v1-ws/tor-v1-http) read through this module; the Settings dialog writes through it. Tests: `tests/test_proxy_settings.py`
 - `connection_status.py` — relay status enum
 - `renderer.py` — ContentRenderer, ImageLoader, VideoPlayer, VideoLoader
 

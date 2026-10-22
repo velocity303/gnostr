@@ -36,6 +36,7 @@ class RelayPreferencesWindow(Adw.PreferencesWindow):
         r2.add_suffix(b2)
         g2.add(r2)
         self._build_upload_group(page)
+        self._build_proxy_group(page)
         self.refresh()
         self.client.connect("relay-list-updated", self.refresh)
 
@@ -108,6 +109,68 @@ class RelayPreferencesWindow(Adw.PreferencesWindow):
         )
         self.add_toast(
             Adw.Toast(title="Upload settings saved")
+            if ok
+            else Adw.Toast(title="Could not save (settings schema unavailable)")
+        )
+
+    # -- Proxy settings (spec gnostr-tor-onion-support-v1 §4) ----------------
+    # Opt-in SOCKS5 proxy (tor daemon on the user's machine). The endpoint is
+    # not sensitive — no secrets here; keys live in proxy_settings.py and the
+    # same GSettings hard-fallback pattern as Media Upload above.
+
+    def _build_proxy_group(self, page):
+        from . import proxy_settings as ps
+
+        g = Adw.PreferencesGroup(
+            title="Proxy",
+            description="Route relays, lookups and media through a SOCKS5 proxy (e.g. tor).",
+        )
+        page.add(g)
+
+        self.proxy_enabled_row = Adw.SwitchRow(
+            title="Enable SOCKS5 proxy",
+            subtitle="Off = direct connections (default)",
+        )
+        self.proxy_enabled_row.set_active(ps.proxy_get("proxy-enabled"))
+        g.add(self.proxy_enabled_row)
+
+        self.proxy_host_row = Adw.EntryRow(title="Proxy host")
+        self.proxy_host_row.set_text(ps.proxy_get("proxy-host"))
+        g.add(self.proxy_host_row)
+
+        self.proxy_port_row = Adw.SpinRow.new_with_range(1, 65535, 1)
+        self.proxy_port_row.set_title("Proxy port")
+        self.proxy_port_row.set_value(float(ps.proxy_get("proxy-port")))
+        g.add(self.proxy_port_row)
+
+        # Keep this on with .onion endpoints: the proxy resolves hostnames
+        # (socks5h), so nothing leaks to a local DNS resolver.
+        self.proxy_dns_row = Adw.SwitchRow(
+            title="Resolve hostnames through proxy",
+            subtitle="Required for .onion relays",
+        )
+        self.proxy_dns_row.set_active(ps.proxy_get("proxy-remote-dns"))
+        g.add(self.proxy_dns_row)
+
+        save = Adw.ActionRow(title="Save proxy settings")
+        btn = Gtk.Button(label="Save", css_classes=["suggested-action"])
+        btn.connect("clicked", self.on_save_proxy_settings)
+        save.add_suffix(btn)
+        g.add(save)
+
+    def on_save_proxy_settings(self, _btn):
+        from . import proxy_settings as ps
+
+        host = self.proxy_host_row.get_text().strip()
+        if not host:
+            self.add_toast(Adw.Toast(title="Proxy host must not be empty"))
+            return
+        ok = ps.proxy_set("proxy-enabled", self.proxy_enabled_row.get_active())
+        ok = ps.proxy_set("proxy-host", host) and ok
+        ok = ps.proxy_set("proxy-port", int(self.proxy_port_row.get_value())) and ok
+        ok = ps.proxy_set("proxy-remote-dns", self.proxy_dns_row.get_active()) and ok
+        self.add_toast(
+            Adw.Toast(title="Proxy settings saved")
             if ok
             else Adw.Toast(title="Could not save (settings schema unavailable)")
         )
