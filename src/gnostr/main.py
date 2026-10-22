@@ -85,7 +85,7 @@ class MainWindow(Adw.ApplicationWindow):
             title="Your key isn't backed up",
             button_label="Back up",
         )
-        self.key_banner.set_hidden(True)
+        self.key_banner.set_revealed(False)
         self.key_banner.connect("button-clicked", self._on_key_banner_backup)
         self._root_box.append(self.key_banner)
         self.toast_overlay.set_child(self._root_box)
@@ -268,7 +268,7 @@ class MainWindow(Adw.ApplicationWindow):
         from . import key_health
 
         degraded = bool(self.pub_key) and key_health.last_backup_verified() is None
-        self.key_banner.set_hidden(not degraded)
+        self.key_banner.set_revealed(degraded)
         if not degraded:
             return
 

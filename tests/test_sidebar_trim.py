@@ -207,14 +207,14 @@ def test_key_banner_hidden_for_remote_signer_and_shown_for_unbacked_local(
     fake.pub_key = "ab" * 32
     ns["_refresh_key_banner"](fake)
     assert (
-        fake.key_banner.set_hidden.call_args[0][0] is False
+        fake.key_banner.set_revealed.call_args[0][0] is True
     ), "unbacked local key must show the banner"
     key_health.mark_backup_verified()
     fake.key_banner.reset_mock()
     ns["_refresh_key_banner"](fake)
-    assert fake.key_banner.set_hidden.call_args[0][0] is True
+    assert fake.key_banner.set_revealed.call_args[0][0] is False
 
     fake2 = Mock()
     fake2.pub_key = None  # bunker session: pub_key set only for local flow
     ns["_refresh_key_banner"](fake2)
-    assert fake2.key_banner.set_hidden.call_args[0][0] is True
+    assert fake2.key_banner.set_revealed.call_args[0][0] is False
