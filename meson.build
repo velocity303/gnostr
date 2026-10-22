@@ -63,6 +63,11 @@ if pytest_prog.found()
   test('test_dm_recipient_view', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_dm_recipient_view.py'], env: test_env, timeout: 120)
   test('test_dm_gtk422_api', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_dm_gtk422_api.py'], env: test_env, timeout: 120)
   test('test_relay_log_wrap', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_relay_log_wrap.py'], env: test_env, timeout: 120)
+  # RELSET-2 (spec relays-and-settings-v1 §A): relay_entries pure data model
+  # + client wiring (legacy migration, role routing, NIP-65 10002 markers,
+  # parking, reorder persistence, import merge, activity-log role tags).
+  test('test_relay_entries', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_relay_entries.py'], env: test_env, timeout: 120)
+  test('test_relay_roles_client', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_relay_roles_client.py'], env: test_env, timeout: 120)
   test('test_tor_docs', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_tor_docs.py'], env: test_env, timeout: 120)
   test('test_clipboard_api', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_clipboard_api.py'], env: test_env, timeout: 120)
   # Startup feed-freshness (spec Phase B): bounded freshness REQ window,
