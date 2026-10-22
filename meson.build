@@ -26,6 +26,11 @@ subdir('po')
 subdir('data')
 subdir('src')
 
+# Tor setup guide (tor-v1-docs): installed beside the app modules;
+# dialogs.py opens <pkgdatadir>/gnostr/docs/tor-setup.md at runtime.
+# Must live here — meson's sandbox forbids install_data('../..') from src/.
+install_data('docs/tor-setup.md', install_dir: pkgdatadir / 'gnostr' / 'docs')
+
 # Run unit tests via pytest (per-file targets for Builder granularity)
 pytest_prog = find_program('pytest', required: false)
 if pytest_prog.found()
@@ -58,6 +63,7 @@ if pytest_prog.found()
   test('test_dm_recipient_view', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_dm_recipient_view.py'], env: test_env, timeout: 120)
   test('test_dm_gtk422_api', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_dm_gtk422_api.py'], env: test_env, timeout: 120)
   test('test_relay_log_wrap', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_relay_log_wrap.py'], env: test_env, timeout: 120)
+  test('test_tor_docs', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_tor_docs.py'], env: test_env, timeout: 120)
   test('test_clipboard_api', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_clipboard_api.py'], env: test_env, timeout: 120)
   # Startup feed-freshness (spec Phase B): bounded freshness REQ window,
   # EOSE auto-close registration, pill routing during the hold, and the
