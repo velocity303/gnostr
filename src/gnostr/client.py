@@ -11,9 +11,10 @@ from gi.repository import GLib, GObject
 import gnostr
 
 from . import proxy_settings
-from .proxy_settings import proxy_get
+from .proxy_settings import proxy_get, url_allowed
 from .util.connection_state import ConnectionState
-from .util.tor_state import TorState, host_is_onion, onion_inert, probe_socks5_detail
+from .util.tor_state import (TorState, host_is_onion, onion_inert,
+                             probe_socks5_detail)
 
 # Connection status definitions (Name, ColorCode)
 STATUS = {
@@ -86,8 +87,9 @@ TOR_ONION_FAILURE_REPROBE = 3
 
 
 class NostrRelay(GObject.Object):
-    def __init__(self, url, on_event, on_status, on_ok=None, on_eose=None,
-                 on_connect_error=None):
+    def __init__(
+        self, url, on_event, on_status, on_ok=None, on_eose=None, on_connect_error=None
+    ):
         super().__init__()
         self.url = url
         self.on_event = on_event
@@ -643,9 +645,7 @@ class NostrClient(GObject.Object):
         # is only legal for .onion hosts reached through the SOCKS proxy.
         # A disallowed endpoint is a HARD FAIL with a visible error — the URL
         # is never rewritten and there is never a silent clearnet fallback.
-        if not proxy_settings.url_allowed(
-            url, proxy_settings.proxy_get("proxy-enabled")
-        ):
+        if not url_allowed(url, proxy_get("proxy-enabled")):
             self._log_relay(
                 f"{url} refused: ws:// without TLS is only allowed for "
                 ".onion relays with the SOCKS proxy enabled"

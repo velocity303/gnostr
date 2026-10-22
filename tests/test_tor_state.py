@@ -19,13 +19,9 @@ import types
 
 import pytest
 
-from gnostr.util.tor_state import (
-    TorState,
-    host_is_onion,
-    onion_inert,
-    probe_socks5,
-    probe_socks5_detail,
-)
+from gnostr.proxy_settings import url_allowed
+from gnostr.util.tor_state import (TorState, host_is_onion, onion_inert,
+                                   probe_socks5, probe_socks5_detail)
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _CLIENT_PATH = os.path.normpath(os.path.join(_HERE, "..", "src", "gnostr", "client.py"))
@@ -233,6 +229,10 @@ def gate_ns():
         "proxy_get": lambda key, fallback=None: (
             FakeClient._proxy if key == "proxy-enabled" else "x"
         ),
+        "url_allowed": url_allowed,
+        "ConnectionState": __import__(
+            "gnostr.util.connection_state", fromlist=["ConnectionState"]
+        ).ConnectionState,
         "onion_inert": onion_inert,
         "host_is_onion": host_is_onion,
     }
@@ -315,14 +315,17 @@ def test_down_to_reachable_to_down_cycle(gate_ns):
     assert made == [ONION]
     assert ONION in c.active_relays
     assert ("tor-state-changed", "reachable") in c.emitted
-    assert any("onion relays enabled" in l for l in c.relay_log)
+    assert any("onion relays enabled" in ln for ln in c.relay_log)
 
     # REACHABLE -> DOWN: relay closed, one skip log line, state signal.
     onion_relay = c.active_relays[ONION]
     c._set_tor_state(TorState.DOWN)
     assert ONION not in c.active_relays
     assert onion_relay.closed is True
-    assert any("proxy down" in l and "1 onion relay(s) skipped" in l for l in c.relay_log)
+    assert any(
+        "proxy down" in ln and "1 onion relay(s) skipped" in ln
+        for ln in c.relay_log
+    )
     assert c.emitted.count(("tor-state-changed", "down")) == 1
 
     # No further connect attempts while DOWN (gate holds).

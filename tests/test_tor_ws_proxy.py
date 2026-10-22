@@ -33,6 +33,8 @@ import types
 import pytest
 
 from gnostr import proxy_settings as ps
+from gnostr.proxy_settings import url_allowed
+from gnostr.util.tor_state import TorState, host_is_onion, onion_inert
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _CLIENT_PATH = os.path.normpath(os.path.join(_HERE, "..", "src", "gnostr", "client.py"))
@@ -132,13 +134,14 @@ def _fake_relay(url="wss://relay.test"):
 class _FakeClient:
     """Fake Nostr self for the extracted add_relay_connection."""
 
-    def __init__(self, proxy_enabled=False):
+    def __init__(self, proxy_enabled=False, tor_state=TorState.DISABLED):
         self.active_relays = {}
         self.relay_urls = set()
         self.relay_log = collections.deque(maxlen=200)
         self.statuses = []  # (url, status) from _handle_status
         self.created = []  # NostrRelay instantiation log
         self._proxy_enabled = proxy_enabled
+        self.tor_state = tor_state
 
     def _log_relay(self, line):
         self.relay_log.append(line)
@@ -175,7 +178,14 @@ def _bind_add_relay_connection(client):
         _CLIENT_PATH,
         "NostrClient",
         "add_relay_connection",
-        {"NostrRelay": FakeNostrRelay, "ConnectionState": conn_state},
+        {
+            "NostrRelay": FakeNostrRelay,
+            "ConnectionState": conn_state,
+            "proxy_get": lambda key, fallback=None: client._proxy_enabled,
+            "url_allowed": url_allowed,
+            "onion_inert": onion_inert,
+            "host_is_onion": host_is_onion,
+        },
     )
     client.add_relay_connection = fn.__get__(client)
 
@@ -239,7 +249,6 @@ def test_kwargs_reads_gsettings(monkeypatch):
 
 
 def test_v3_websocket_proxy_info_protocol():
-    websocket = pytest.importorskip("websocket")
     from websocket._http import proxy_info
 
     kw = ps.socks_proxy_kwargs(
@@ -359,22 +368,21 @@ def test_clearnet_ws_refused_no_relay_created(monkeypatch):
     assert any("ws://relay.example" in line for line in client.relay_log)
 
 
-def test_onion_ws_with_proxy_down_hard_fails(monkeypatch):
-    # §3 leak rule: .onion endpoint + proxy down = visible failure, NOT a
-    # silent clearnet fallback and NOT a URL rewrite.
-    monkeypatch.setattr(ps, "proxy_get", lambda key, fallback=None: False)
-    client = _FakeClient()
+def test_onion_ws_with_proxy_down_inert_skip(monkeypatch):
+    # Addendum §A.2.2 supersedes the pre-addendum WARNING design: .onion
+    # endpoint + proxy enabled-but-DOWN = INERT SKIP (no instantiation, no
+    # status churn — the sidebar tor icon + one-time toast carry the signal).
+    # Still never a clearnet fallback and never a URL rewrite.
+    client = _FakeClient(proxy_enabled=True, tor_state=TorState.DOWN)
     _bind_add_relay_connection(client)
     url = f"ws://{TEST_ONION}"
     client.add_relay_connection(url)
     assert client.created == []
-    assert [s for _, s in client.statuses] == ["WARNING"]
-    assert any(url in line for line in client.relay_log)
+    assert client.statuses == []  # inert: excluded from aggregate status
 
 
 def test_onion_ws_with_proxy_up_connects(monkeypatch):
-    monkeypatch.setattr(ps, "proxy_get", lambda key, fallback=None: True)
-    client = _FakeClient()
+    client = _FakeClient(proxy_enabled=True, tor_state=TorState.REACHABLE)
     _bind_add_relay_connection(client)
     url = f"ws://{TEST_ONION}"
     client.add_relay_connection(url)
