@@ -47,6 +47,17 @@ class MainWindow(Adw.ApplicationWindow):
         self.client.connect("publish-result", self.on_publish_result)
         self.client.connect("relay-log-updated", self.on_relay_log_updated)
         self.client.connect("dm-unreachable", self.on_dm_unreachable)
+        # tor-v1-status (spec §A.2): sidebar icon + one-time toasts.
+        self.client.connect("tor-state-changed", self.on_tor_state_changed)
+        # A.2.1 item 2: any proxy-* GSettings change re-probes immediately.
+        # Keep the Gio.Settings ref on self — a dropped ref unregisters the
+        # signal handler.
+        from gnostr import proxy_settings as _ps
+
+        self._proxy_settings = _ps.watch_changes(self.client.on_proxy_setting_changed)
+        # Toast dedup flag (A.2.4): one toast per DOWN/DISABLED episode,
+        # re-armed only by a transition back to REACHABLE.
+        self._tor_toast_shown = False
         # NOTE: backfill-done is connected AFTER feed_view is constructed below —
         # referencing self.feed_view here crashed MainWindow.__init__ at startup.
         # Poll-delivered DMs must move the sidebar badge even while the user
@@ -168,6 +179,11 @@ class MainWindow(Adw.ApplicationWindow):
             self._try_restore_bunker_session()
 
         GLib.idle_add(self.client.connect_all)
+        # tor-v1: paint the icon at startup (no tor-state-changed fires when
+        # the state never changes, e.g. proxy disabled with onion relays
+        # configured — A.2.4 wants the DISABLED toast once per session).
+        self._refresh_tor_icon()
+        self.on_tor_state_changed(self.client, self.client.tor_state.value)
         GLib.timeout_add_seconds(300, self.on_auto_refresh)
         # Surface publishes that never got a relay OK (~30s expiry, sweep every 15s).
         GLib.timeout_add_seconds(15, self._sweep_publishes)
@@ -729,6 +745,48 @@ class MainWindow(Adw.ApplicationWindow):
     def on_relay_log_updated(self, client, line):
         # Append to the sidebar Relay Activity pane.
         self.sidebar.append_relay_log(line)
+
+    # --- tor-v1-status (spec gnostr-tor-onion-support-v1 §A.2.3/A.2.4) ---
+
+    def _refresh_tor_icon(self):
+        from gnostr import proxy_settings as ps
+        from gnostr.util.tor_state import host_is_onion
+
+        onion_count = sum(1 for u in self.client.relay_urls if host_is_onion(u))
+        self.sidebar.update_tor_icon(
+            self.client.tor_state.value,
+            ps.proxy_get("proxy-enabled"),
+            onion_count,
+            reason=getattr(self.client, "_tor_probe_reason", "ok"),
+            host=ps.proxy_get("proxy-host"),
+            port=ps.proxy_get("proxy-port"),
+        )
+
+    def on_tor_state_changed(self, client, state):
+        self._refresh_tor_icon()
+        from gnostr.util.tor_state import host_is_onion
+
+        n = sum(1 for u in client.relay_urls if host_is_onion(u))
+        if state == "reachable":
+            # Re-arm the skip toast for the next DOWN episode (A.2.4).
+            self._tor_toast_shown = False
+            if n:
+                self.add_toast(
+                    Adw.Toast(title="Tor connected — onion relays enabled", timeout=5)
+                )
+        elif state in ("down", "disabled") and n:
+            # One-time toast per episode: never per-relay, never per-probe.
+            if not self._tor_toast_shown:
+                self._tor_toast_shown = True
+                self.add_toast(
+                    Adw.Toast(
+                        title=(
+                            f"Tor proxy not reachable — {n} onion relay(s) "
+                            "inactive until Tor connects"
+                        ),
+                        timeout=5,
+                    )
+                )
 
     def perform_login(self, priv_hex):
         # The keyring stores the nsec (see KeyManager.save_key) and the startup

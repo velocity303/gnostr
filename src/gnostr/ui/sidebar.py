@@ -112,9 +112,60 @@ class Sidebar(Gtk.Box):
         lb.connect("clicked", self.on_logout_clicked)
         self.append(lb)
 
-        # Status Label
+        # Status row: tor icon (tor-v1, spec §A.2.3) + connection emoji.
+        # The tor icon is hidden unless the proxy is enabled or an onion
+        # relay is configured — zero new pixels for everyone else.
+        self.status_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.tor_icon = Gtk.Image.new_from_icon_name(self._tor_icon_name())
+        self.tor_icon.set_visible(False)
+        self.status_row.append(self.tor_icon)
         self.status_label = Gtk.Label(label="🔴", css_classes=["dim-label"])
-        self.append(self.status_label)
+        self.status_row.append(self.status_label)
+        self.append(self.status_row)
+
+    @staticmethod
+    def _tor_icon_name():
+        # A.0/C2 resolve_icon pattern; last candidate is the guaranteed
+        # fallback. Single resolved name across states — state is carried
+        # by CSS class + tooltip (no new icon assets shipped).
+        TOR_ICON_CANDIDATES = (
+            "network-vpn-symbolic",
+            "network-server-secure-symbolic",
+            "network-server-symbolic",
+        )
+        try:
+            from .icons import resolve_icon
+
+            return resolve_icon(TOR_ICON_CANDIDATES)
+        except Exception:
+            return TOR_ICON_CANDIDATES[-1]
+
+    def update_tor_icon(self, state, proxy_enabled, onion_count, reason="ok",
+                        host="", port=0):
+        """Tor-state indicator (spec §A.2.3). state is the TorState value
+        string; called from MainWindow on tor-state-changed and at startup."""
+        from gnostr.util.tor_state import TorState
+
+        visible = proxy_enabled or onion_count > 0
+        self.tor_icon.set_visible(visible)
+        if not visible:
+            return
+        self.tor_icon.remove_css_class("dim-label")
+        self.tor_icon.remove_css_class("warning")
+        if state == TorState.REACHABLE.value:
+            self.tor_icon.set_tooltip_text(f"Tor proxy reachable ({host}:{port})")
+        elif state == TorState.DOWN.value:
+            self.tor_icon.add_css_class("warning")
+            if reason == "auth":
+                tip = "SOCKS proxy requires authentication (unsupported)"
+            else:
+                tip = "Tor proxy not reachable — onion relays are inactive"
+            self.tor_icon.set_tooltip_text(tip)
+        else:  # DISABLED
+            self.tor_icon.add_css_class("dim-label")
+            self.tor_icon.set_tooltip_text(
+                "Tor proxy is off — onion relays are inactive"
+            )
 
     def append_relay_log(self, line):
         """Append a relay-activity line, newest at top (prepend)."""
