@@ -233,6 +233,15 @@ def gate_ns():
         "proxy_get": lambda key, fallback=None: (
             FakeClient._proxy if key == "proxy-enabled" else "x"
         ),
+        # merged add_relay_connection also runs the ws:// scheme policy via
+        # proxy_settings.url_allowed; url_allowed takes proxy_enabled as an
+        # argument, so the real one composes with the proxy_get lambda above.
+        "proxy_settings": __import__(
+            "gnostr.proxy_settings", fromlist=["url_allowed"]
+        ),
+        "ConnectionState": __import__(
+            "gnostr.util.connection_state", fromlist=["ConnectionState"]
+        ).ConnectionState,
         "onion_inert": onion_inert,
         "host_is_onion": host_is_onion,
     }

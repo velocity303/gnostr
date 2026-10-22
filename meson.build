@@ -73,6 +73,12 @@ if pytest_prog.found()
   # Tor/.onion relay WS (tor-v1-ws): socks_proxy_kwargs contract, websocket-client
   # socks5h proxy_info, host-based .onion check, ws:// scheme policy hard-fail.
   test('test_tor_ws_proxy', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_tor_ws_proxy.py'], env: test_env, timeout: 120)
+  # tor-v1-tests (spec §6): V1 onion v3 derivation fixture + validator,
+  # V2 mock-SOCKS remote-DNS CONNECT capture, V3 python-socks-absent guard.
+  test('test_tor_v1_vectors', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_tor_v1_vectors.py'], env: test_env, timeout: 120)
+  # tor-v1-tests V4 (spec §6): docker-compose onion e2e (tor + strfry).
+  # Self-skips without GNOSTR_TOR_E2E=1 / a docker daemon — nightly opt-in.
+  test('test_tor_e2e_compose', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_tor_e2e_compose.py'], env: test_env, timeout: 600)
   endif
 
 # Real-GTK feed harness (tier 2): exercises ui.feed_view.FeedView against a

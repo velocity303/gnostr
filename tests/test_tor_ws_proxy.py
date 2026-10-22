@@ -33,6 +33,7 @@ import types
 import pytest
 
 from gnostr import proxy_settings as ps
+from gnostr.util.tor_state import TorState, host_is_onion, onion_inert
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _CLIENT_PATH = os.path.normpath(os.path.join(_HERE, "..", "src", "gnostr", "client.py"))
@@ -123,6 +124,8 @@ def _fake_relay(url="wss://relay.test"):
             "time": __import__("time"),
             "json": __import__("json"),
             "traceback": __import__("traceback"),
+            # merged start() reads proxy kwargs through proxy_settings.*
+            "proxy_settings": ps,
         },
     )
     relay.start = start.__get__(relay)
@@ -139,6 +142,10 @@ class _FakeClient:
         self.statuses = []  # (url, status) from _handle_status
         self.created = []  # NostrRelay instantiation log
         self._proxy_enabled = proxy_enabled
+        # merged add_relay_connection also runs the tor-v1 skip gate, which
+        # reads self.tor_state; REACHABLE keeps this file focused on the
+        # scheme policy (the skip gate has its own vectors in test_tor_state)
+        self.tor_state = TorState.REACHABLE
 
     def _log_relay(self, line):
         self.relay_log.append(line)
@@ -175,7 +182,17 @@ def _bind_add_relay_connection(client):
         _CLIENT_PATH,
         "NostrClient",
         "add_relay_connection",
-        {"NostrRelay": FakeNostrRelay, "ConnectionState": conn_state},
+        {
+            "NostrRelay": FakeNostrRelay,
+            "ConnectionState": conn_state,
+            # merged add_relay_connection = scheme policy (this file) +
+            # tor-v1 skip gate (test_tor_state); the exec namespace needs
+            # every bare name the merged body references. proxy_get is
+            # captured AFTER the test monkeypatches ps.proxy_get.
+            "proxy_get": ps.proxy_get,
+            "onion_inert": onion_inert,
+            "host_is_onion": host_is_onion,
+        },
     )
     client.add_relay_connection = fn.__get__(client)
 
