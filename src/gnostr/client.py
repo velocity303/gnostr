@@ -11,7 +11,9 @@ from gi.repository import GLib, GObject
 import gnostr
 
 from . import proxy_settings
+from .proxy_settings import proxy_get
 from .util.connection_state import ConnectionState
+from .util.tor_state import TorState, host_is_onion, onion_inert, probe_socks5_detail
 
 # Connection status definitions (Name, ColorCode)
 STATUS = {
@@ -75,15 +77,26 @@ IDLE_RELAY_TIMEOUT = 300.0  # s of zero relay traffic before idle disconnect
 DM_POLL_INTERVAL = 60  # s between kind-4 re-REQs while logged in
 DM_POLL_SINCE_SLACK = 120  # s of overlap re-fetch; dedup absorbs the repeats
 
+# tor-v1-status (spec gnostr-tor-onion-support-v1 §A.2): fixed retry while
+# DOWN is one 4-byte probe — negligible; and this many consecutive
+# proxy-refused/unreachable connect failures on onion relays while REACHABLE
+# is treated as proxy-died evidence and re-triggers the probe (A.2.1 item 5).
+TOR_RETRY_INTERVAL = 30  # s
+TOR_ONION_FAILURE_REPROBE = 3
+
 
 class NostrRelay(GObject.Object):
-    def __init__(self, url, on_event, on_status, on_ok=None, on_eose=None):
+    def __init__(self, url, on_event, on_status, on_ok=None, on_eose=None,
+                 on_connect_error=None):
         super().__init__()
         self.url = url
         self.on_event = on_event
         self.on_status = on_status
         self.on_ok = on_ok or (lambda *a: None)
         self.on_eose = on_eose
+        # tor-v1 (spec §A.2.1 item 5): onion relays report connect errors here
+        # so the client can count proxy-died evidence and re-probe.
+        self.on_connect_error = on_connect_error
         self.ws = None
         self.is_connected = False
         self.sub_id = None
@@ -197,6 +210,11 @@ class NostrRelay(GObject.Object):
 
         def on_err(ws, e):
             self.is_connected = False
+            if self.on_connect_error:
+                try:
+                    self.on_connect_error(e)
+                except Exception:
+                    pass
             GLib.idle_add(self.on_status, self.url, ConnectionState.WARNING)
 
         def on_close(ws, c, m):
@@ -407,6 +425,10 @@ class NostrClient(GObject.Object):
         "profile-updated": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         "contacts-updated": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         "status-changed": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
+        # tor-state-changed: (state:str) — TorState value ("disabled"|
+        # "reachable"|"down"); dispatched on the main thread via GLib.idle_add
+        # (spec gnostr-tor-onion-support-v1 §A.2.1).
+        "tor-state-changed": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         "relay-list-updated": (GObject.SignalFlags.RUN_FIRST, None, ()),
         "metrics-updated": (GObject.SignalFlags.RUN_FIRST, None, (str, int, int, int)),
         # publish-result: (event_id, accepted:bool, message:str, relay_url:str, label:str)
@@ -478,10 +500,30 @@ class NostrClient(GObject.Object):
         # the relays already accepted.
         self._dm_initiation_times = collections.deque()
         self.metrics = {}
+        # --- tor-v1-status (spec gnostr-tor-onion-support-v1 §A.2) ---
+        # TorState is derived, never stored twice: proxy-enabled decides
+        # DISABLED, the probe decides REACHABLE/DOWN. _tor_probe_reason
+        # distinguishes the auth-required tooltip; _tor_probe_inflight keeps
+        # overlapping schedule triggers from stacking worker threads;
+        # _tor_retry_source is the single 30 s DOWN timer; _tor_onion_failures
+        # counts consecutive proxy-refused onion connect failures while
+        # REACHABLE (A.2.1 item 5).
+        self.tor_state = (
+            TorState.DISABLED
+            if not proxy_settings.proxy_get("proxy-enabled")
+            else TorState.DOWN
+        )
+        self._tor_probe_reason = "ok"
+        self._tor_probe_inflight = False
+        self._tor_retry_source = None
+        self._tor_onion_failures = 0
         self.config_file = os.path.join(
             GLib.get_user_config_dir(), "gnostr", "config.json"
         )
         self.load_config()
+        # A.2.1 item 1: probe at startup iff proxy-enabled.
+        if proxy_settings.proxy_get("proxy-enabled"):
+            self.probe_tor()
 
     def load_config(self):
         if os.path.exists(self.config_file):
@@ -577,6 +619,9 @@ class NostrClient(GObject.Object):
         return False
 
     def connect_all(self):
+        # Gate lives in add_relay_connection (A.2.2): inert onion relays are
+        # never instantiated here either — no connect attempts, no retry
+        # storms, and they never touch the aggregate status-changed.
         def _connect_loop():
             for url in list(self.relay_urls):
                 GLib.idle_add(self.add_relay_connection, url)
@@ -588,6 +633,11 @@ class NostrClient(GObject.Object):
         if url in self.active_relays:
             # If exists but disconnected, consider restarting?
             # Handled by check_connections
+            return
+        # tor-v1 skip gate (spec §A.2.2): an onion relay is inert unless the
+        # proxy is enabled AND reachable. Inert relays stay in relay_urls
+        # (persisted list untouched) but are never instantiated as NostrRelay.
+        if onion_inert(url, proxy_get("proxy-enabled"), self.tor_state):
             return
         # Scheme policy (spec gnostr-tor-onion-support-v1 §3): ws:// (no TLS)
         # is only legal for .onion hosts reached through the SOCKS proxy.
@@ -608,9 +658,125 @@ class NostrClient(GObject.Object):
             self._handle_status,
             on_ok=self._handle_ok,
             on_eose=self._handle_eose,
+            on_connect_error=(
+                (lambda err, u=url: self._on_relay_connect_error(u, err))
+                if host_is_onion(url)
+                else None
+            ),
         )
         r.start()
         self.active_relays[url] = r
+
+    # --- tor-v1-status: probe schedule + transitions (spec §A.2.1/A.2.2) ---
+
+    def probe_tor(self):
+        """Run the SOCKS5 greeting probe on a worker thread; dispatch the
+        resulting state via GLib.idle_add (house pattern). Overlapping
+        triggers collapse into the in-flight probe (no thread stacking)."""
+        if not proxy_get("proxy-enabled"):
+            self._set_tor_state(TorState.DISABLED)
+            return
+        if self._tor_probe_inflight:
+            return
+        self._tor_probe_inflight = True
+        host = proxy_get("proxy-host")
+        port = proxy_get("proxy-port")
+
+        def _worker():
+            try:
+                ok, reason = probe_socks5_detail(host, port)
+            finally:
+                self._tor_probe_inflight = False
+            GLib.idle_add(
+                self._set_tor_state,
+                TorState.REACHABLE if ok else TorState.DOWN,
+                reason,
+            )
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def on_proxy_setting_changed(self, _key=None):
+        """Any proxy-* GSettings change re-probes immediately (A.2.1 item 2).
+        proxy-enabled false→true re-probes first and connects onion relays
+        only on REACHABLE; true→false demotes to DISABLED (relays inert)."""
+        self.probe_tor()
+
+    def _set_tor_state(self, state, reason="ok"):
+        """Single mutation point for tor_state; runs on the main thread
+        (probe dispatches here via GLib.idle_add)."""
+        old = self.tor_state
+        changed = state != old or reason != self._tor_probe_reason
+        self.tor_state = state
+        self._tor_probe_reason = reason
+        if state == TorState.REACHABLE:
+            self._tor_onion_failures = 0
+            self._cancel_tor_retry()
+            if old != TorState.REACHABLE:
+                # A.2.2: connect exactly the previously-inert onion relays,
+                # never a full connect_all().
+                self._connect_inert_onion_relays()
+                self._log_relay("tor: proxy reachable — onion relays enabled")
+        elif state == TorState.DOWN:
+            n = self._close_onion_relays()
+            if old != TorState.DOWN:
+                self._log_relay(f"tor: proxy down — {n} onion relay(s) skipped")
+            self._start_tor_retry()
+        else:  # DISABLED
+            self._close_onion_relays()
+            self._cancel_tor_retry()
+        if changed:
+            GLib.idle_add(self.emit, "tor-state-changed", state.value)
+        return False  # usable directly from GLib.idle_add
+
+    def _connect_inert_onion_relays(self):
+        for url in list(self.relay_urls):
+            if host_is_onion(url) and url not in self.active_relays:
+                self.add_relay_connection(url)
+
+    def _close_onion_relays(self):
+        """Close live onion relays on a DOWN/DISABLED transition. Marked
+        _idle_closed first so the intentional close stays quiet in the
+        aggregate status (the sidebar must not sit red while clearnet relays
+        are healthy and tor is merely down)."""
+        n = 0
+        for url in list(self.active_relays):
+            if host_is_onion(url):
+                r = self.active_relays.pop(url)
+                r._idle_closed = True
+                r.close()
+                n += 1
+        return n
+
+    def _start_tor_retry(self):
+        """While DOWN: one fixed 30 s retry timer (A.2.1 item 4)."""
+        if self._tor_retry_source is not None:
+            return
+
+        def _tick():
+            self._tor_retry_source = None
+            if self.tor_state == TorState.DOWN:
+                self.probe_tor()
+            return GLib.SOURCE_REMOVE
+
+        self._tor_retry_source = GLib.timeout_add_seconds(TOR_RETRY_INTERVAL, _tick)
+
+    def _cancel_tor_retry(self):
+        if self._tor_retry_source is not None:
+            GLib.source_remove(self._tor_retry_source)
+            self._tor_retry_source = None
+
+    def _on_relay_connect_error(self, url, err):
+        """A.2.1 item 5: while REACHABLE, 3 consecutive proxy-refused/
+        unreachable connect failures on onion relays are proxy-died evidence
+        and re-trigger the probe. Anything else is ordinary relay noise."""
+        if self.tor_state != TorState.REACHABLE:
+            return
+        low = str(err).lower()
+        if any(t in low for t in ("refused", "unreachable", "socks", "proxy")):
+            self._tor_onion_failures += 1
+            if self._tor_onion_failures >= TOR_ONION_FAILURE_REPROBE:
+                self._tor_onion_failures = 0
+                self.probe_tor()
 
     def check_connections(self):
         """Periodic sweep (main.py: every 300 s). Two jobs (issue #26):
@@ -629,6 +795,11 @@ class NostrClient(GObject.Object):
         if url not in self.relay_urls:
             self.relay_urls.add(url)
             self.save_config()
+            # A.2.1 item 3: the relay list gaining an onion host while not
+            # REACHABLE re-probes immediately (the gate keeps it inert until
+            # the probe says otherwise).
+            if host_is_onion(url) and self.tor_state != TorState.REACHABLE:
+                self.probe_tor()
             self.add_relay_connection(url)
             self.emit("relay-list-updated")
             self.publish_relay_list()

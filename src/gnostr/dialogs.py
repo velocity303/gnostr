@@ -40,6 +40,8 @@ class RelayPreferencesWindow(Adw.PreferencesWindow):
         self._build_tor_group(page)
         self.refresh()
         self.client.connect("relay-list-updated", self.refresh)
+        # tor-v1 §A.2.4: inert-row subtitles must follow the probe result.
+        self.client.connect("tor-state-changed", self.refresh)
 
     # -- Media Upload settings (rich editor scope) ---------------------------
     # The upload backend/server are GSettings-backed so users can move to
@@ -249,11 +251,23 @@ class RelayPreferencesWindow(Adw.PreferencesWindow):
             self.entry.set_text("")
 
     def refresh(self, *a):
+        from gnostr import proxy_settings as ps
+        from gnostr.util.tor_state import TorState, host_is_onion
+
         for r in self.relay_rows:
             self.relay_group.remove(r)
         self.relay_rows.clear()
+        proxy_enabled = ps.proxy_get("proxy-enabled")
+        tor_reachable = getattr(self.client, "tor_state", None) == TorState.REACHABLE
         for u in sorted(list(self.client.relay_urls)):
             r = Adw.ActionRow(title=u)
+            # tor-v1 §A.2.4: inert onion rows say why they are idle.
+            if host_is_onion(u) and not (proxy_enabled and tor_reachable):
+                r.set_subtitle(
+                    "Inactive — Tor not connected"
+                    if proxy_enabled
+                    else "Inactive — enable Tor proxy in Settings"
+                )
             b = Gtk.Button(icon_name="user-trash-symbolic", css_classes=["destructor"])
             b.connect("clicked", lambda x, url=u: self.client.remove_relay(url))
             r.add_suffix(b)

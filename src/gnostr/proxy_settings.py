@@ -147,3 +147,19 @@ def proxy_set(key, value):
         return True
     except Exception:
         return False
+
+
+def watch_changes(callback):
+    """Call callback(key) on any proxy-* change (tor-v1 §A.2.1 item 2).
+    Returns the Gio.Settings object — the caller MUST keep the ref alive (a
+    dropped ref unregisters the handler). None when the schema is
+    unavailable; the caller treats that as 'no live change notifications'
+    and re-reads via proxy_get() at the next natural trigger."""
+    s = _settings()
+    if s is None:
+        return None
+    try:
+        s.connect("changed", lambda _s, key: callback(key) if key in _PROXY_KEYS else None)
+    except Exception:
+        return None
+    return s
