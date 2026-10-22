@@ -76,9 +76,23 @@ class MainWindow(Adw.ApplicationWindow):
         self.toast_overlay = Adw.ToastOverlay()
         self.set_content(self.toast_overlay)
 
-        # 2. Main Stack (direct child of ToastOverlay — no Gtk.Overlay wrapper)
+        # Key-health banner (tux Q5, spec §C follow-up): replaces the
+        # sidebar key-health label the §C trim removed. Sits above the
+        # stack so it is visible on every app page; hidden when the key is
+        # healthy (or the signer is remote — NIP-49 backup is local-only).
+        self._root_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.key_banner = Adw.Banner(
+            title="Your key isn't backed up",
+            button_label="Back up",
+        )
+        self.key_banner.set_hidden(True)
+        self.key_banner.connect("button-clicked", self._on_key_banner_backup)
+        self._root_box.append(self.key_banner)
+        self.toast_overlay.set_child(self._root_box)
+
+        # 2. Main Stack (inside the root box, below the banner)
         self.main_stack = Adw.ViewStack()
-        self.toast_overlay.set_child(self.main_stack)
+        self._root_box.append(self.main_stack)
 
         # FAB Button — place on the split view's content page via its own overlay.
         # "edit-create-symbolic" is NOT in Adwaita/Phosh (verified: absent from
@@ -217,7 +231,55 @@ class MainWindow(Adw.ApplicationWindow):
             ImageLoader.MAX_WIDTH = 800
 
     def on_settings_clicked(self):
-        RelayPreferencesWindow(self.client, self).present()
+        win = RelayPreferencesWindow(self.client, self)
+        # Key-health banner (tux Q5): a backup made from Settings → Account
+        # must clear the banner when the window closes.
+        win.connect("close-request", lambda *_: (self._refresh_key_banner(), False)[0])
+        win.present()
+
+    def confirm_logout(self):
+        """Logout confirmation (spec §C / tux Q3): single AdwAlertDialog,
+        default focus Cancel, destructive 'Log out'. Cancel keeps the
+        session; only the logout response runs the existing flow."""
+        dialog = Adw.AlertDialog(
+            heading="Log out of gnostr?",
+            body=(
+                "Your feed cache stays on this device; you'll need your "
+                "key or password to sign back in."
+            ),
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("logout", "Log out")
+        dialog.set_response_appearance("logout", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+
+        def _resp(d, response):
+            if response == "logout":
+                self.on_logout_clicked()
+
+        dialog.connect("response", _resp)
+        dialog.present(self)
+
+    def _refresh_key_banner(self):
+        """Key-health banner (tux Q5): shown whenever a LOCAL key is loaded
+        and no backup has ever been verified. Replaces the sidebar key-health
+        label the §C trim removed; 'Back up' opens Settings → Account."""
+        from . import key_health
+
+        degraded = bool(self.pub_key) and key_health.last_backup_verified() is None
+        self.key_banner.set_hidden(not degraded)
+        if not degraded:
+            return
+
+    def _on_key_banner_backup(self, _banner):
+        win = RelayPreferencesWindow(self.client, self)
+        win.connect("close-request", lambda *_: (self._refresh_key_banner(), False)[0])
+        try:
+            win.set_visible_page(win.account_page)
+        except Exception:
+            pass
+        win.present()
 
     def on_menu_selected(self, r_id):
         if r_id == "global":
@@ -351,7 +413,9 @@ class MainWindow(Adw.ApplicationWindow):
         self.pub_key = backend.get_public_key()
         self.client.set_signer(backend)
         self.main_stack.set_visible_child_name("app")
-        self.sidebar.update_status("🟢")
+        self.sidebar.update_status("CONNECTED")
+        # Remote signer: no local key to back up (NIP-49 is local-only).
+        self._refresh_key_banner()
         self.sidebar.set_signer_status(f"bunker {self.pub_key[:8]}…")
         self._update_fab_visibility()
         GLib.idle_add(self.client.connect_all)
@@ -377,6 +441,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.priv_key = None
         self.pub_key = None
         self.sidebar.set_signer_status(None)
+        self._refresh_key_banner()
         self.main_stack.set_visible_child_name("login")
 
     def confirm_sign_request(self, kind, preview):
@@ -421,6 +486,7 @@ class MainWindow(Adw.ApplicationWindow):
         KeyManager.delete_key()
         self.main_stack.set_visible_child_name("login")
         self.client.set_keys(None, None)
+        self._refresh_key_banner()
 
     def on_export_key_clicked(self):
         from .dialogs import ExportKeyDialog
@@ -625,10 +691,9 @@ class MainWindow(Adw.ApplicationWindow):
                 ContentRenderer._build_quote_content(quote_box, ev, self)
 
     def on_status_changed(self, client, status):
-        emoji = {"CONNECTED": "🟢", "WARNING": "🟡", "DISCONNECTED": "🔴"}.get(
-            status, "⚪"
-        )
-        self.sidebar.update_status(emoji)
+        # §C trim: the sidebar footer carries state as a themed symbolic
+        # icon + CSS class (success/warning/error), not a colored emoji.
+        self.sidebar.update_status(status)
         # First relay connection -> re-run switch_feed so the feed subscribes live
         # (the startup switch_feed ran before relays connected, so its subscribe
         # was a no-op).
@@ -743,7 +808,9 @@ class MainWindow(Adw.ApplicationWindow):
             self.add_toast(Adw.Toast(title=f"{label} failed: {message}"))
 
     def on_relay_log_updated(self, client, line):
-        # Append to the sidebar Relay Activity pane.
+        # The Settings → Relays page owns the log now (§C trim); it
+        # subscribes to this signal directly. The sidebar call is a no-op
+        # shim kept for API stability.
         self.sidebar.append_relay_log(line)
 
     # --- tor-v1-status (spec gnostr-tor-onion-support-v1 §A.2.3/A.2.4) ---
@@ -805,7 +872,8 @@ class MainWindow(Adw.ApplicationWindow):
         # connect to dm-decrypted immediately.
         self.client.ensure_dm()
         self.main_stack.set_visible_child_name("app")
-        self.sidebar.update_status("🟢")
+        self.sidebar.update_status("CONNECTED")
+        self._refresh_key_banner()
         self._update_fab_visibility()
         self.update_dm_badge()
         GLib.idle_add(self.client.connect_all)
@@ -896,6 +964,12 @@ class GnostrApp(Adw.Application):
             ".dm-skeleton { border-radius: 8px;"
             " background-color: alpha(@text_color, 0.08); }"
             ".dm-unread-dot { color: @accent_color; }"
+            # Status-icon state colors (sidebar footer network icon + tor
+            # icon carry these classes; the emoji they replaced were colored
+            # by the glyph itself, a symbolic icon needs explicit color).
+            ".success { color: @success_color; }"
+            ".warning { color: @warning_color; }"
+            ".error { color: @error_color; }"
         )
         Gtk.StyleContext.add_provider_for_display(
             Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION

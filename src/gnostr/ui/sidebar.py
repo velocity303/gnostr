@@ -3,10 +3,21 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gtk, Pango
+from gi.repository import Adw, Gtk
 
 
 class Sidebar(Gtk.Box):
+    """Sidebar (spec relays-and-settings-v1 §C, trimmed): navigation menu +
+    signer row + a compact footer status row of three same-size symbolic
+    icons [tor] [network] [logout], horizontally centered (spec update
+    8def2ab: the FLX1 rounded bottom bezel clips a left-aligned cluster).
+
+    The Relay Activity expander, key-health label, Back Up Key button and
+    Logout text button were REMOVED here: relay activity and key backup now
+    live in Settings (RELSET-3), key-health warnings ride an AdwBanner on
+    the main window (tux Q5), and logout is the footer icon + an
+    Adw.AlertDialog confirmation (tux Q3)."""
+
     def __init__(self, main_window):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         self.main_window = main_window
@@ -61,66 +72,38 @@ class Sidebar(Gtk.Box):
         self.signer_row.add_suffix(disc)
         self.menu_list.append(self.signer_row)
 
-        # Relay Activity — collapsible log of publish/OK/connect activity so
-        # follows/likes/reposts are verifiable against relays, not just the DB.
-        self.relay_expander = Adw.ExpanderRow(title="Relay Activity")
-        # wrap WORD_CHAR + max_width_chars=1: a long relay line (e.g.
-        # "wss://relay.example-very-long-domain.org:8443 publish OK ...") must
-        # wrap inside the row instead of forcing its natural width on the
-        # sidebar column (hscrollbar is NEVER on mobile). max_width_chars=1
-        # collapses the label's *natural* width so it fills the row and wraps;
-        # WORD_CHAR only breaks mid-token when one word alone exceeds the width.
-        self.relay_log_label = Gtk.Label(
-            label="No relay activity yet",
-            css_classes=["monospace", "dim-label"],
-            halign=Gtk.Align.START,
-            wrap=True,
-            wrap_mode=Pango.WrapMode.WORD_CHAR,
-            max_width_chars=1,
-            hexpand=True,
-        )
-        self.relay_log_label.set_selectable(True)
-        sw = Gtk.ScrolledWindow()
-        sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        # max-content-height is ONLY honored when propagate-natural-height is
-        # TRUE (its default is FALSE, so the cap alone is silently ignored and
-        # the log's full natural height — 700px+ of wrapped lines — leaks into
-        # the row). Set both so the 180px cap holds: the log scrolls inside the
-        # row instead of stretching the section.
-        sw.set_propagate_natural_height(True)
-        sw.set_max_content_height(180)
-        sw.set_hexpand(True)
-        sw.set_child(self.relay_log_label)
-        self.relay_expander.add_row(sw)
-        self.append(self.relay_expander)
-
-        # Key-health (P3 #16): last backup verified + re-verify prompt.
-        self.key_health_label = Gtk.Label(
-            label="", css_classes=["dim-label"], wrap=True
-        )
-        self.key_health_label.set_xalign(0)
-        self.append(self.key_health_label)
-        self._refresh_key_health()
-
-        # Back Up Key (NIP-49 export, P1 #14)
-        bb = Gtk.Button(label="Back Up Key", css_classes=["flat"])
-        bb.connect("clicked", self.on_backup_key_clicked)
-        self.append(bb)
-
-        # Logout Button
-        lb = Gtk.Button(label="Logout", css_classes=["flat"])
-        lb.connect("clicked", self.on_logout_clicked)
-        self.append(lb)
-
-        # Status row: tor icon (tor-v1, spec §A.2.3) + connection emoji.
-        # The tor icon is hidden unless the proxy is enabled or an onion
-        # relay is configured — zero new pixels for everyone else.
+        # Footer status row: [tor icon] [network status icon] [logout icon].
+        # All same-size symbolic icons; the cluster is CENTERED (spec update
+        # 8def2ab) and does not reserve slots — with the tor icon hidden the
+        # remaining two icons re-center rather than leaving a gap.
         self.status_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.status_row.set_halign(Gtk.Align.CENTER)
         self.tor_icon = Gtk.Image.new_from_icon_name(self._tor_icon_name())
         self.tor_icon.set_visible(False)
         self.status_row.append(self.tor_icon)
-        self.status_label = Gtk.Label(label="🔴", css_classes=["dim-label"])
-        self.status_row.append(self.status_label)
+        # Network status: a themed symbolic icon (was a colored emoji). State
+        # is carried by CSS classes, same pattern as the tor icon — the emoji
+        # glyphs rendered identically in B/W themes and could not be themed.
+        self.status_icon = Gtk.Image.new_from_icon_name(
+            self._net_icon_name("DISCONNECTED")
+        )
+        self.status_icon.add_css_class("warning")
+        self.status_icon.set_tooltip_text("Relays: disconnected")
+        self.status_row.append(self.status_icon)
+        # Logout (tux Q3): a real button (not a bare icon), visually
+        # separated from the informational status glyphs by the group
+        # spacing, tooltip "Log out". Click opens the confirm dialog on
+        # MainWindow — never logs out directly.
+        sep = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
+        sep.set_margin_top(6)
+        sep.set_margin_bottom(6)
+        self.status_row.append(sep)
+        self.logout_button = Gtk.Button(icon_name="system-log-out-symbolic")
+        self.logout_button.set_tooltip_text("Log out")
+        self.logout_button.add_css_class("flat")
+        self.logout_button.set_size_request(44, 44)
+        self.logout_button.connect("clicked", self.on_logout_clicked)
+        self.status_row.append(self.logout_button)
         self.append(self.status_row)
 
     @staticmethod
@@ -140,8 +123,26 @@ class Sidebar(Gtk.Box):
         except Exception:
             return TOR_ICON_CANDIDATES[-1]
 
-    def update_tor_icon(self, state, proxy_enabled, onion_count, reason="ok",
-                        host="", port=0):
+    @staticmethod
+    def _net_icon_name(state):
+        # Same resolve_icon pattern as the tor icon / FAB icon (house rule:
+        # never hard-code a glyph that can be absent on Phosh). State is
+        # carried by CSS class + tooltip, so one resolved name serves all.
+        NET_ICON_CANDIDATES = (
+            "network-transmit-receive-symbolic",
+            "network-wireless-symbolic",
+            "network-server-symbolic",
+        )
+        try:
+            from .icons import resolve_icon
+
+            return resolve_icon(NET_ICON_CANDIDATES)
+        except Exception:
+            return NET_ICON_CANDIDATES[-1]
+
+    def update_tor_icon(
+        self, state, proxy_enabled, onion_count, reason="ok", host="", port=0
+    ):
         """Tor-state indicator (spec §A.2.3). state is the TorState value
         string; called from MainWindow on tor-state-changed and at startup."""
         from gnostr.util.tor_state import TorState
@@ -168,11 +169,11 @@ class Sidebar(Gtk.Box):
             )
 
     def append_relay_log(self, line):
-        """Append a relay-activity line, newest at top (prepend)."""
-        cur = self.relay_log_label.get_text()
-        if cur == "No relay activity yet":
-            cur = ""
-        self.relay_log_label.set_text(f"{line}\n{cur}")
+        """No-op shim (spec §C): the Relay Activity log moved to the
+        Settings → Relays page (RELSET-3), which subscribes to
+        `relay-log-updated` directly. main.py keeps routing the signal here
+        so the sidebar class API stays stable for existing callers/tests."""
+        return None
 
     def on_settings_clicked(self, b):
         self.main_window.on_settings_clicked()
@@ -184,11 +185,9 @@ class Sidebar(Gtk.Box):
                 break
 
     def on_logout_clicked(self, b):
-        self.main_window.on_logout_clicked()
-
-    def on_backup_key_clicked(self, b):
-        self._refresh_key_health()
-        self.main_window.on_export_key_clicked()
+        # Confirmation lives on MainWindow (it owns the transient parent for
+        # the Adw.AlertDialog); the sidebar never logs out directly.
+        self.main_window.confirm_logout()
 
     def on_disconnect_signer_clicked(self, b):
         self.main_window.on_disconnect_signer()
@@ -201,23 +200,17 @@ class Sidebar(Gtk.Box):
             self.signer_row.set_subtitle(label)
             self.signer_row.set_visible(True)
 
-    def _refresh_key_health(self):
-        """Key-health copy: last backup verified, or a re-verify prompt."""
-        from .. import key_health
-
-        ts = key_health.last_backup_verified()
-        if ts is None:
-            self.key_health_label.set_text(
-                "No backup verified yet — back up your key now."
-            )
-        else:
-            self.key_health_label.set_text(
-                "Backup verified: %s. Re-verify if unsure."
-                % key_health.format_last_backup(ts)
-            )
-
-    def update_status(self, status_emoji):
-        self.status_label.set_text(status_emoji)
+    def update_status(self, state):
+        """Network status icon state. `state` is the connection status string
+        (CONNECTED / WARNING / DISCONNECTED / unknown). Color comes from CSS
+        classes (registered by the GnostrApp CSS provider), tooltip from the
+        plain-text state — the emoji this replaced could not be themed."""
+        css = {"CONNECTED": "success", "WARNING": "warning"}.get(state, "error")
+        self.status_icon.remove_css_class("success")
+        self.status_icon.remove_css_class("warning")
+        self.status_icon.remove_css_class("error")
+        self.status_icon.add_css_class(css)
+        self.status_icon.set_tooltip_text(f"Relays: {state.lower()}")
 
     def update_dm_badge(self, count):
         """Show the unread-DM count on the Messages row; hidden at 0."""

@@ -181,6 +181,7 @@ class RelayPreferencesWindow(Adw.PreferencesWindow):
             wrap_mode=Pango.WrapMode.WORD_CHAR,
             max_width_chars=1,
             hexpand=True,
+            selectable=True,
         )
         sw = Gtk.ScrolledWindow()
         sw.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)

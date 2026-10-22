@@ -47,48 +47,55 @@ def test_format_last_backup(health_store):
     assert time.strftime("%Y-%m-%d %H:%M", time.localtime(ts)) == text
 
 
-# --- backup reminder display logic (sidebar._refresh_key_health) ---
-# conftest mocks gi, so the Sidebar class is unconstructable; extract the
-# real method via ast and bind it to a FakeView (pattern from test_follows_view).
+# --- backup reminder display logic (dialogs.RelayPreferencesWindow._refresh_key_health) ---
+# §C trim (RELSET-4): the sidebar key-health label was removed; the same
+# copy now lives on the Settings → Account key-backup row. conftest mocks
+# gi, so the window class is unconstructable; extract the real method via
+# ast and bind it to a FakeView (pattern from test_follows_view).
 
 
 def _extract_method(name):
-    """Compile one FunctionDef out of sidebar.py (gi is mocked, class is
-    unconstructable — same ast pattern as test_follows_view.py)."""
-    src = open("src/gnostr/ui/sidebar.py").read()
+    """Compile one FunctionDef out of the RelayPreferencesWindow class in
+    dialogs.py (gi is mocked, class is unconstructable — same ast pattern
+    as test_follows_view.py)."""
+    src = open("src/gnostr/dialogs.py").read()
     tree = ast.parse(src)
-    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef))
+    cls = next(
+        n
+        for n in tree.body
+        if isinstance(n, ast.ClassDef) and n.name == "RelayPreferencesWindow"
+    )
     fn = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == name)
     mod = ast.Module(body=[fn], type_ignores=[])
-    # __package__ lets the method's `from .. import key_health` resolve to
+    # __package__ lets the method's `from . import key_health` resolve to
     # the real gnostr.key_health module (the one the fixture patches).
-    ns = {"__package__": "gnostr.ui"}
-    exec(compile(mod, "src/gnostr/ui/sidebar.py", "exec"), ns)
+    ns = {"__package__": "gnostr"}
+    exec(compile(mod, "src/gnostr/dialogs.py", "exec"), ns)
     return ns[name]
 
 
-class FakeLabel:
+class FakeRow:
     def __init__(self):
-        self.text = None
+        self.subtitle = None
 
-    def set_text(self, t):
-        self.text = t
+    def set_subtitle(self, t):
+        self.subtitle = t
 
 
 class FakeView:
     def __init__(self):
-        self.key_health_label = FakeLabel()
+        self.key_health_row = FakeRow()
 
 
 def test_reminder_prompt_when_no_backup(health_store):
     view = FakeView()
     _extract_method("_refresh_key_health")(view)
-    assert "No backup verified" in view.key_health_label.text
+    assert "No backup verified" in view.key_health_row.subtitle
 
 
 def test_reminder_shows_timestamp_after_backup(health_store):
     ts = key_health.mark_backup_verified()
     view = FakeView()
     _extract_method("_refresh_key_health")(view)
-    assert key_health.format_last_backup(ts) in view.key_health_label.text
-    assert "Re-verify" in view.key_health_label.text
+    assert key_health.format_last_backup(ts) in view.key_health_row.subtitle
+    assert "Re-verify" in view.key_health_row.subtitle
