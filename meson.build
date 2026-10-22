@@ -72,6 +72,9 @@ if pytest_prog.found()
   # Relay usage economy (issue #26): REQ token bucket, queue dedup, CLOSED
   # handling, reconnect backoff, live-sub replay, idle parking.
   test('test_relay_usage_economy', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_relay_usage_economy.py'], env: test_env, timeout: 120)
+  # Tor/.onion relay WS (tor-v1-ws): socks_proxy_kwargs contract, websocket-client
+  # socks5h proxy_info, host-based .onion check, ws:// scheme policy hard-fail.
+  test('test_tor_ws_proxy', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_tor_ws_proxy.py'], env: test_env, timeout: 120)
   endif
 
 # Real-GTK feed harness (tier 2): exercises ui.feed_view.FeedView against a
