@@ -12,6 +12,7 @@ install_data(
     'dialogs.py',
     'markup.py',
     'uploader.py',
+    'proxy_settings.py',
     'key_manager.py',
     'nip49.py',
     'nostr_utils.py',

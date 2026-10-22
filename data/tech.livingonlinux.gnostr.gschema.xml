@@ -20,5 +20,30 @@
 			<summary>Maximum upload size in megabytes</summary>
 			<description>Files larger than this are refused before any network I/O. 0 disables the local gate (server limits still apply).</description>
 		</key>
+		<!-- Opt-in Tor/SOCKS5 transport (spec gnostr-tor-onion-support-v1 §4).
+		     v1 = opt-in proxy only: gnostr never starts or bundles tor; the user
+		     runs a tor daemon (SocksPort) and points these keys at it.
+		     proxy-remote-dns MUST stay true whenever .onion endpoints are used
+		     (socks5h semantics: the proxy resolves, never the local resolver). -->
+		<key name="proxy-enabled" type="b">
+			<default>false</default>
+			<summary>Route network traffic through a SOCKS5 proxy</summary>
+			<description>When true, relay connections, LNURL/NIP-11 lookups and media fetches go through the SOCKS5 proxy below (e.g. a local tor daemon). No silent clearnet fallback: an unreachable proxy is a visible error.</description>
+		</key>
+		<key name="proxy-host" type="s">
+			<default>'127.0.0.1'</default>
+			<summary>SOCKS5 proxy host</summary>
+			<description>Inside a Flatpak the sandbox loopback is not the host's; point this at the tor SocksPort address reachable from the sandbox (often the podman gateway IP, e.g. 10.0.0.1).</description>
+		</key>
+		<key name="proxy-port" type="i">
+			<default>9050</default>
+			<summary>SOCKS5 proxy port</summary>
+			<description>tor's default SocksPort is 9050.</description>
+		</key>
+		<key name="proxy-remote-dns" type="b">
+			<default>true</default>
+			<summary>Resolve hostnames through the proxy (SOCKS5h)</summary>
+			<description>Must stay true whenever .onion endpoints are used: the hostname is sent to the proxy verbatim and never touches a local DNS resolver.</description>
+		</key>
 	</schema>
 </schemalist>
