@@ -7,6 +7,7 @@
 # Runtime deps (mirrors pyproject [project.dependencies] so the venv is complete)
 ecdsa
 websocket-client
+python-socks
 
 # Tests
 pytest
