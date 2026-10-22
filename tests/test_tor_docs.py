@@ -60,7 +60,9 @@ def test_settings_dialog_links_the_guide():
     assert "_build_tor_group" in text
     assert "tor-setup.md" in text
     # group must actually be built by the window ctor, not dead code
-    assert re.search(r"self\._build_tor_group\(page\)", text)
+    # (RELSET-3: the tor group moved onto the Network page — the ctor passes
+    # self.network_page, not a local `page`).
+    assert re.search(r"self\._build_tor_group\(self\.network_page\)", text)
 
 
 def test_meson_installs_the_guide():

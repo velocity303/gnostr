@@ -481,6 +481,15 @@ class NostrClient(GObject.Object):
         self.pending_publishes = {}
         # Bounded relay-activity log (newest last); surfaced via relay-log-updated
         self.relay_log = collections.deque(maxlen=200)
+        # RELSET-3 §B: per-relay facts for the Settings details expander
+        # (connection state / last error / last publish). In-memory only —
+        # they describe the live session, not user intent.
+        self.relay_status = {}
+        self.relay_last_error = {}
+        self.relay_last_publish = {}
+        # RELSET-3 §B: last-used Settings page id, persisted in config.json
+        # (spec AC6; tux change 6 — AdwPreferencesWindow does not do this).
+        self.settings_page = None
         self.my_pubkey = None
         self.my_privkey = None
         self.signer = None  # SignerBackend (P2 #15); set_keys/set_signer install it
@@ -555,6 +564,17 @@ class NostrClient(GObject.Object):
                     data.get("relays")
                 )
                 self.save_config()
+            page = data.get("settings_page")
+            if isinstance(page, str) and page:
+                self.settings_page = page
+
+    def set_settings_page(self, page_id):
+        """Persist the last-used Settings page (spec §B AC6). No write when
+        unchanged — page switches must not spam the config file."""
+        if not page_id or page_id == self.settings_page:
+            return
+        self.settings_page = page_id
+        self.save_config()
 
     def save_config(self):
         d = os.path.dirname(self.config_file)
@@ -571,6 +591,8 @@ class NostrClient(GObject.Object):
                 )
             else:
                 payload["relays"] = list(self.relay_urls)
+            if getattr(self, "settings_page", None):
+                payload["settings_page"] = self.settings_page
             with open(self.config_file, "w") as f:
                 json.dump(payload, f)
         except Exception:
@@ -610,9 +632,7 @@ class NostrClient(GObject.Object):
             # a legacy set-assignment must not silently delete parking.
             entries = self.relay_entries or []
             keep = [
-                e
-                for e in entries
-                if e["url"] in urls or not e.get("enabled", True)
+                e for e in entries if e["url"] in urls or not e.get("enabled", True)
             ]
             added = {e["url"] for e in keep}
             keep.extend(
@@ -694,6 +714,9 @@ class NostrClient(GObject.Object):
         entries.insert(j, entries.pop(i))
         self.save_config()
         self.emit("relay-list-updated")
+        # Spec §B: reorder is a mutation too — 10002 tag order follows
+        # preference order, so re-publish (debounced).
+        self._schedule_relay_list_publish()
         return True
 
     def import_relays_from_profile(self, urls):
@@ -1209,6 +1232,15 @@ class NostrClient(GObject.Object):
             f"{'OK' if accepted else 'REJECTED'} {relay_url}"
             + (f" ({message})" if message else "")
         )
+        # RELSET-3 §B: per-relay last publish result for the details expander.
+        # Defensive getattr: ast-extracted fakes in the older suites predate
+        # this dict and must keep working unchanged.
+        store = getattr(self, "relay_last_publish", None)
+        if store is not None:
+            store[relay_url] = (
+                f"{pending['label']} {'OK' if accepted else 'REJECTED'}"
+                + (f" ({message})" if message else "")
+            )
         if accepted:
             # First acceptance wins: settle now, ignore later relay acks.
             self.pending_publishes.pop(event_id, None)
@@ -1769,9 +1801,7 @@ class NostrClient(GObject.Object):
         entry model at all (legacy state) the peer-targeting flow — including
         the dm-unreachable abort — is unchanged (acceptance criterion 3)."""
         entries = getattr(self, "relay_entries", None)
-        dm_urls = (
-            gnostr.relay_entries.urls_for_role(entries, "dm") if entries else []
-        )
+        dm_urls = gnostr.relay_entries.urls_for_role(entries, "dm") if entries else []
         if dm_urls:
             # Explicit user intent: DMs only through dm-role relays.
             sent = self.publish_to_relays(event, dm_urls)
@@ -1785,14 +1815,10 @@ class NostrClient(GObject.Object):
                 # rejection on one retries the untried ones (connecting them
                 # on demand), and only a full round of rejections settles the
                 # publish as failed.
-                self._track_publish(
-                    event, "DM", sent_urls=sent, candidates=relays
-                )
+                self._track_publish(event, "DM", sent_urls=sent, candidates=relays)
                 return
             write_urls = (
-                gnostr.relay_entries.urls_for_role(entries, "write")
-                if entries
-                else []
+                gnostr.relay_entries.urls_for_role(entries, "write") if entries else []
             )
             if write_urls:
                 # Spec chain last resort: peer has no 10050 -> write relays.
@@ -1801,9 +1827,7 @@ class NostrClient(GObject.Object):
                     "kind-10050 — falling back to write relays"
                 )
                 sent = self.publish_to_relays(event, write_urls)
-                self._track_publish(
-                    event, "DM", sent_urls=sent, candidates=write_urls
-                )
+                self._track_publish(event, "DM", sent_urls=sent, candidates=write_urls)
                 return
             self._log_relay(
                 f"DM {event['id'][:8]} aborted: {peer_pubkey[:8]} has no kind-10050"
@@ -2081,6 +2105,18 @@ class NostrClient(GObject.Object):
         # connectivity (with the entry's role tag, spec §A.6).
         tag = self._role_tag(url)
         self._log_relay(f"{tag + ' ' if tag else ''}{url} {status.status}")
+        # RELSET-3 §B: per-relay facts feed the Settings details expander.
+        # An ERROR/WARNING transition also records the last error for that
+        # relay; CONNECTED clears a stale one. Defensive getattr: ast-
+        # extracted fakes in the older suites predate these dicts — the
+        # emit below must fire for them exactly as before.
+        store = getattr(self, "relay_status", None)
+        if store is not None:
+            store[url] = status
+            if status.status == "CONNECTED":
+                getattr(self, "relay_last_error", {}).pop(url, None)
+            elif status.status in ("ERROR", "WARNING"):
+                getattr(self, "relay_last_error", {})[url] = status.details
         self.emit("status-changed", status.status)
 
     def fetch_contacts(self):

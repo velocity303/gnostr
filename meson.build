@@ -129,4 +129,9 @@ if xvfb_run.found() and gtk_python.found()
   test('test_dm_composer_gtk_real', xvfb_run,
     args: ['-a', gtk_python, meson.project_source_root() / 'tests/test_dm_composer_gtk_real.py'],
     timeout: 120)
+  # Real-GTK settings harness (RELSET-3): 4-page RelayPreferencesWindow at
+  # 360px with no h-overflow, role toggle/reorder/remove wiring, AC6 page.
+  test('test_relay_settings_gtk_real', xvfb_run,
+    args: ['-a', gtk_python, meson.project_source_root() / 'tests/test_relay_settings_gtk_real.py'],
+    timeout: 120)
 endif

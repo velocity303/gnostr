@@ -1,3 +1,5 @@
+import collections
+
 import gi
 
 gi.require_version("Gtk", "4.0")
@@ -9,39 +11,341 @@ from gnostr.key_manager import KeyManager
 
 
 class RelayPreferencesWindow(Adw.PreferencesWindow):
+    """Settings (spec relays-and-settings-v1 §B): four pages
+    Account / Relays / Media / Network (tux Q4 pick). The Relays page shows
+    one AdwExpanderRow per relay entry in preference order — role switches
+    and per-relay details live inside the expander, the row subtitle carries
+    the role summary, and the suffixes are up/down/remove at >=44px
+    (tux Q1). Relay Activity is a collapsed group at the bottom of the page
+    with its own horizontal scroll region (tux Q2). The last-used page is
+    persisted via client.set_settings_page (AC6 / tux change 6)."""
+
+    PAGE_IDS = ("account", "relays", "media", "network")
+
     def __init__(self, nostr_client, parent_window):
         super().__init__()
         self.set_transient_for(parent_window)
         self.set_modal(True)
         self.set_title("Settings")
         self.client = nostr_client
-        self.relay_rows = []
-        page = Adw.PreferencesPage()
-        self.add(page)
+        # url -> {"row": ExpanderRow, "switches": {...}, "details": {...}}
+        self.relay_rows = {}
+        self._log_lines = collections.deque(maxlen=200)
+
+        # Four pages, kept as attributes so the AC6 page persistence can
+        # map page <-> id without a lookup table.
+        self.account_page = Adw.PreferencesPage(
+            title="Account", icon_name="avatar-default-symbolic"
+        )
+        self.relays_page = Adw.PreferencesPage(
+            title="Relays", icon_name="network-server-symbolic"
+        )
+        self.media_page = Adw.PreferencesPage(
+            title="Media", icon_name="image-x-generic-symbolic"
+        )
+        self.network_page = Adw.PreferencesPage(
+            title="Network", icon_name="network-vpn-symbolic"
+        )
+        self.add(self.account_page)
+        self.add(self.relays_page)
+        self.add(self.media_page)
+        self.add(self.network_page)
+
+        self._build_account_group()
+        self._build_relay_page()
+        self._build_upload_group(self.media_page)
+        self._build_proxy_group(self.network_page)
+        self._build_tor_group(self.network_page)
+        self.refresh()
+        self.client.connect("relay-list-updated", self.refresh)
+        self.client.connect("relay-log-updated", self.on_relay_log_line)
+        self.client.connect("status-changed", self._update_details)
+        self.client.connect("publish-result", self._on_publish_result)
+        # tor-v1 §A.2.4: inert-row subtitles must follow the probe result.
+        self.client.connect("tor-state-changed", self.refresh)
+
+        # AC6: reopen on the last-used page; persist every page switch.
+        # Object-based API (set_visible_page / notify::visible-page): it has
+        # existed since Adw 1.0, while visible-page-name is newer than the
+        # phone runtime and visible-page-id does not exist at all in the
+        # GNOME 50 flatpak runtime — verified against both typelibs.
+        last = getattr(self.client, "settings_page", None)
+        if last in self.PAGE_IDS:
+            self.set_visible_page(self._page_by_id(last))
+        self.connect("notify::visible-page", self._on_page_changed)
+
+    def _page_by_id(self, page_id):
+        return getattr(self, page_id + "_page")
+
+    def _page_id(self, page):
+        for page_id in self.PAGE_IDS:
+            if getattr(self, page_id + "_page") is page:
+                return page_id
+        return None
+
+    def _on_page_changed(self, *_a):
+        page_id = self._page_id(self.get_visible_page())
+        if page_id in self.PAGE_IDS:
+            try:
+                self.client.set_settings_page(page_id)
+            except Exception:
+                pass
+
+    # -- Account page (Sync + key backup moved from the sidebar) ------------
+
+    def _build_account_group(self):
         g1 = Adw.PreferencesGroup(title="Sync")
-        page.add(g1)
+        self.account_page.add(g1)
         r1 = Adw.ActionRow(title="Import from Profile")
         b1 = Gtk.Button(label="Import", css_classes=["suggested-action"])
         b1.connect("clicked", self.on_import)
         r1.add_suffix(b1)
         g1.add(r1)
-        g2 = Adw.PreferencesGroup(title="Active Relays")
-        page.add(g2)
-        self.relay_group = g2
+
+        gk = Adw.PreferencesGroup(
+            title="Key Backup",
+            description="Encrypted backup of your signing key (NIP-49).",
+        )
+        self.account_page.add(gk)
+        self.key_health_row = Adw.ActionRow(title="Key backup")
+        bb = Gtk.Button(
+            label="Back Up Key",
+            css_classes=["suggested-action"],
+            valign=Gtk.Align.CENTER,
+        )
+        bb.connect("clicked", self.on_backup_key_clicked)
+        self.key_health_row.add_suffix(bb)
+        gk.add(self.key_health_row)
+        self._refresh_key_health()
+
+    def _refresh_key_health(self):
+        """Same copy as the sidebar label had (P3 #16); the sidebar trim
+        (RELSET-4) moves this surface here."""
+        from . import key_health
+
+        ts = key_health.last_backup_verified()
+        if ts is None:
+            self.key_health_row.set_subtitle(
+                "No backup verified yet — back up your key now."
+            )
+        else:
+            self.key_health_row.set_subtitle(
+                "Backup verified: %s. Re-verify if unsure."
+                % key_health.format_last_backup(ts)
+            )
+
+    def on_backup_key_clicked(self, _b):
+        parent = self.get_transient_for()
+        if parent is not None and hasattr(parent, "on_export_key_clicked"):
+            parent.on_export_key_clicked()
+        self._refresh_key_health()
+
+    # -- Relays page (spec §B.2) ---------------------------------------------
+
+    def _build_relay_page(self):
+        self.relay_group = Adw.PreferencesGroup(title="Relays")
+        self.relays_page.add(self.relay_group)
+        # "Add New Relay" is kept as a member and re-appended after every
+        # rebuild so it always stays at the bottom (AdwPreferencesGroup has
+        # no positional insert).
         r2 = Adw.ActionRow(title="Add New Relay")
+        self.add_relay_row = r2
         self.entry = Gtk.Entry(placeholder_text="wss://...")
         b2 = Gtk.Button(icon_name="list-add-symbolic")
         b2.connect("clicked", self.on_add)
         r2.add_suffix(self.entry)
         r2.add_suffix(b2)
-        g2.add(r2)
-        self._build_upload_group(page)
-        self._build_proxy_group(page)
-        self._build_tor_group(page)
-        self.refresh()
-        self.client.connect("relay-list-updated", self.refresh)
-        # tor-v1 §A.2.4: inert-row subtitles must follow the probe result.
-        self.client.connect("tor-state-changed", self.refresh)
+        self.relay_group.add(r2)
+
+        # Relay Activity (tux Q2): collapsed by default, own horizontal
+        # scroll region so a long monospace line can never force the page
+        # itself sideways at 360px, ~200-line cap (client.relay_log is
+        # already maxlen=200; the local deque mirrors it).
+        g3 = Adw.PreferencesGroup()
+        self.relays_page.add(g3)
+        self.activity_expander = Adw.ExpanderRow(title="Relay Activity")
+        # collapsed by default; the enable-switch stays hidden (Adw default:
+        # show-enable-expansion is off, and it doesn't exist on the Librem 5
+        # runtime's older Adw — do not reach for it).
+        # WORD_CHAR wrap + max_width_chars=1 (house rule for every monospace
+        # blob label — see test_export_key_dialog): a long relay line must
+        # wrap inside the page instead of forcing its natural width sideways.
+        # The ScrolledWindow keeps an AUTOMATIC hpolicy per tux Q2, but the
+        # wrap means the page itself never scrolls horizontally.
+        self.relay_log_label = Gtk.Label(
+            label="No relay activity yet",
+            css_classes=["monospace", "dim-label"],
+            xalign=0,
+            halign=Gtk.Align.START,
+            wrap=True,
+            wrap_mode=Pango.WrapMode.WORD_CHAR,
+            max_width_chars=1,
+            hexpand=True,
+        )
+        sw = Gtk.ScrolledWindow()
+        sw.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
+        sw.set_propagate_natural_height(True)
+        sw.set_max_content_height(240)
+        sw.set_child(self.relay_log_label)
+        self.activity_expander.add_row(sw)
+        g3.add(self.activity_expander)
+        for line in list(getattr(self.client, "relay_log", []) or [])[-200:]:
+            self._log_lines.appendleft(line)
+        self._render_log()
+
+    def on_relay_log_line(self, _client, line):
+        self._log_lines.appendleft(str(line))
+        self._render_log()
+
+    def _render_log(self):
+        self.relay_log_label.set_text(
+            "\n".join(self._log_lines) or "No relay activity yet"
+        )
+
+    @staticmethod
+    def _role_summary(roles):
+        """Glanceable role text for the row subtitle (tux Q1):
+        'Read · Write', 'Read only', 'Write · DM'."""
+        labels = {"read": "Read", "write": "Write", "dm": "DM"}
+        names = [labels[r] for r in (roles or []) if r in labels]
+        if not names:
+            return "No roles"
+        if names == ["Read"]:
+            return "Read only"
+        return " · ".join(names)
+
+    def refresh(self, *a):
+        from gnostr import proxy_settings as ps
+        from gnostr.util.tor_state import TorState
+
+        # Rebuild preserves open expanders: a role toggle re-emits
+        # relay-list-updated and must not snap the expander shut mid-edit.
+        open_urls = {
+            u
+            for u, w in self.relay_rows.items()
+            if getattr(w["row"], "get_expanded", lambda: False)()
+        }
+        for w in self.relay_rows.values():
+            self.relay_group.remove(w["row"])
+        self.relay_rows.clear()
+        # lift the Add row out; it goes back last
+        self.relay_group.remove(self.add_relay_row)
+        entries = getattr(self.client, "relay_entries", None) or []
+        proxy_enabled = ps.proxy_get("proxy-enabled")
+        tor_reachable = getattr(self.client, "tor_state", None) == TorState.REACHABLE
+        items = entries or [
+            {"url": u, "roles": [], "enabled": True}
+            for u in sorted(list(self.client.relay_urls))
+        ]
+        for entry in items:
+            url = entry["url"]
+            row = self._build_relay_row(url, entry, proxy_enabled, tor_reachable)
+            if url in open_urls:
+                row.set_expanded(True)
+            self.relay_group.add(row)
+        self.relay_group.add(self.add_relay_row)
+
+    def _build_relay_row(self, url, entry, proxy_enabled, tor_reachable):
+        from gnostr.util.tor_state import host_is_onion
+
+        row = Adw.ExpanderRow(title=url)
+        subtitle = self._role_summary(entry.get("roles"))
+        if not entry.get("enabled", True):
+            subtitle = "Parked — " + subtitle.lower()
+        row.set_subtitle(subtitle)
+
+        widgets = {"switches": {}, "details": {}}
+
+        # Park/unpark switch (spec §A enabled flag; the only UI for it).
+        en = Adw.SwitchRow(
+            title="Enabled", subtitle="Off parks the relay: kept, never connected"
+        )
+        en.set_active(bool(entry.get("enabled", True)))
+        # AdwSwitchRow has no "toggled" (that's GtkSwitch); the house signal
+        # for its state is notify::active.
+        en.connect("notify::active", self._on_enabled_toggled, url)
+        row.add_row(en)
+        widgets["switches"]["enabled"] = en
+
+        # Role switches inside the expander (tux Q1): full-width rows, real
+        # labels, >=48px targets — no cryptic R/W/DM chips, no tooltips.
+        for role, title in (("read", "Read"), ("write", "Write"), ("dm", "DM")):
+            sw = Adw.SwitchRow(title=title)
+            sw.set_active(role in (entry.get("roles") or []))
+            sw.connect("notify::active", self._on_role_toggled, url)
+            row.add_row(sw)
+            widgets["switches"][role] = sw
+
+        # Details: connection state / last error / last publish (spec §B.2).
+        for key, title in (
+            ("conn", "Connection"),
+            ("err", "Last error"),
+            ("pub", "Last publish"),
+        ):
+            d = Adw.ActionRow(title=title)
+            d.set_sensitive(False)
+            row.add_row(d)
+            widgets["details"][key] = d
+        self.relay_rows[url] = {**widgets, "row": row}
+
+        # tor-v1 §A.2.4: an inert onion relay says why it is idle.
+        if host_is_onion(url) and not (proxy_enabled and tor_reachable):
+            widgets["details"]["conn"].set_subtitle(
+                "Inactive — Tor not connected"
+                if proxy_enabled
+                else "Inactive — enable Tor proxy in Settings"
+            )
+        else:
+            self._fill_details(url)
+
+        # Suffixes: up / down / remove only (tux change 1), >=44px targets.
+        up = Gtk.Button(icon_name="pan-up-symbolic", valign=Gtk.Align.CENTER)
+        up.set_size_request(44, 44)
+        up.connect("clicked", lambda b, u=url: self.client.move_relay_entry(u, -1))
+        row.add_suffix(up)
+        down = Gtk.Button(icon_name="pan-down-symbolic", valign=Gtk.Align.CENTER)
+        down.set_size_request(44, 44)
+        down.connect("clicked", lambda b, u=url: self.client.move_relay_entry(u, 1))
+        row.add_suffix(down)
+        rm = Gtk.Button(
+            icon_name="user-trash-symbolic",
+            css_classes=["destructor"],
+            valign=Gtk.Align.CENTER,
+        )
+        rm.set_size_request(44, 44)
+        rm.connect("clicked", lambda b, u=url: self.client.remove_relay_entry(u))
+        row.add_suffix(rm)
+        return row
+
+    def _on_role_toggled(self, _switch, _pspec, url):
+        w = self.relay_rows.get(url)
+        if w is None:
+            return
+        roles = [r for r in ("read", "write", "dm") if w["switches"][r].get_active()]
+        self.client.set_relay_roles(url, roles)
+
+    def _on_enabled_toggled(self, switch, _pspec, url):
+        self.client.set_relay_enabled(url, switch.get_active())
+
+    def _on_publish_result(self, *_a):
+        self._update_details()
+
+    def _update_details(self, *_a):
+        for url in list(self.relay_rows):
+            self._fill_details(url)
+
+    def _fill_details(self, url):
+        w = self.relay_rows.get(url)
+        if w is None:
+            return
+        status = getattr(self.client, "relay_status", {}).get(url)
+        err = getattr(self.client, "relay_last_error", {}).get(url)
+        pub = getattr(self.client, "relay_last_publish", {}).get(url)
+        w["details"]["conn"].set_subtitle(
+            status.details if status is not None else "Unknown"
+        )
+        w["details"]["err"].set_subtitle(err or "None")
+        w["details"]["pub"].set_subtitle(pub or "None")
 
     # -- Media Upload settings (rich editor scope) ---------------------------
     # The upload backend/server are GSettings-backed so users can move to
@@ -249,30 +553,6 @@ class RelayPreferencesWindow(Adw.PreferencesWindow):
                 return
             self.client.add_relay(u)
             self.entry.set_text("")
-
-    def refresh(self, *a):
-        from gnostr import proxy_settings as ps
-        from gnostr.util.tor_state import TorState, host_is_onion
-
-        for r in self.relay_rows:
-            self.relay_group.remove(r)
-        self.relay_rows.clear()
-        proxy_enabled = ps.proxy_get("proxy-enabled")
-        tor_reachable = getattr(self.client, "tor_state", None) == TorState.REACHABLE
-        for u in sorted(list(self.client.relay_urls)):
-            r = Adw.ActionRow(title=u)
-            # tor-v1 §A.2.4: inert onion rows say why they are idle.
-            if host_is_onion(u) and not (proxy_enabled and tor_reachable):
-                r.set_subtitle(
-                    "Inactive — Tor not connected"
-                    if proxy_enabled
-                    else "Inactive — enable Tor proxy in Settings"
-                )
-            b = Gtk.Button(icon_name="user-trash-symbolic", css_classes=["destructor"])
-            b.connect("clicked", lambda x, url=u: self.client.remove_relay(url))
-            r.add_suffix(b)
-            self.relay_group.add(r)
-            self.relay_rows.append(r)
 
 
 def resolve_login_input(text, password):
