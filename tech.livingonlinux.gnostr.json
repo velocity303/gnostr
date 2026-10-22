@@ -135,6 +135,20 @@
             ]
         },
         {
+            "name": "python3-python-socks",
+            "buildsystem": "simple",
+            "build-commands": [
+                "pip3 install --verbose --prefix=/app --no-deps --no-build-isolation python_socks-3.1.1-py3-none-any.whl"
+            ],
+            "sources": [
+                {
+                    "type": "file",
+                    "url": "https://files.pythonhosted.org/packages/3b/23/2c2cef1b4313c55d1713201acd4ee2043fb2cf22e546ca9d36bf4317faea/python_socks-3.1.1-py3-none-any.whl",
+                    "sha256": "327e0d6378702c73a7790bf732e9f01392f17b48c7348a50b5bd1f710c2df1be"
+                }
+            ]
+        },
+        {
             "name": "yt-dlp",
             "buildsystem": "simple",
             "build-commands": [
