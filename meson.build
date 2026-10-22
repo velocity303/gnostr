@@ -70,6 +70,9 @@ if pytest_prog.found()
   # SOCKS5 greeting probe (mock server + sent-bytes capture), skip gate,
   # state transitions, toast dedup, sidebar icon contract.
   test('test_tor_state', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_tor_state.py'], env: test_env, timeout: 120)
+  # Tor/.onion relay WS (tor-v1-ws): socks_proxy_kwargs contract, websocket-client
+  # socks5h proxy_info, host-based .onion check, ws:// scheme policy hard-fail.
+  test('test_tor_ws_proxy', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_tor_ws_proxy.py'], env: test_env, timeout: 120)
   endif
 
 # Real-GTK feed harness (tier 2): exercises ui.feed_view.FeedView against a

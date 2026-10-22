@@ -231,7 +231,14 @@ class NostrRelay(GObject.Object):
             on_error=on_err,
             on_close=on_close,
         )
-        threading.Thread(target=self.ws.run_forever, daemon=True).start()
+        # SOCKS5 proxy kwargs are read at connect time (not import time) so a
+        # Settings change takes effect on the next (re)connect. socks5h =
+        # remote DNS: the .onion hostname is sent verbatim to the proxy and
+        # Python's getaddrinfo never touches it (spec §3 DNS leak rule).
+        proxy_kwargs = proxy_settings.socks_proxy_kwargs()
+        threading.Thread(
+            target=self.ws.run_forever, kwargs=proxy_kwargs, daemon=True
+        ).start()
 
     def restart(self):
         """Reconnect with randomized exponential backoff (issue #26). Called
@@ -626,6 +633,17 @@ class NostrClient(GObject.Object):
         if url in self.active_relays:
             # If exists but disconnected, consider restarting?
             # Handled by check_connections
+            return
+        # Scheme policy (spec gnostr-tor-onion-support-v1 §3): ws:// (no TLS)
+        # is only legal for .onion hosts reached through the SOCKS proxy.
+        # A disallowed endpoint is a HARD FAIL with a visible error — the URL
+        # is never rewritten and there is never a silent clearnet fallback.
+        if not proxy_settings.url_allowed(url, proxy_get("proxy-enabled")):
+            self._log_relay(
+                f"{url} refused: ws:// without TLS is only allowed for "
+                ".onion relays with the SOCKS proxy enabled"
+            )
+            self._handle_status(url, ConnectionState.WARNING)
             return
         # tor-v1 skip gate (spec §A.2.2): an onion relay is inert unless the
         # proxy is enabled AND reachable. Inert relays stay in relay_urls

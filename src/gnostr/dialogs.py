@@ -190,6 +190,23 @@ class RelayPreferencesWindow(Adw.PreferencesWindow):
     def on_add(self, b):
         u = self.entry.get_text().strip()
         if u.startswith("ws"):
+            # Scheme policy (spec gnostr-tor-onion-support-v1 §3): ws:// is
+            # only legal for .onion hosts behind the SOCKS proxy. Reject at
+            # the dialog with a visible toast — never rewrite the URL, never
+            # silently fall back to a clearnet equivalent.
+            from . import proxy_settings as ps
+
+            if not ps.url_allowed(u, ps.proxy_get("proxy-enabled")):
+                self.add_toast(
+                    Adw.Toast(
+                        title=(
+                            f"{u} refused: ws:// is only allowed for "
+                            ".onion relays with the proxy enabled"
+                        ),
+                        timeout=5,
+                    )
+                )
+                return
             self.client.add_relay(u)
             self.entry.set_text("")
 

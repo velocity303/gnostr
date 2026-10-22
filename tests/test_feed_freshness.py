@@ -263,7 +263,7 @@ class _FakeWS:
     def send(self, data):
         self.sent.append(json.loads(data))
 
-    def run_forever(self):
+    def run_forever(self, **kwargs):
         self._cb["open"](self)
 
     def fire_eose(self, sub_id):
@@ -316,6 +316,11 @@ def _fake_relay():
             name,
             {
                 "websocket": ws_mod,
+                # gi is mocked in tests, so the real proxy_settings would read
+                # Mock GSettings; pin "proxy disabled" to match pre-tor behavior.
+                "proxy_settings": types.SimpleNamespace(
+                    socks_proxy_kwargs=lambda: {}
+                ),
                 "threading": __import__("threading"),
                 "ConnectionState": conn_state,
                 "REQ_RATE_LIMIT": 18,

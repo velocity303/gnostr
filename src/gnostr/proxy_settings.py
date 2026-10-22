@@ -13,6 +13,8 @@ fallback, every write returns False so the UI can report "could not
 persist" instead of crashing.
 """
 
+from urllib.parse import urlsplit
+
 APP_ID = "tech.livingonlinux.gnostr"
 
 DEFAULT_PROXY_ENABLED = False
@@ -69,6 +71,62 @@ def proxy_get(key, fallback=None):
         return s.get_string(key) or fallback
     except Exception:
         return fallback
+
+
+def host_is_onion(url):
+    """True iff the URL's *hostname* ends in '.onion' (case-insensitive).
+
+    Hostname-based on purpose (spec gnostr-tor-onion-support-v1 §3): a raw
+    string suffix check would accept 'ws://x.onion.evil.example' and dial
+    it on clearnet — the exact leak the policy exists to prevent.
+    """
+    try:
+        host = urlsplit(url).hostname or ""
+    except ValueError:
+        return False
+    return host.lower().endswith(".onion")
+
+
+def url_allowed(url, proxy_enabled):
+    """Scheme policy (spec §3 leak rules, card tor-v1-ws): wss:// is always
+    legal; ws:// (unencrypted) is legal iff the host is .onion AND the
+    SOCKS proxy is enabled — an onion endpoint with the proxy down is a
+    hard fail, never a URL rewrite and never a clearnet fallback.
+    """
+    try:
+        scheme = (urlsplit(url).scheme or "").lower()
+    except ValueError:
+        return False
+    if scheme == "wss":
+        return True
+    if scheme == "ws":
+        return host_is_onion(url) and bool(proxy_enabled)
+    return False
+
+
+def socks_proxy_kwargs(settings=None):
+    """kwargs for WebSocketApp.run_forever (spec §8 contract).
+
+    {} when the proxy is disabled (direct connection); otherwise the
+    websocket-client SOCKS kwargs. proxy_type is 'socks5h' (remote DNS:
+    the hostname goes to tor verbatim, Python's getaddrinfo never sees a
+    .onion host) unless proxy-remote-dns was explicitly turned off.
+
+    `settings` is an optional plain dict of key->value overrides (tests);
+    None reads GSettings through proxy_get with its hard fallback.
+    """
+    if settings is None:
+        values = {key: proxy_get(key) for key in _DEFAULTS}
+    else:
+        values = dict(_DEFAULTS)
+        values.update(settings)
+    if not values["proxy-enabled"]:
+        return {}
+    return {
+        "http_proxy_host": str(values["proxy-host"]),
+        "http_proxy_port": int(values["proxy-port"]),
+        "proxy_type": "socks5h" if values["proxy-remote-dns"] else "socks5",
+    }
 
 
 def proxy_set(key, value):
