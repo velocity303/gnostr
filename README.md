@@ -78,6 +78,25 @@ flatpak run --env=GST_VAAPI_DRM_DEVICE=/dev/dri/renderD128 tech.livingonlinux.gn
 flatpak override --user --env=GST_VAAPI_DRM_DEVICE=/dev/dri/renderD128 tech.livingonlinux.gnostr
 ```
 
+### Tor / Privacy
+
+Gnostr can route all of its traffic (relays, LNURL, media) through a local
+tor SOCKS5 proxy — you run the standard `tor` daemon, gnostr talks to it.
+With the proxy enabled, `.onion` relays work and your IP is hidden from
+clearnet relays. Quick start:
+
+```bash
+sudo dnf install tor        # or: apt install tor / pacman -S tor
+sudo systemctl enable --now tor
+```
+
+Then enable the proxy in Preferences (host `127.0.0.1`, port `9050`).
+The Flatpak reaches a host-loopback tor out of the box (shared network
+namespace — verified on the Librem 5). Full guide — distro install lines,
+minimal `torrc`, verification one-liners, Librem 5 system-tor note (Orbot
+does not apply under Phosh), and what the sidebar tor icon means:
+[docs/tor-setup.md](docs/tor-setup.md).
+
 ### Running Tests
 
 ```bash

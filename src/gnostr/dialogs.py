@@ -37,6 +37,7 @@ class RelayPreferencesWindow(Adw.PreferencesWindow):
         g2.add(r2)
         self._build_upload_group(page)
         self._build_proxy_group(page)
+        self._build_tor_group(page)
         self.refresh()
         self.client.connect("relay-list-updated", self.refresh)
 
@@ -91,6 +92,45 @@ class RelayPreferencesWindow(Adw.PreferencesWindow):
         btn.connect("clicked", self.on_save_upload_settings)
         save.add_suffix(btn)
         g.add(save)
+
+    # -- Tor help (tor-v1-docs) -----------------------------------------------
+    # v1 tor support is "opt-in SOCKS5 proxy + docs": gnostr never starts or
+    # manages the tor daemon. This group is the in-app entry point to the full
+    # setup guide (docs/tor-setup.md, installed beside the app modules).
+
+    def _build_tor_group(self, page):
+        g = Adw.PreferencesGroup(
+            title="Tor & Privacy",
+            description="Route relays, LNURL, and media through a local tor SOCKS5 proxy.",
+        )
+        page.add(g)
+        row = Adw.ActionRow(
+            title="Tor setup guide",
+            subtitle="Install tor, minimal torrc, verification, Librem 5 notes",
+        )
+        btn = Gtk.Button(icon_name="help-contents-symbolic", valign=Gtk.Align.CENTER)
+        btn.set_tooltip_text("Open the Tor setup guide")
+        btn.connect("clicked", self.on_open_tor_docs)
+        row.add_suffix(btn)
+        g.add(row)
+
+    def on_open_tor_docs(self, _btn):
+        import os
+        from pathlib import Path
+
+        here = os.path.dirname(os.path.abspath(__file__))
+        candidates = [
+            os.path.join(here, "docs", "tor-setup.md"),  # installed layout
+            os.path.normpath(os.path.join(here, "..", "..", "docs", "tor-setup.md")),
+        ]
+        for path in candidates:
+            if os.path.exists(path):
+                try:
+                    Gtk.UriLauncher(uri=Path(path).as_uri()).launch(self, None, None)
+                    return
+                except Exception:
+                    break
+        self.add_toast(Adw.Toast(title="Tor setup guide not found"))
 
     def on_save_upload_settings(self, _btn):
         from . import uploader

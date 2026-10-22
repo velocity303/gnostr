@@ -101,3 +101,4 @@ Build system: Meson with Flatpak Builder. CI via Gitea Actions (`.gitea/workflow
 | `tests/AGENTS.md` | Testing conventions, mocking patterns, CI setup |
 | `tools/AGENTS.md` | Phone dev helpers: pmshot capture pitfalls, PM deploy, build workarounds |
 | `docs/onboarding-key-management.md` | Design spec: P1 (create-account + NIP-49) IMPLEMENTED 2026-09-15; P2 NIP-46 + P3 pending — tracked as Gitea issues #14/#15/#16 |
+| `docs/tor-setup.md` | User guide: tor daemon setup (distro install, torrc, verification), Flatpak shared-netns note, Librem 5 system-tor; opened in-app from Settings → Tor & Privacy |
