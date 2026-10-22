@@ -97,6 +97,12 @@ today's relay add/remove).
 - Status row becomes: `[tor icon] [network status icon] [logout icon]` —
   all same-size symbolic icons, inline. Logout icon:
   `system-log-out-symbolic`, tooltip "Log out".
+- The status row is HORIZONTALLY CENTERED in the sidebar footer
+  (`status_row.set_halign(Gtk.Align.CENTER)`). On the FLX1 the rounded
+  bottom bezel clips bottom-left content, so a left-aligned icon cluster
+  is partially hidden; centering keeps all three icons visible. The row
+  must stay centered even when the tor icon is hidden (2 icons) — center
+  the cluster, don't reserve slots.
 - Logout click → `Adw.AlertDialog` ("Log out of gnostr?" / body: "Your
   feed cache stays on this device; you'll need your key or password to sign
   back in.") with destructive "Log out" action → existing
@@ -127,8 +133,9 @@ today's relay add/remove).
 4. Legacy config (no `relay_entries`) migrates on first load without
    losing relays; `relay_urls` property keeps all existing tests green.
 5. Sidebar shows only: navigation, signer row (when signer active), status
-   row with the three icons. Logout requires confirmation; cancel keeps the
-   session.
+   row with the three icons, horizontally centered in the footer (FLX1
+   bezel must not clip any icon). Logout requires confirmation; cancel
+   keeps the session.
 6. Settings opens on the last-used page; all four pages reachable on a
    360×648 logical viewport (Librem 5) without horizontal scrolling.
 7. Full pytest suite green; new tests for: migration, routing by role,
