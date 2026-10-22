@@ -121,7 +121,7 @@ class _FakeWS:
         if self._cb["close"]:
             self._cb["close"](self, None, None)
 
-    def run_forever(self):
+    def run_forever(self, **kwargs):
         if _FakeWS.auto_open:
             self._cb["open"](self)
 
@@ -174,6 +174,11 @@ def _fake_relay(url="wss://relay.test", tokens=None, connected=True):
             name,
             {
                 "websocket": ws_mod,
+                # gi is mocked in tests, so the real proxy_settings would read
+                # Mock GSettings; pin "proxy disabled" to match pre-tor behavior.
+                "proxy_settings": types.SimpleNamespace(
+                    socks_proxy_kwargs=lambda: {}
+                ),
                 "threading": __import__("threading"),
                 "ConnectionState": conn_state,
             },
