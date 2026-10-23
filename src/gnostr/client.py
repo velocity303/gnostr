@@ -1143,7 +1143,19 @@ class NostrClient(GObject.Object):
         event = pending.get("event")
         if event is None:
             return False
-        candidates = set(pending.get("candidates") or self.relay_urls)
+        candidates = pending.get("candidates")
+        if not candidates:
+            # Role routing (spec §A): the default retry set is write-role
+            # relays when the entry model exists — a retry is still a
+            # publish, and a read-only relay must never receive an EVENT
+            # (acceptance criterion 2). Legacy state retries every relay.
+            entries = getattr(self, "relay_entries", None)
+            candidates = (
+                gnostr.relay_entries.urls_for_role(entries, "write")
+                if entries
+                else list(self.relay_urls)
+            )
+        candidates = set(candidates)
         tried = pending.setdefault("tried", set())
         untried = [u for u in candidates if u not in tried]
         if not untried:
