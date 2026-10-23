@@ -65,3 +65,23 @@ def test_dm_views_no_removed_gtk_apis():
                 if needle in line:
                     problems.append(f"{fname}:{lineno}: {needle!r} — {hint}")
     assert not problems, "removed GTK/Adw API used:\n" + "\n".join(problems)
+
+
+# Adw.Banner has never had set_hidden() — the reveal API is set_revealed().
+# A mocked-Mock test suite happily "passed" a set_hidden call while the phone
+# crashed at window construction (RELSET-5 E2E, 2026-10-22). Source scan so
+# the mocked suite can never green-light it again.
+def test_no_banner_set_hidden():
+    root = SRC.parent
+    problems = []
+    for path in sorted(root.rglob("*.py")):
+        for lineno, line in enumerate(path.read_text().splitlines(), 1):
+            if line.lstrip().startswith("#"):
+                continue
+            if "set_hidden(" in line:
+                problems.append(f"{path.relative_to(root)}:{lineno}")
+    assert (
+        not problems
+    ), "Adw.Banner.set_hidden does not exist; use set_revealed(bool):\n" + "\n".join(
+        problems
+    )

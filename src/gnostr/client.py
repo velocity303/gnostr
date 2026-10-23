@@ -470,6 +470,10 @@ class NostrClient(GObject.Object):
     def __init__(self, db):
         super().__init__()
         self.active_relays = {}
+        # relay_entries is the ordered source of truth (spec
+        # relays-and-settings-v1 §A): [{"url", "roles", "enabled"}], list
+        # order = user preference. relay_urls is a derived property below.
+        self.relay_entries = None
         self.relay_urls = set(DEFAULT_RELAYS)
         self.seen_events = set()
         self.db = db
@@ -477,6 +481,15 @@ class NostrClient(GObject.Object):
         self.pending_publishes = {}
         # Bounded relay-activity log (newest last); surfaced via relay-log-updated
         self.relay_log = collections.deque(maxlen=200)
+        # RELSET-3 §B: per-relay facts for the Settings details expander
+        # (connection state / last error / last publish). In-memory only —
+        # they describe the live session, not user intent.
+        self.relay_status = {}
+        self.relay_last_error = {}
+        self.relay_last_publish = {}
+        # RELSET-3 §B: last-used Settings page id, persisted in config.json
+        # (spec AC6; tux change 6 — AdwPreferencesWindow does not do this).
+        self.settings_page = None
         self.my_pubkey = None
         self.my_privkey = None
         self.signer = None  # SignerBackend (P2 #15); set_keys/set_signer install it
@@ -523,6 +536,13 @@ class NostrClient(GObject.Object):
             GLib.get_user_config_dir(), "gnostr", "config.json"
         )
         self.load_config()
+        # Fresh install (no config yet): the default relays become entries
+        # too, so the entry API always has a list to work with. Not saved
+        # until the first mutation — a read-only startup writes no file.
+        if self.relay_entries is None:
+            self.relay_entries = gnostr.relay_entries.entries_from_legacy(
+                DEFAULT_RELAYS
+            )
         # A.2.1 item 1: probe at startup iff proxy-enabled.
         if proxy_settings.proxy_get("proxy-enabled"):
             self.probe_tor()
@@ -532,20 +552,208 @@ class NostrClient(GObject.Object):
             try:
                 with open(self.config_file, "r") as f:
                     data = json.load(f)
-                    if data.get("relays"):
-                        self.relay_urls = set(data["relays"])
             except Exception:
-                pass
+                return
+            re_ = gnostr.relay_entries.normalize_entries(data.get("relay_entries"))
+            if re_:
+                self.relay_entries = re_
+            elif data.get("relays"):
+                # Legacy migration (spec §A): derive entries from the flat
+                # list (sorted, default roles) and persist immediately.
+                self.relay_entries = gnostr.relay_entries.entries_from_legacy(
+                    data.get("relays")
+                )
+                self.save_config()
+            page = data.get("settings_page")
+            if isinstance(page, str) and page:
+                self.settings_page = page
+
+    def set_settings_page(self, page_id):
+        """Persist the last-used Settings page (spec §B AC6). No write when
+        unchanged — page switches must not spam the config file."""
+        if not page_id or page_id == self.settings_page:
+            return
+        self.settings_page = page_id
+        self.save_config()
 
     def save_config(self):
         d = os.path.dirname(self.config_file)
         if not os.path.exists(d):
             os.makedirs(d, exist_ok=True)
         try:
+            payload = {}
+            if getattr(self, "relay_entries", None):
+                payload["relay_entries"] = self.relay_entries
+                # Legacy mirror so older builds reading "relays" never lose
+                # the set (derived from entries, enabled only).
+                payload["relays"] = gnostr.relay_entries.enabled_urls(
+                    self.relay_entries
+                )
+            else:
+                payload["relays"] = list(self.relay_urls)
+            if getattr(self, "settings_page", None):
+                payload["settings_page"] = self.settings_page
             with open(self.config_file, "w") as f:
-                json.dump({"relays": list(self.relay_urls)}, f)
+                json.dump(payload, f)
         except Exception:
             pass
+
+    # --- relay entries: derived relay_urls + entry API (spec §A) -----------
+    #
+    # Public surface for the Settings UI card (RELSET-3):
+    #   relay_entries            list of {"url", "roles", "enabled"} (order =
+    #                            user preference; mutate ONLY via the API below)
+    #   relay_urls               derived set: enabled entries' urls (legacy)
+    #   add_relay_entry(url, roles=None)     append (default roles read+write)
+    #   remove_relay_entry(url)              delete entry + close connection
+    #   set_relay_roles(url, roles)          replace roles (canonical order)
+    #   set_relay_enabled(url, enabled)      park / unpark (intent persists)
+    #   move_relay_entry(url, delta)         reorder (-1 up, +1 down)
+    #   import_relays_from_profile(urls)     merge, keep roles/order
+    # Every mutation persists via save_config() and emits relay-list-updated;
+    # membership changes re-publish kind-10002 (debounced).
+
+    @property
+    def relay_urls(self):
+        """Derived: urls of ENABLED entries, in preference order. When no
+        entry model is present (legacy fakes / pre-migration), returns the
+        plain set assigned directly."""
+        entries = self.__dict__.get("relay_entries")
+        if entries is not None:
+            return set(gnostr.relay_entries.enabled_urls(entries))
+        return self.__dict__.get("_relay_urls_fallback", set())
+
+    @relay_urls.setter
+    def relay_urls(self, urls):
+        urls = set(urls or [])
+        if self.__dict__.get("relay_entries") is not None:
+            # Keep the entry model in sync: add missing, drop absent. Parked
+            # entries survive — relay_urls only ever lists enabled urls, so
+            # a legacy set-assignment must not silently delete parking.
+            entries = self.relay_entries or []
+            keep = [
+                e for e in entries if e["url"] in urls or not e.get("enabled", True)
+            ]
+            added = {e["url"] for e in keep}
+            keep.extend(
+                gnostr.relay_entries.make_entry(u) for u in sorted(urls - added)
+            )
+            self.relay_entries = keep
+        else:
+            self.__dict__["_relay_urls_fallback"] = urls
+
+    def add_relay_entry(self, url, roles=None):
+        """Append an entry (list order = preference; new relays go last).
+        Default roles [read, write]. Connects + re-publishes 10002."""
+        re_ = gnostr.relay_entries
+        entry = re_.make_entry(url, roles)
+        if not entry["url"] or re_.entry_for(self.relay_entries, entry["url"]):
+            return False
+        self.relay_entries.append(entry)
+        self.save_config()
+        if host_is_onion(entry["url"]) and self.tor_state != TorState.REACHABLE:
+            self.probe_tor()
+        self.add_relay_connection(entry["url"])
+        self.emit("relay-list-updated")
+        self._schedule_relay_list_publish()
+        return True
+
+    def remove_relay_entry(self, url):
+        url = str(url).rstrip("/")
+        entry = gnostr.relay_entries.entry_for(self.relay_entries, url)
+        if entry is None:
+            return False
+        self.relay_entries.remove(entry)
+        self.save_config()
+        if url in self.active_relays:
+            self.active_relays[url].close()
+            del self.active_relays[url]
+        self.emit("relay-list-updated")
+        self._schedule_relay_list_publish()
+        return True
+
+    def set_relay_roles(self, url, roles):
+        """Replace an entry's roles (canonical order applied)."""
+        entry = gnostr.relay_entries.entry_for(self.relay_entries, url)
+        if entry is None:
+            return False
+        entry["roles"] = gnostr.relay_entries.normalize_roles(roles)
+        self.save_config()
+        self.emit("relay-list-updated")
+        self._schedule_relay_list_publish()
+        return True
+
+    def set_relay_enabled(self, url, enabled):
+        """Park (False) or unpark (True) an entry. Parked entries persist but
+        never connect — distinct from the idle-park mechanism (spec §A)."""
+        entry = gnostr.relay_entries.entry_for(self.relay_entries, url)
+        if entry is None:
+            return False
+        entry["enabled"] = bool(enabled)
+        self.save_config()
+        if not entry["enabled"]:
+            if url in self.active_relays:
+                self.active_relays[url].close()
+                del self.active_relays[url]
+        else:
+            self.add_relay_connection(url)
+        self.emit("relay-list-updated")
+        self._schedule_relay_list_publish()
+        return True
+
+    def move_relay_entry(self, url, delta):
+        """Reorder one entry (-1 up, +1 down); persists the new order."""
+        entries = self.relay_entries or []
+        entry = gnostr.relay_entries.entry_for(entries, url)
+        if entry is None:
+            return False
+        i = entries.index(entry)
+        j = max(0, min(len(entries) - 1, i + int(delta)))
+        if i == j:
+            return False
+        entries.insert(j, entries.pop(i))
+        self.save_config()
+        self.emit("relay-list-updated")
+        # Spec §B: reorder is a mutation too — 10002 tag order follows
+        # preference order, so re-publish (debounced).
+        self._schedule_relay_list_publish()
+        return True
+
+    def import_relays_from_profile(self, urls):
+        """Import-from-profile merge: new relays append with default roles,
+        existing entries keep their roles and order. Returns added urls."""
+        added = gnostr.relay_entries.merge_imported(self.relay_entries, urls)
+        if added:
+            self.save_config()
+            for u in added:
+                self.add_relay_connection(u)
+            self.emit("relay-list-updated")
+            self._schedule_relay_list_publish()
+        return added
+
+    def _schedule_relay_list_publish(self):
+        """Debounced kind-10002 re-publish (same pattern as today's relay
+        add/remove): a burst of UI mutations lands one event. Falls back to
+        an immediate publish when no main loop can arm the timer."""
+        timer = getattr(self, "_relay_list_timer", None)
+        if timer is not None:
+            try:
+                GLib.source_remove(timer)
+                self._relay_list_timer = None
+            except Exception:
+                pass
+        try:
+            self._relay_list_timer = GLib.timeout_add_seconds(
+                2, self._publish_relay_list_now
+            )
+        except Exception:
+            self._publish_relay_list_now()
+        return False
+
+    def _publish_relay_list_now(self):
+        self._relay_list_timer = None
+        self.publish_relay_list()
+        return False
 
     def set_keys(self, pub, priv):
         self.my_pubkey = pub
@@ -792,27 +1000,12 @@ class NostrClient(GObject.Object):
                 relay.restart()
 
     def add_relay(self, url):
-        if url not in self.relay_urls:
-            self.relay_urls.add(url)
-            self.save_config()
-            # A.2.1 item 3: the relay list gaining an onion host while not
-            # REACHABLE re-probes immediately (the gate keeps it inert until
-            # the probe says otherwise).
-            if host_is_onion(url) and self.tor_state != TorState.REACHABLE:
-                self.probe_tor()
-            self.add_relay_connection(url)
-            self.emit("relay-list-updated")
-            self.publish_relay_list()
+        # Legacy entry point (dialogs): now a thin alias for the entry API —
+        # new relays append with default roles [read, write].
+        self.add_relay_entry(url)
 
     def remove_relay(self, url):
-        if url in self.relay_urls:
-            self.relay_urls.remove(url)
-            self.save_config()
-            if url in self.active_relays:
-                self.active_relays[url].close()
-                del self.active_relays[url]
-            self.emit("relay-list-updated")
-            self.publish_relay_list()
+        self.remove_relay_entry(url)
 
     def fetch_user_relays(self):
         if not self.my_pubkey:
@@ -823,7 +1016,8 @@ class NostrClient(GObject.Object):
             r.request_once(sub_id, filter)
 
     def request_once(self, sub_id, filters):
-        for r in self.active_relays.values():
+        # Role routing (spec §A): one-shot REQs are reads — read-role relays.
+        for r in self._read_relays().values():
             r.request_once(sub_id, filters)
 
     # --- infinite-scroll phase 2: history backfill ---
@@ -871,19 +1065,43 @@ class NostrClient(GObject.Object):
             GLib.idle_add(self.emit, "backfill-done", sub_id)
 
     def subscribe(self, sub_id, filters, snapshot=False):
-        for r in self.active_relays.values():
+        # Role routing (spec §A): feed/REQ subscriptions go to read-role
+        # relays only. Fallback to every connected relay when the entry
+        # model is absent (legacy fakes) or no relay carries `read` — a
+        # client that reads from nothing would show an empty feed.
+        for url, r in self._read_relays().items():
             r.subscribe(sub_id, filters, snapshot=snapshot)
 
+    def _routed_relays(self, role):
+        """Connected relays carrying `role`. When the entry model is absent
+        (legacy fakes / pre-migration state) every connected relay qualifies;
+        with entries present the routing is strict (acceptance criterion 2:
+        a write-only relay receives no REQs, a read-only relay no EVENTs)."""
+        active = self.active_relays
+        entries = getattr(self, "relay_entries", None)
+        if not entries:
+            return dict(active)
+        urls = set(gnostr.relay_entries.urls_for_role(entries, role))
+        return {u: r for u, r in active.items() if u in urls}
+
+    def _read_relays(self):
+        return self._routed_relays("read")
+
+    def _write_relays(self):
+        return self._routed_relays("write")
+
     def publish(self, event):
+        # Role routing (spec §A): publishes fan out to write-role relays.
+        targets = self._write_relays()
         sent_urls = set()
-        for url, r in self.active_relays.items():
+        for url, r in targets.items():
             if r.publish(event):
                 sent_urls.add(url)
         # Surface how many relays actually received the EVENT — the like flow
         # must be observable, not silently swallowed.
         self._log_relay(
-            f"EVENT {event['id'][:8]} sent to "
-            f"{len(sent_urls)}/{len(self.active_relays)} relay(s)"
+            f"[w] EVENT {event['id'][:8]} sent to "
+            f"{len(sent_urls)}/{len(targets)} relay(s)"
         )
         return sent_urls
 
@@ -925,7 +1143,19 @@ class NostrClient(GObject.Object):
         event = pending.get("event")
         if event is None:
             return False
-        candidates = set(pending.get("candidates") or self.relay_urls)
+        candidates = pending.get("candidates")
+        if not candidates:
+            # Role routing (spec §A): the default retry set is write-role
+            # relays when the entry model exists — a retry is still a
+            # publish, and a read-only relay must never receive an EVENT
+            # (acceptance criterion 2). Legacy state retries every relay.
+            entries = getattr(self, "relay_entries", None)
+            candidates = (
+                gnostr.relay_entries.urls_for_role(entries, "write")
+                if entries
+                else list(self.relay_urls)
+            )
+        candidates = set(candidates)
         tried = pending.setdefault("tried", set())
         untried = [u for u in candidates if u not in tried]
         if not untried:
@@ -1008,10 +1238,21 @@ class NostrClient(GObject.Object):
         pending = self.pending_publishes.get(event_id)
         if not pending:
             return
+        tag = self._role_tag(relay_url)
         self._log_relay(
-            f"{pending['label']} {'OK' if accepted else 'REJECTED'} {relay_url}"
+            f"{tag + ' ' if tag else ''}{pending['label']} "
+            f"{'OK' if accepted else 'REJECTED'} {relay_url}"
             + (f" ({message})" if message else "")
         )
+        # RELSET-3 §B: per-relay last publish result for the details expander.
+        # Defensive getattr: ast-extracted fakes in the older suites predate
+        # this dict and must keep working unchanged.
+        store = getattr(self, "relay_last_publish", None)
+        if store is not None:
+            store[relay_url] = (
+                f"{pending['label']} {'OK' if accepted else 'REJECTED'}"
+                + (f" ({message})" if message else "")
+            )
         if accepted:
             # First acceptance wins: settle now, ignore later relay acks.
             self.pending_publishes.pop(event_id, None)
@@ -1163,11 +1404,17 @@ class NostrClient(GObject.Object):
     def publish_relay_list(self):
         if not self.my_pubkey or not self._can_sign():
             return
+        entries = getattr(self, "relay_entries", None)
+        if entries:
+            # NIP-65 read/write markers per entry roles (spec §A).
+            tags = gnostr.relay_entries.relay10002_tags(entries)
+        else:
+            tags = [["r", u] for u in self.relay_urls]
         event = {
             "pubkey": self.my_pubkey,
             "created_at": int(time.time()),
             "kind": 10002,
-            "tags": [["r", u] for u in self.relay_urls],
+            "tags": tags,
             "content": "",
         }
         self._dispatch_signed(event, "Relay list")
@@ -1376,6 +1623,12 @@ class NostrClient(GObject.Object):
                 self.dm_service.schedule_decrypt(ev)
 
     def _merge_relays(self, new_list):
+        # Import-from-profile merge (spec §A): entries keep roles/order, new
+        # relays append with defaults. The legacy set path stays for fakes
+        # that carry no entry model.
+        if getattr(self, "relay_entries", None) is not None:
+            self.import_relays_from_profile(new_list)
+            return
         changed = False
         for r in new_list:
             r = r.rstrip("/")
@@ -1553,22 +1806,45 @@ class NostrClient(GObject.Object):
         return signed
 
     def _publish_dm_targeted(self, peer_pubkey, event):
-        """Publish a signed DM rumor to the peer's 10050 relays only, once the
-        (async) lookup resolves. No 10050 -> abort + dm-unreachable, and the
-        self-copy already in the gateway is the only trace (no publish)."""
+        """Publish a signed DM rumor per spec §A routing:
+        dm-role relays first (list order = priority); else the existing
+        NIP-17 peer-10050 targeting (async, never blocks the UI thread);
+        if the peer has no 10050, fall back to write-role relays. With no
+        entry model at all (legacy state) the peer-targeting flow — including
+        the dm-unreachable abort — is unchanged (acceptance criterion 3)."""
+        entries = getattr(self, "relay_entries", None)
+        dm_urls = gnostr.relay_entries.urls_for_role(entries, "dm") if entries else []
+        if dm_urls:
+            # Explicit user intent: DMs only through dm-role relays.
+            sent = self.publish_to_relays(event, dm_urls)
+            self._track_publish(event, "DM", sent_urls=sent, candidates=dm_urls)
+            return
 
         def _deliver(relays):
-            if relays is None:
-                self._log_relay(
-                    f"DM {event['id'][:8]} aborted: {peer_pubkey[:8]} has no kind-10050"
-                )
-                GLib.idle_add(self.emit, "dm-unreachable", peer_pubkey, event["id"])
+            if relays:
+                sent = self.publish_to_relays(event, relays)
+                # DM-3: retry candidates are the peer's 10050 relays — a
+                # rejection on one retries the untried ones (connecting them
+                # on demand), and only a full round of rejections settles the
+                # publish as failed.
+                self._track_publish(event, "DM", sent_urls=sent, candidates=relays)
                 return
-            sent = self.publish_to_relays(event, relays)
-            # DM-3: retry candidates are the peer's 10050 relays — a rejection
-            # on one retries the untried ones (connecting them on demand), and
-            # only a full round of rejections settles the publish as failed.
-            self._track_publish(event, "DM", sent_urls=sent, candidates=relays)
+            write_urls = (
+                gnostr.relay_entries.urls_for_role(entries, "write") if entries else []
+            )
+            if write_urls:
+                # Spec chain last resort: peer has no 10050 -> write relays.
+                self._log_relay(
+                    f"DM {event['id'][:8]}: {peer_pubkey[:8]} has no "
+                    "kind-10050 — falling back to write relays"
+                )
+                sent = self.publish_to_relays(event, write_urls)
+                self._track_publish(event, "DM", sent_urls=sent, candidates=write_urls)
+                return
+            self._log_relay(
+                f"DM {event['id'][:8]} aborted: {peer_pubkey[:8]} has no kind-10050"
+            )
+            GLib.idle_add(self.emit, "dm-unreachable", peer_pubkey, event["id"])
 
         self.resolve_dm_relays(peer_pubkey, _deliver)
 
@@ -1792,9 +2068,22 @@ class NostrClient(GObject.Object):
             if url in urls and r.publish(event):
                 sent.add(url)
         self._log_relay(
-            f"EVENT {event['id'][:8]} sent to {len(sent)}/{len(urls)} DM relay(s)"
+            f"[d] EVENT {event['id'][:8]} sent to {len(sent)}/{len(urls)} DM relay(s)"
         )
         return sent
+
+    def _role_tag(self, url):
+        """Compact role tag for a relay's activity-log lines (spec §A.6):
+        read→r, write→w, dm→d, e.g. '[rw]'. Empty string when the entry model
+        is absent (legacy log lines stay byte-identical)."""
+        entries = getattr(self, "relay_entries", None)
+        if not entries:
+            return ""
+        entry = gnostr.relay_entries.entry_for(entries, url)
+        if not entry:
+            return ""
+        abbr = {"read": "r", "write": "w", "dm": "d"}
+        return "[" + "".join(abbr[r] for r in entry.get("roles") or []) + "]"
 
     def dm_relay_defaults(self):
         """Own DM relays default: up to 2 of the user's configured relays
@@ -1824,8 +2113,22 @@ class NostrClient(GObject.Object):
         return True
 
     def _handle_status(self, url, status):
-        # Log relay connect/disconnect so the activity pane shows connectivity.
-        self._log_relay(f"{url} {status.status}")
+        # Log relay connect/disconnect so the activity pane shows
+        # connectivity (with the entry's role tag, spec §A.6).
+        tag = self._role_tag(url)
+        self._log_relay(f"{tag + ' ' if tag else ''}{url} {status.status}")
+        # RELSET-3 §B: per-relay facts feed the Settings details expander.
+        # An ERROR/WARNING transition also records the last error for that
+        # relay; CONNECTED clears a stale one. Defensive getattr: ast-
+        # extracted fakes in the older suites predate these dicts — the
+        # emit below must fire for them exactly as before.
+        store = getattr(self, "relay_status", None)
+        if store is not None:
+            store[url] = status
+            if status.status == "CONNECTED":
+                getattr(self, "relay_last_error", {}).pop(url, None)
+            elif status.status in ("ERROR", "WARNING"):
+                getattr(self, "relay_last_error", {})[url] = status.details
         self.emit("status-changed", status.status)
 
     def fetch_contacts(self):

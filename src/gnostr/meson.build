@@ -17,6 +17,7 @@ install_data(
     'key_manager.py',
     'nip49.py',
     'nostr_utils.py',
+    'relay_entries.py',
     'profile_nips.py',
     'renderer.py',
     'connection_status.py',

@@ -310,3 +310,40 @@ def test_general_publish_rejects_all_then_single_failure(client):
     assert accepted is False
     assert "rate-limited" in message
     assert label == "Like"
+
+# ---------------------------------------------------------------------------
+# 7. RELSET-5 AC2: default retry set respects relay roles
+# ---------------------------------------------------------------------------
+
+
+def test_sweep_default_candidates_exclude_read_only_relays(client):
+    """With the entry model present, an untracked-candidate publish must NOT
+    retry onto a read-role relay on the no-ack sweep (a retry is still a
+    publish; AC2: a read-only relay receives no EVENTs). Found on-device:
+    the login kind-10050 reached a read-only relay via this path."""
+    client.relay_entries = [
+        {"url": RELAY_A, "roles": ["write"], "enabled": True},
+        {"url": RELAY_B, "roles": ["read"], "enabled": True},
+    ]
+    ev = _event("a1" * 32)
+    client.publish_to_relays(ev, [RELAY_A])
+    client._track_publish(ev, "DM Relays", sent_urls={RELAY_A})  # candidates=None
+    client.pending_publishes[ev["id"]]["expires"] = 0
+
+    client.sweep_pending_publishes()
+    # RELAY_B is read-role: it must not receive the retry.
+    assert client.active_relays[RELAY_B].published == []
+    # RELAY_A was already tried: nothing left to retry, entry settles.
+    assert ev["id"] not in client.pending_publishes
+
+
+def test_sweep_default_candidates_legacy_state_unchanged(client):
+    """No entry model (legacy): the sweep still retries every configured
+    relay — the pre-RELSET behavior stays byte-identical."""
+    ev = _event("b2" * 32)
+    client.publish_to_relays(ev, [RELAY_A])
+    client._track_publish(ev, "DM Relays", sent_urls={RELAY_A})
+    client.pending_publishes[ev["id"]]["expires"] = 0
+
+    client.sweep_pending_publishes()
+    assert client.active_relays[RELAY_B].published == [ev]

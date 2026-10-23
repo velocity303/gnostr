@@ -10,6 +10,11 @@ __version__ = "0.1.0"
 # package that doesn't yet have `profile_nips` as an attribute.
 from . import profile_nips
 
+# relay_entries is stdlib-only (pure data model, spec relays-and-settings-v1 A)
+# and must be a package attribute before client.py's methods run under the
+# ast-extraction test harness (their namespace carries `gnostr` only).
+from . import relay_entries
+
 # Import submodules to make them available as package attributes
 # This ensures that `from gnostr.gateway import gateway` works
 from . import nostr_utils
@@ -45,6 +50,7 @@ __all__ = [
     "key_manager",
     "main",
     "nostr_utils",
+    "relay_entries",
     "renderer",
     "window",
     "feed_service",
