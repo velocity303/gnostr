@@ -104,6 +104,11 @@ if xvfb_run.found() and gtk_python.found()
   test('test_feed_gtk_real', xvfb_run,
     args: ['-a', gtk_python, meson.project_source_root() / 'tests/test_feed_gtk_real.py'],
     timeout: 120)
+  # Real-GTK layout-fill harness (FLX1 half-height regression): the
+  # main_stack inside the banner root box must allocate the full window.
+  test('test_layout_fill_gtk_real', xvfb_run,
+    args: ['-a', gtk_python, meson.project_source_root() / 'tests/test_layout_fill_gtk_real.py'],
+    timeout: 120)
   # Real-GTK clipboard harness (issue #33): ExportKeyDialog.on_copy ->
   # real Gdk clipboard -> read_text_async read-back.
   test('test_clipboard_gtk_real', xvfb_run,
