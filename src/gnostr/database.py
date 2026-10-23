@@ -92,6 +92,27 @@ class Database:
                 )
             """)
 
+            # Zaps (spec zaps-payments-v1 §3.3/§2.5): paid-invoice set for the
+            # double-pay guard, and the append-only monthly budget ledger.
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS paid_invoices (
+                    bolt11 TEXT PRIMARY KEY,
+                    paid_at INTEGER,
+                    amount_msat INTEGER
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS zap_ledger (
+                    month TEXT,
+                    bolt11 TEXT,
+                    sats INTEGER
+                )
+            """)
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_zap_ledger_month "
+                "ON zap_ledger(month)"
+            )
+
             # Indexes for feed queries (JOIN on pubkey + ORDER BY created_at).
             # Without these, feed loads full-table-scan on a growing DB.
             cursor.execute(
@@ -136,6 +157,68 @@ class Database:
                 self.conn.commit()
             except Exception as e:
                 print(f"⚠️ DB Save Event Error: {e}")
+
+    def is_invoice_paid(self, bolt11):
+        """Double-pay guard (spec zaps-payments-v1 §3.3): True when this
+        bolt11 was already paid through this app."""
+        if not self.conn:
+            return False
+        with self.lock:
+            try:
+                cur = self.conn.cursor()
+                cur.execute(
+                    "SELECT 1 FROM paid_invoices WHERE bolt11 = ?", (bolt11,)
+                )
+                return cur.fetchone() is not None
+            except Exception as e:
+                print(f"⚠️ DB is_invoice_paid Error: {e}")
+                return False
+
+    def record_zap_payment(self, bolt11, month, sats, amount_msat):
+        """Persist a settled pay: paid_invoices set + append-only zap_ledger
+        row for the monthly budget (spec §2.5/§3.3). Ledger is append-only:
+        a re-record of the same bolt11 updates paid_invoices but never
+        double-counts the ledger (guarded by is_invoice_paid upstream; a
+        duplicate here is a no-op)."""
+        if not self.conn:
+            return
+        with self.lock:
+            try:
+                cur = self.conn.cursor()
+                cur.execute(
+                    "SELECT 1 FROM paid_invoices WHERE bolt11 = ?", (bolt11,)
+                )
+                if cur.fetchone() is not None:
+                    return
+                now = int(time.time())
+                cur.execute(
+                    "INSERT INTO paid_invoices (bolt11, paid_at, amount_msat) "
+                    "VALUES (?, ?, ?)",
+                    (bolt11, now, amount_msat),
+                )
+                cur.execute(
+                    "INSERT INTO zap_ledger (month, bolt11, sats) VALUES (?, ?, ?)",
+                    (month, bolt11, sats),
+                )
+                self.conn.commit()
+            except Exception as e:
+                print(f"⚠️ DB record_zap_payment Error: {e}")
+
+    def zap_month_spent(self, month):
+        """Σ sats recorded for a calendar month ('YYYY-MM')."""
+        if not self.conn:
+            return 0
+        with self.lock:
+            try:
+                cur = self.conn.cursor()
+                cur.execute(
+                    "SELECT COALESCE(SUM(sats), 0) FROM zap_ledger WHERE month = ?",
+                    (month,),
+                )
+                return int(cur.fetchone()[0])
+            except Exception as e:
+                print(f"⚠️ DB zap_month_spent Error: {e}")
+                return 0
 
     def save_profile(self, pubkey, content_json, created_at):
         if not self.conn:

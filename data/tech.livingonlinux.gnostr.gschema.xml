@@ -45,5 +45,18 @@
 			<summary>Resolve hostnames through the proxy (SOCKS5h)</summary>
 			<description>Must stay true whenever .onion endpoints are used: the hostname is sent to the proxy verbatim and never touches a local DNS resolver.</description>
 		</key>
+		<!-- Zaps (spec zaps-payments-v1 §2.5/§3.2): non-secret prefs only.
+		     The NWC connection URI itself is a spending credential and lives
+		     in libsecret via KeyManager, NEVER here. -->
+		<key name="nwc-connection-label" type="s">
+			<default>''</default>
+			<summary>Wallet connection label</summary>
+			<description>Display name for the configured NWC wallet connection (e.g. 'Phone wallet'). The connection URI lives in the keyring, not here.</description>
+		</key>
+		<key name="monthly-zap-budget-sats" type="i">
+			<default>100000</default>
+			<summary>Monthly zap budget in sats</summary>
+			<description>Client soft cap: the app blocks zap confirmations once the calendar month's recorded spend plus the next zap exceeds this. The wallet service enforces its own hard cap at connection mint time; keep this at or below it.</description>
+		</key>
 	</schema>
 </schemalist>
