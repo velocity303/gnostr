@@ -1,0 +1,165 @@
+{
+  "keys": {
+    "sender_sec": "1111111111111111111111111111111111111111111111111111111111111111",
+    "sender_pub": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+    "recipient_sec": "2222222222222222222222222222222222222222222222222222222222222222",
+    "recipient_pub": "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27",
+    "lnurlp_nostr_sec": "3333333333333333333333333333333333333333333333333333333333333333",
+    "lnurlp_nostr_pub": "3c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1",
+    "nwc_wallet_sec": "4444444444444444444444444444444444444444444444444444444444444444",
+    "nwc_wallet_pub": "2c0b7cf95324a07d05398b240174dc0c2be444d96b159aa6c7f7b1e668680991",
+    "nwc_client_sec": "5555555555555555555555555555555555555555555555555555555555555555",
+    "nwc_client_pub": "9ac20335eb38768d2052be1dbbc3c8f6178407458e51e6b4ad22f1d91758895b"
+  },
+  "v1_lnurlp_metadata": {
+    "tag": "payRequest",
+    "callback": "https://lnurl.example.com/lnurlp/alice/callback",
+    "minSendable": 1000,
+    "maxSendable": 100000000,
+    "metadata": "[[\"text/plain\",\"Zap tag for alice\"],[\"text/long-desc\",\"alice's zap endpoint\"]]",
+    "allowsNostr": true,
+    "nostrPubkey": "3c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1",
+    "commentAllowed": 280,
+    "payerData": {
+      "name": {
+        "mandatory": false
+      },
+      "pubkey": {
+        "mandatory": false
+      }
+    }
+  },
+  "lnurl_bech32": "lnurl1dp68gurn8ghj7mrww4exctn90psk6urvv5hxxmmd9uh8wetvdskkkmn0wahz7mrww4excup0v9kxjcm9jf9ltn",
+  "v2_zap_request": {
+    "kind": 9734,
+    "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+    "created_at": 1763136000,
+    "tags": [
+      [
+        "relays",
+        "wss://relay.damus.io",
+        "wss://nos.lol"
+      ],
+      [
+        "amount",
+        "1000000"
+      ],
+      [
+        "lnurl",
+        "lnurl1dp68gurn8ghj7mrww4exctn90psk6urvv5hxxmmd9uh8wetvdskkkmn0wahz7mrww4excup0v9kxjcm9jf9ltn"
+      ],
+      [
+        "p",
+        "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27"
+      ],
+      [
+        "e",
+        "9ae37aa68f48645127299e9453eb5d908a0cbb6058ff340d528ed4d37c8994fb"
+      ],
+      [
+        "k",
+        "1"
+      ]
+    ],
+    "content": "Zap!",
+    "id": "ec408d8c79ce8a3d4b59ac8e393f25b7072a767f2f08e58d1ce2764b358d5699",
+    "sig": "89c71ad52981be43c66cc0d055c965b21021925acab0765fd7a7d80e6d3cbf0bc7b57debf966da7029893b1bcc3b60895db42ab3d59c07525c346d1a17cd8a9a"
+  },
+  "v2_zap_request_canonical_json": "{\"kind\":9734,\"pubkey\":\"4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa\",\"created_at\":1763136000,\"tags\":[[\"relays\",\"wss://relay.damus.io\",\"wss://nos.lol\"],[\"amount\",\"1000000\"],[\"lnurl\",\"lnurl1dp68gurn8ghj7mrww4exctn90psk6urvv5hxxmmd9uh8wetvdskkkmn0wahz7mrww4excup0v9kxjcm9jf9ltn\"],[\"p\",\"466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27\"],[\"e\",\"9ae37aa68f48645127299e9453eb5d908a0cbb6058ff340d528ed4d37c8994fb\"],[\"k\",\"1\"]],\"content\":\"Zap!\",\"id\":\"ec408d8c79ce8a3d4b59ac8e393f25b7072a767f2f08e58d1ce2764b358d5699\",\"sig\":\"89c71ad52981be43c66cc0d055c965b21021925acab0765fd7a7d80e6d3cbf0bc7b57debf966da7029893b1bcc3b60895db42ab3d59c07525c346d1a17cd8a9a\"}",
+  "v2_callback_url": "https://lnurl.example.com/lnurlp/alice/callback?amount=1000000&nostr=%7B%22kind%22%3A9734%2C%22pubkey%22%3A%224f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa%22%2C%22created_at%22%3A1763136000%2C%22tags%22%3A%5B%5B%22relays%22%2C%22wss%3A%2F%2Frelay.damus.io%22%2C%22wss%3A%2F%2Fnos.lol%22%5D%2C%5B%22amount%22%2C%221000000%22%5D%2C%5B%22lnurl%22%2C%22lnurl1dp68gurn8ghj7mrww4exctn90psk6urvv5hxxmmd9uh8wetvdskkkmn0wahz7mrww4excup0v9kxjcm9jf9ltn%22%5D%2C%5B%22p%22%2C%22466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27%22%5D%2C%5B%22e%22%2C%229ae37aa68f48645127299e9453eb5d908a0cbb6058ff340d528ed4d37c8994fb%22%5D%2C%5B%22k%22%2C%221%22%5D%5D%2C%22content%22%3A%22Zap%21%22%2C%22id%22%3A%22ec408d8c79ce8a3d4b59ac8e393f25b7072a767f2f08e58d1ce2764b358d5699%22%2C%22sig%22%3A%2289c71ad52981be43c66cc0d055c965b21021925acab0765fd7a7d80e6d3cbf0bc7b57debf966da7029893b1bcc3b60895db42ab3d59c07525c346d1a17cd8a9a%22%7D&lnurl=lnurl1dp68gurn8ghj7mrww4exctn90psk6urvv5hxxmmd9uh8wetvdskkkmn0wahz7mrww4excup0v9kxjcm9jf9ltn",
+  "v3_zap_receipt": {
+    "kind": 9735,
+    "pubkey": "3c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1",
+    "created_at": 1763136060,
+    "tags": [
+      [
+        "p",
+        "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27"
+      ],
+      [
+        "P",
+        "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa"
+      ],
+      [
+        "e",
+        "9ae37aa68f48645127299e9453eb5d908a0cbb6058ff340d528ed4d37c8994fb"
+      ],
+      [
+        "k",
+        "1"
+      ],
+      [
+        "bolt11",
+        "lnbc10u1p3unwfusp5t9r3yymhpfqculx78u027lxspgxcr2n2987mx2j55nnfs95nxnzqpp5jmrh92pfld78spqs78v9euf2385t83uvpwk9ldrlvf6ch7tpascqhp5zvkrmemgth3tufcvflmzjzfvjt023nazlhljz2n9hattj4f8jq8qxqyjw5qcqpjrzjqtc4fc44feggv7065fqe5m4ytjarg3repr5j9el35xhmtfexc42yczarjuqqfzqqqqqqqqlgqqqqqqgq9q9qxpqysgq079nkq507a5tw7xgttmj4u990j7wfggtrasah5gd4ywfr2pjcn29383tphp4t48gquelz9z78p4cq7ml3nrrphw5w6eckhjwmhezhnqpy6gyf0"
+      ],
+      [
+        "description",
+        "{\"kind\":9734,\"pubkey\":\"4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa\",\"created_at\":1763136000,\"tags\":[[\"relays\",\"wss://relay.damus.io\",\"wss://nos.lol\"],[\"amount\",\"1000000\"],[\"lnurl\",\"lnurl1dp68gurn8ghj7mrww4exctn90psk6urvv5hxxmmd9uh8wetvdskkkmn0wahz7mrww4excup0v9kxjcm9jf9ltn\"],[\"p\",\"466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27\"],[\"e\",\"9ae37aa68f48645127299e9453eb5d908a0cbb6058ff340d528ed4d37c8994fb\"],[\"k\",\"1\"]],\"content\":\"Zap!\",\"id\":\"ec408d8c79ce8a3d4b59ac8e393f25b7072a767f2f08e58d1ce2764b358d5699\",\"sig\":\"89c71ad52981be43c66cc0d055c965b21021925acab0765fd7a7d80e6d3cbf0bc7b57debf966da7029893b1bcc3b60895db42ab3d59c07525c346d1a17cd8a9a\"}"
+      ],
+      [
+        "preimage",
+        "5d006d2cf1e73c7148e7519a4c68adc81642ce0e25a432b2434c99f97344c15f"
+      ]
+    ],
+    "content": "",
+    "id": "2ea1fe3299ad000727bca7bac6be3c2c83905d03988b347a5cbec41a5e16a6ba",
+    "sig": "6cf36893dbcab71200f739a3cea2ccd0abb4531cf29e90080f5addfe436a24c1954d0e1eac148326d8c253f7e7e59e3d0cf7a5198e3a23feccba3f36d7cb1c06"
+  },
+  "v4_nwc_uri": "nostr+walletconnect://2c0b7cf95324a07d05398b240174dc0c2be444d96b159aa6c7f7b1e668680991?relay=wss%3A%2F%2Frelay.damus.io&secret=5555555555555555555555555555555555555555555555555555555555555555&lud16=alice@lnurl.example.com",
+  "v4_nwc_info_event": {
+    "kind": 13194,
+    "pubkey": "2c0b7cf95324a07d05398b240174dc0c2be444d96b159aa6c7f7b1e668680991",
+    "created_at": 1763136000,
+    "tags": [
+      [
+        "encryption",
+        "nip44_v2 nip04"
+      ]
+    ],
+    "content": "pay_invoice get_balance get_info make_invoice lookup_invoice",
+    "id": "e4702134828069ba391289a24a50d0db05df0bd508e8a250515676133b07bf64",
+    "sig": "84ab548decaa1afb83197143b50c1ca4cccaff3447d68307c542e35a6ed1a97d79be08c60e561f0b89ffd62c4dbe1519b8ce220ffbcc0e4b72d9fb1b5985600b"
+  },
+  "v4_nwc_request_event": {
+    "kind": 23194,
+    "pubkey": "9ac20335eb38768d2052be1dbbc3c8f6178407458e51e6b4ad22f1d91758895b",
+    "created_at": 1763136001,
+    "tags": [
+      [
+        "encryption",
+        "nip44_v2"
+      ],
+      [
+        "p",
+        "2c0b7cf95324a07d05398b240174dc0c2be444d96b159aa6c7f7b1e668680991"
+      ]
+    ],
+    "content": "AgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAyfQxeK/09/Jz0ksjLYtg9c591dyN2wVt1avCJ15rUbNcQ+iA7wctqaeVGqwyVPvIkKEY/IqOFWDWm53agNhiBHZkB50ErODmuQvHlm+rW9rLlgZOSVg2DaGEhxz6fI+Uy6F4hVVr4boDLwHm96YfEeHOpYs0GV83Rcs2mVeCx8VIowNUoMcE6Gg1xXAHjRvLlkXM/Bb65fnmGf0vGt2+gejBCzkNuQeB4qtbb3Y5txET8Soir9xOO65NmnUG/UfvmJOVwgOntQVPTPE1piwszePX2pEmt1du9EJomc1OLudnhUq77lg2hB3dZbXIjQc9PLPG+SWHaeN0I4x1BUnQhkqYPl6xTlbjnu2Z1qmTcJk38L+jsaGws2sYafFIk6VSNFrUGhQDtPlc/hCoTjvRtPBN0Ewt3TY3Re3vVtx+btyc99ozrWAC9FOmxUOhFGm5gAUcwQIBDAMg2fwvOoH4TAN5tZCjdhHoE2ebQIpLwCO/JXSnIT5iX/POrq8rl/wOj+vvlKc1mLx1JrLJe6FFkOQFwU/rf3wwWYI6Kefmx2PyZEgD7qwoMTLjbDKcpQyjhObBertTGn2IrQsAz2fidMiUmqMRZncXnbas0kVDiqSnH61KzD/QggpGAZ6jFuaqEYI=",
+    "id": "570a1070e82d780a5ce076b421a49d007dd224782089e0577505a9cdc47138f2",
+    "sig": "f57c6b7ab7d704ce2bdef4d780e56276589f2e63fccfb91237cb5b0427c793cf0245f7c935414a291972bd78f1fd4e299e5583dd06403ad54949a4ec9421c42e"
+  },
+  "v4_nwc_response_event": {
+    "kind": 23195,
+    "pubkey": "2c0b7cf95324a07d05398b240174dc0c2be444d96b159aa6c7f7b1e668680991",
+    "created_at": 1763136002,
+    "tags": [
+      [
+        "p",
+        "9ac20335eb38768d2052be1dbbc3c8f6178407458e51e6b4ad22f1d91758895b"
+      ],
+      [
+        "e",
+        "570a1070e82d780a5ce076b421a49d007dd224782089e0577505a9cdc47138f2"
+      ]
+    ],
+    "content": "AgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAyNsxeLD08O9wwjZtdotkrqs2y8ub7Q9mgeiJNFo7HPxKE6CUv0x5sb2QFeUyHLzXi68P74CABmCXi5rAh8p0VnkyC4sH5a/v4xjH1mnpBMHLn0dGHlhvROuV1AevNtyemqBxhAwhsLUGf1298OEVFu2E/8JxChY7SZ9zwlqE1JIRoRZA8dEQ/ixSwygLnF/DlE3JuFO0kI+WbpYWdrnM7Z6nzPo2pd9MAedP95H8XeX6kcEjo5Aj9JPPeO0zeBDJUdY=",
+    "id": "81dd828b25e1836628111e86265eb6bfa891a535d873464ab2923a344f126f64",
+    "sig": "42a40e3bb0a5654fa4b80e7778b9260a6e6a88806131ea0c7ab394e80d7f79f3d0efead43f203990f207eda83f762e05546efeaa67be2ed880605a0bcc3689a2"
+  },
+  "v4_nwc_request_plaintext": "{\"method\":\"pay_invoice\",\"params\":{\"invoice\":\"lnbc10u1p3unwfusp5t9r3yymhpfqculx78u027lxspgxcr2n2987mx2j55nnfs95nxnzqpp5jmrh92pfld78spqs78v9euf2385t83uvpwk9ldrlvf6ch7tpascqhp5zvkrmemgth3tufcvflmzjzfvjt023nazlhljz2n9hattj4f8jq8qxqyjw5qcqpjrzjqtc4fc44feggv7065fqe5m4ytjarg3repr5j9el35xhmtfexc42yczarjuqqfzqqqqqqqqlgqqqqqqgq9q9qxpqysgq079nkq507a5tw7xgttmj4u990j7wfggtrasah5gd4ywfr2pjcn29383tphp4t48gquelz9z78p4cq7ml3nrrphw5w6eckhjwmhezhnqpy6gyf0\"}}",
+  "v4_nwc_response_plaintext": "{\"result_type\":\"pay_invoice\",\"error\":null,\"result\":{\"preimage\":\"5d006d2cf1e73c7148e7519a4c68adc81642ce0e25a432b2434c99f97344c15f\",\"fees_paid\":1000}}",
+  "v4_nwc_nip04_request_payload": "32e2dfaf151c1e48058cf3fc1ad1d0dec76b3788bac77528a29a8d16b4f4aa3af795114d6854c30544285367600ba26d3b5e9a2ade9c5137ceb50254b5f34229298d706859430aa8fdfda140ef3f4021cead01f054b49a991e5c8b2dd1ea75c3d16320c0b899df060bb76c44aefd55f70235a39c55b164b4dab8d52011776f054e154855ed96db20e85ff82c1c3fdbe66155b15193c8d065d4dca23cec6d19e562c15af75844d460dd2cb0d9ec846eae98e41c2fcfce630ae75f7fb323e9b14620e403208f7535af01eb2394e21dc04e7603cc15526dcf571ee289d1380e2665d7bdb22d751de39cba7f9cf8b4ee574d6cbe725457b4dcb6ecaab0f996d6f0dfac2a69a16bfa7cfb40a3ed300095a7cba1a93768fdd6ca56073a4413edce78f13d31b81d37eee37c3b415df3e6e608059e2f55cbd9808203f501c6e19357c2b1d46c1294a2cfb17bed5062b6b3340740386225a0881b30a85a3a6c4e01a94a0db20a3e6a2e7a90e100ac3d1f8cefa9861a20ed4771b742e38df8e59dd49e436c4ab7708a553932708bb236d23b330828f7a8d18917042f25b4266479b1bbfc5fa91b18d6941886f1f93751fb85e1919ab0879b1379c21b824b234399a32e8697?iv=00000000000000000000000000000000",
+  "v4_nwc_nip04_response_payload": "484800028dd996ba7bb6b2f1f8100a0d81f2dab51a59226ff202022cba5acecebd61ef12e92cef30d435135a1c992496ead12b60947ea022f422848c43d23d681077ae439865f39665b02d78d3b3b0958e28ec1ee93bebf51dabec6a444d80b835fcc06ddfb63833a8bb848acf8056d8be258eb54c084cbed7b433f09d977e95fc69d730d27d8be0ca3b177aec827fa80b2544b88af39a5365cdc44da6a697c4?iv=00000000000000000000000000000000",
+  "bolt11_hrp_21000_sats": "210u",
+  "bolt11_hrp_1000_sats": "10u"
+}
