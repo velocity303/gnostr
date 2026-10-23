@@ -225,6 +225,11 @@ class MainWindow(Adw.ApplicationWindow):
                 if geo.width < 600:
                     target_width = geo.width * scale
                     ImageLoader.MAX_WIDTH = int(target_width)
+                    # Phone form factor (phosh): the 950x700 default gets
+                    # clamped to a partial-height window, leaving a blank
+                    # band under the app (footer icons appeared mid-screen).
+                    # Maximize so the sidebar footer sits at the screen edge.
+                    self.maximize()
                 else:
                     ImageLoader.MAX_WIDTH = 800
         except Exception:
