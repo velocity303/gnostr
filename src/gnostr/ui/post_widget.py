@@ -148,9 +148,29 @@ class PostWidget(Adw.Bin):
         )
         self.lbl_likes, self.btn_like = mk_met("star-symbolic", (), "0")
 
+        # Zap (spec zaps-payments-v1 §2.1): hidden unless the author's cached
+        # kind-0 carries an LNURL candidate AND it isn't my own post. The
+        # authoritative §1.2 gate runs at click (fetch_metadata).
+        my_pk = getattr(self.main_window, "pub_key", None)
+        self.btn_zap = None
+        try:
+            from ..zaps.lnurl import zapable_profile
+
+            author = self.main_window.db.get_profile(pubkey)
+            if my_pk and pubkey != my_pk and not is_hero and zapable_profile(author):
+                _lbl, self.btn_zap = mk_met(
+                    "thunderbolt-symbolic",
+                    ("battery-level-symbolic", "emblem-money-symbolic"),
+                    "",
+                )
+        except Exception:
+            self.btn_zap = None
+
         footer.append(self.btn_reply)
         footer.append(self.btn_repost)
         footer.append(self.btn_like)
+        if self.btn_zap is not None:
+            footer.append(self.btn_zap)
 
         self.main_box.append(footer)
 
@@ -167,6 +187,8 @@ class PostWidget(Adw.Bin):
             if not is_hero:
                 self.btn_repost.connect("clicked", self._on_repost)
                 self.btn_reply.connect("clicked", self._on_reply)
+                if self.btn_zap is not None:
+                    self.btn_zap.connect("clicked", self._on_zap)
         else:
             # not logged in: disable actions
             for b in (self.btn_like, self.btn_repost, self.btn_reply):
@@ -276,7 +298,7 @@ class PostWidget(Adw.Bin):
             # Walk up from the target to see if it's inside an action button.
             w = target
             while w is not None:
-                if w in (self.btn_like, self.btn_repost, self.btn_reply):
+                if w in (self.btn_like, self.btn_repost, self.btn_reply, self.btn_zap):
                     return
                 w = w.get_parent()
         self.main_window.show_thread(event_id, pubkey, content, tags)
@@ -379,6 +401,17 @@ class PostWidget(Adw.Bin):
 
         win = ComposeWindow(self.main_window, handle_post)
         win.present()
+
+    def _on_zap(self, btn):
+        if self._activation_gated(None):
+            print("[scroll-gate] swallowed zap activation")
+            return
+        # Note-zap: e + k tags from this post's kind (spec §1.3).
+        ev = self.main_window.db.get_event_by_id(self.event_id)
+        kind = ev.get("kind", 1) if ev else 1
+        from ..zaps.ui import start_zap
+
+        start_zap(self.main_window, self.pubkey, event=(self.event_id, kind))
 
     def _copy_post(self):
         display = Gdk.Display.get_default()
