@@ -91,7 +91,13 @@ class MainWindow(Adw.ApplicationWindow):
         self.toast_overlay.set_child(self._root_box)
 
         # 2. Main Stack (inside the root box, below the banner)
+        # vexpand is REQUIRED: Gtk.Box gives slack space only to vexpand
+        # children, so without it the stack renders at natural height and
+        # the bottom of the window stays blank (footer icons stranded
+        # mid-screen, feed half-height). Before the banner wrapper the
+        # stack was the ToastOverlay's direct child and filled by default.
         self.main_stack = Adw.ViewStack()
+        self.main_stack.set_vexpand(True)
         self._root_box.append(self.main_stack)
 
         # FAB Button — place on the split view's content page via its own overlay.
