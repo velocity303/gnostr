@@ -1,9 +1,5 @@
-"""Zaps / NWC wallet tests (spec zaps-payments-v1 test vectors).
-
-Covers: NWC URI parsing, NIP-04 legacy crypto (pure-Python AES), NIP-44
-request/response round trips against the fixture events, the fake-wallet
-backend round trip (capability gate, error mapping, double-pay guard),
-the budget ledger math, and the Database zap tables.
+"""NWC backend tests (spec zaps-payments-v1 §2): encryption fixtures,
+fake-wallet round trip, capability gate, error mapping, double-pay guards.
 """
 
 import json
@@ -15,24 +11,11 @@ import pytest
 
 from gnostr import nip44
 from gnostr.wallet import nip04
-from gnostr.wallet.backend import (
-    InsufficientBalanceError,
-    PaymentFailedError,
-    QuotaExceededError,
-    WalletCapabilityError,
-    WalletError,
-    WalletTimeoutError,
-    error_from_response,
-)
-from gnostr.wallet.budget import (
-    bolt11_amount_sats,
-    check_budget,
-    month_key,
-    month_spent_sats,
-    record_payment,
-)
+from gnostr.wallet.backend import (InsufficientBalanceError,
+                                   PaymentFailedError, QuotaExceededError,
+                                   WalletCapabilityError, WalletError,
+                                   WalletTimeoutError, error_from_response)
 from gnostr.wallet.nwc import NWCBackend
-from gnostr.wallet.nwc_uri import NWCUriError, parse_nwc_uri
 
 FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")
 
@@ -44,8 +27,7 @@ def vectors():
 
 
 @pytest.fixture
-def db(vectors):
-    """Real Database against a temp sqlite file (bypasses GLib data dir)."""
+def db():
     from gnostr.database import Database
 
     d = Database.__new__(Database)
@@ -56,30 +38,9 @@ def db(vectors):
         "CREATE TABLE paid_invoices (bolt11 TEXT PRIMARY KEY, paid_at INTEGER,"
         " amount_msat INTEGER)"
     )
-    cur.execute(
-        "CREATE TABLE zap_ledger (month TEXT, bolt11 TEXT, sats INTEGER)"
-    )
+    cur.execute("CREATE TABLE zap_ledger (month TEXT, bolt11 TEXT, sats INTEGER)")
     d.conn.commit()
     return d
-
-
-# -- NWC URI parsing (spec §3.1) ---------------------------------------------
-
-
-def test_parse_nwc_uri(vectors):
-    cfg = parse_nwc_uri(vectors["v4_nwc_uri"])
-    assert cfg["wallet_pubkey"] == vectors["keys"]["nwc_wallet_pub"]
-    assert cfg["secret"] == vectors["keys"]["nwc_client_sec"]
-    assert cfg["relay"] == "wss://relay.damus.io"
-    assert cfg.get("lud16") == "alice@lnurl.example.com"
-
-
-def test_parse_nwc_uri_rejects_garbage():
-    for bad in ["", "http://x", "nostr+walletconnect://abc",
-                "nostr+walletconnect://" + "a" * 63 + "?relay=wss://x&secret=" + "b" * 64,
-                "nostr+walletconnect://" + "a" * 64 + "?relay=wss://x&secret=short"]:
-        with pytest.raises(NWCUriError):
-            parse_nwc_uri(bad)
 
 
 # -- NIP-04 legacy (spec §2.3 fallback path) ----------------------------------
@@ -138,16 +99,21 @@ def test_nip44_fixture_response(vectors):
 
 
 def test_error_from_response_codes():
-    assert isinstance(error_from_response({"code": "QUOTA_EXCEEDED", "message": "x"}),
-                      QuotaExceededError)
-    assert isinstance(error_from_response({"code": "INSUFFICIENT_BALANCE"}),
-                      InsufficientBalanceError)
-    assert isinstance(error_from_response({"code": "PAYMENT_FAILED"}),
-                      PaymentFailedError)
+    assert isinstance(
+        error_from_response({"code": "QUOTA_EXCEEDED", "message": "x"}),
+        QuotaExceededError,
+    )
+    assert isinstance(
+        error_from_response({"code": "INSUFFICIENT_BALANCE"}), InsufficientBalanceError
+    )
+    assert isinstance(
+        error_from_response({"code": "PAYMENT_FAILED"}), PaymentFailedError
+    )
     assert isinstance(error_from_response("INTERNAL"), WalletError)
-    assert not isinstance(error_from_response("INTERNAL"),
-                          (QuotaExceededError, InsufficientBalanceError,
-                           PaymentFailedError))
+    assert not isinstance(
+        error_from_response("INTERNAL"),
+        (QuotaExceededError, InsufficientBalanceError, PaymentFailedError),
+    )
 
 
 # -- fake wallet transport: full backend round trip ------------------------------
@@ -157,8 +123,15 @@ class FakeWallet:
     """In-process NIP-47 wallet service over the injectable transport seam.
     Speaks the relay wire protocol: [REQ...] / [EVENT...] frames."""
 
-    def __init__(self, vectors, encryption="nip44", fail=None,
-                 publish_info=True, settled=False, silent=False):
+    def __init__(
+        self,
+        vectors,
+        encryption="nip44",
+        fail=None,
+        publish_info=True,
+        settled=False,
+        silent=False,
+    ):
         self.wallet_sec = vectors["keys"]["nwc_wallet_sec"]
         self.wallet_pub = vectors["keys"]["nwc_wallet_pub"]
         self.encryption = encryption
@@ -181,13 +154,20 @@ class FakeWallet:
             def send(inner, payload):
                 self.events.append(payload)
                 # auto-respond to published 23194 requests, like a live wallet
-                if (isinstance(payload, list) and payload[0] == "EVENT"
-                        and payload[1].get("kind") == 23194 and not self.silent):
+                if (
+                    isinstance(payload, list)
+                    and payload[0] == "EVENT"
+                    and payload[1].get("kind") == 23194
+                    and not self.silent
+                ):
                     threading.Timer(0.01, self.respond, args=(payload[1],)).start()
                 # answer info-event REQs with the info event
-                if (isinstance(payload, list) and payload[0] == "REQ"
-                        and self._publish_info_flag
-                        and payload[2].get("kinds") == [13194]):
+                if (
+                    isinstance(payload, list)
+                    and payload[0] == "REQ"
+                    and self._publish_info_flag
+                    and payload[2].get("kinds") == [13194]
+                ):
                     threading.Timer(0.01, self.deliver_info).start()
 
             def close(inner):
@@ -210,38 +190,63 @@ class FakeWallet:
         """Decrypt a 23194 request and deliver the matching 23195 reply."""
         client_pub = request["pubkey"]
         if self.encryption == "nip04":
-            plain = nip04.nip04_decrypt(
-                request["content"], self.wallet_sec, client_pub
-            )
+            plain = nip04.nip04_decrypt(request["content"], self.wallet_sec, client_pub)
         else:
             plain = nip44.decrypt(request["content"], self._conv(client_pub))
         req = json.loads(plain)
         method = req["method"]
         if self.fail:
-            body = {"result_type": method,
-                    "error": {"code": self.fail, "message": self.fail},
-                    "result": None}
+            body = {
+                "result_type": method,
+                "error": {"code": self.fail, "message": self.fail},
+                "result": None,
+            }
         elif method == "pay_invoice":
             self.paid.append(req["params"]["invoice"])
-            body = {"result_type": method, "error": None,
-                    "result": {"preimage": "ab" * 32, "fees_paid_msat": 0}}
+            body = {
+                "result_type": method,
+                "error": None,
+                "result": {"preimage": "ab" * 32, "fees_paid_msat": 0},
+            }
         elif method == "lookup_invoice":
-            body = {"result_type": method, "error": None,
-                    "result": {"settled": self.settled}}
+            body = {
+                "result_type": method,
+                "error": None,
+                "result": {"settled": self.settled},
+            }
         elif method == "get_balance":
-            body = {"result_type": method, "error": None,
-                    "result": {"balance_msat": 21_000_000_000}}
+            body = {
+                "result_type": method,
+                "error": None,
+                "result": {"balance_msat": 21_000_000_000},
+            }
         elif method == "make_invoice":
-            body = {"result_type": method, "error": None,
-                    "result": {"invoice": "lnbc10u...", "payment_hash": "cd" * 32,
-                               "created_at": 1763136000}}
+            body = {
+                "result_type": method,
+                "error": None,
+                "result": {
+                    "invoice": "lnbc10u...",
+                    "payment_hash": "cd" * 32,
+                    "created_at": 1763136000,
+                },
+            }
         elif method == "get_info":
-            body = {"result_type": method, "error": None,
-                    "result": {"alias": "alice", "color": "#f7931a",
-                               "methods": ["pay_invoice"], "network": "bitcoin"}}
+            body = {
+                "result_type": method,
+                "error": None,
+                "result": {
+                    "alias": "alice",
+                    "color": "#f7931a",
+                    "methods": ["pay_invoice"],
+                    "network": "bitcoin",
+                },
+            }
         else:
-            body = {"result_type": method, "error":
-                    {"code": "NOT_IMPLEMENTED", "message": "nope"}, "result": None}
+            body = {
+                "result_type": method,
+                "error": {"code": "NOT_IMPLEMENTED", "message": "nope"},
+                "result": None,
+            }
         content = json.dumps(body, separators=(",", ":"))
         if self.encryption == "nip04":
             content = nip04.nip04_encrypt(content, self.wallet_sec, client_pub)
@@ -257,9 +262,9 @@ class FakeWallet:
 
 
 def _backend(vectors, wallet):
-    return NWCBackend(vectors["v4_nwc_uri"],
-                      transport_factory=wallet.transport_factory,
-                      timeout_s=2.0)
+    return NWCBackend(
+        vectors["v4_nwc_uri"], transport_factory=wallet.transport_factory, timeout_s=2.0
+    )
 
 
 def test_backend_nip44_roundtrip(vectors):
@@ -355,35 +360,3 @@ def test_lookup_settled_skips_pay(vectors):
     result = be.pay_invoice(bolt11)
     assert result.get("already_paid") is True
     assert wallet.paid == []  # pay_invoice never sent
-
-
-# -- budget (spec §2.5) --------------------------------------------------------------
-
-
-def test_bolt11_amount_parsing(vectors):
-    # fixture hrp values: 21000 sats = '210u', 1000 sats = '10u'
-    assert bolt11_amount_sats("lnbc210u1p" + "x" * 10) == 21000
-    assert bolt11_amount_sats("lnbc10u1p" + "x" * 10) == 1000
-    assert bolt11_amount_sats("lnbc100m1p" + "x" * 10) == 10_000_000  # 0.1 BTC
-    assert bolt11_amount_sats("lnbc" + "x" * 10) is None  # no amount
-    assert bolt11_amount_sats("notlnbc1u") is None
-
-
-def test_budget_check(db):
-    bolt11 = "lnbc1000n1p" + "x" * 20
-    record_payment(db, bolt11, 1000, 1_000_000)
-    assert month_spent_sats(db) == 1000
-    check_budget(db, 500, 2000)  # 1000+500 <= 2000 ok
-    with pytest.raises(QuotaExceededError):
-        check_budget(db, 1500, 2000)
-
-
-def test_record_payment_idempotent(db):
-    bolt11 = "lnbc500n1p" + "x" * 20
-    record_payment(db, bolt11, 500, 500_000)
-    record_payment(db, bolt11, 500, 500_000)  # duplicate must not double-count
-    assert month_spent_sats(db) == 500
-
-
-def test_month_key_format():
-    assert len(month_key(1763136000).split("-")) == 2

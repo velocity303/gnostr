@@ -446,6 +446,18 @@ class RelayPreferencesWindow(Adw.PreferencesWindow):
         )
         g.add(self.zap_budget_row)
 
+        # Connection state dot + monthly spend from the zap ledger (spec §3.2).
+        self._wallet_state = "unknown"  # unknown | ok | error
+        self.wallet_status_row = Adw.ActionRow(title="Connection")
+        self._wallet_status_dot = Gtk.Label(label="●")
+        self._wallet_status_dot.set_css_classes(["dim-label"])
+        self.wallet_status_row.add_prefix(self._wallet_status_dot)
+        self.wallet_spend_label = Gtk.Label()
+        self.wallet_spend_label.set_css_classes(["dim-label"])
+        self.wallet_status_row.add_suffix(self.wallet_spend_label)
+        self._refresh_wallet_status()
+        g.add(self.wallet_status_row)
+
         save = Adw.ActionRow(title="Save wallet settings")
         box = Gtk.Box(spacing=6)
         test_btn = Gtk.Button(label="Test")
@@ -456,6 +468,23 @@ class RelayPreferencesWindow(Adw.PreferencesWindow):
         box.append(save_btn)
         save.add_suffix(box)
         g.add(save)
+
+    def _refresh_wallet_status(self):
+        """State dot + this month's spend from the zap ledger (spec §3.2)."""
+        from gnostr.wallet import budget as wallet_budget
+
+        colors = {"ok": "#2ec27e", "error": "#e01b24", "unknown": "#9a9996"}
+        markup = (
+            f'<span foreground="{colors.get(self._wallet_state, "#9a9996")}">'
+            "●</span>"
+        )
+        self._wallet_status_dot.set_markup(markup)
+        spent = 0
+        try:
+            spent = wallet_budget.month_spent_sats(self.client.db)
+        except Exception:
+            pass
+        self.wallet_spend_label.set_text(f"Spent this month: {spent:,} sats")
 
     def on_save_wallet_settings(self, _btn):
         from gnostr.wallet import budget as wallet_budget
@@ -516,15 +545,22 @@ class RelayPreferencesWindow(Adw.PreferencesWindow):
                 info = backend.get_info()
                 backend.close()
                 alias = (info or {}).get("alias") or "wallet"
-                result = f"Connected: {alias}"
+                network = (info or {}).get("network") or "?"
+                result = f"Connected: {alias} ({network})"
+                self._wallet_state = "ok"
             except WalletError as e:
                 result = f"Wallet error: {e}"
+                self._wallet_state = "error"
             except Exception as e:
                 result = f"Wallet test failed: {e}"
+                self._wallet_state = "error"
             from gi.repository import GLib
 
             GLib.idle_add(
-                lambda: (self.add_toast(Adw.Toast(title=result)), False)[1]
+                lambda: (
+                    (self.add_toast(Adw.Toast(title=result)),
+                     self._refresh_wallet_status(), False)[2]
+                )
             )
 
         import threading

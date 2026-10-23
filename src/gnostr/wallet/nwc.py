@@ -24,14 +24,11 @@ import time
 
 from gnostr import nip44, nostr_utils
 from gnostr.wallet import nip04
-from gnostr.wallet.backend import (  # noqa: E402
-    WalletBackend,
-    WalletCapabilityError,
-    WalletError,
-    WalletTimeoutError,
-    error_from_response,
-)
-from gnostr.wallet.budget import bolt11_amount_sats, check_budget, record_payment
+from gnostr.wallet.backend import (WalletBackend,  # noqa: E402
+                                   WalletCapabilityError, WalletError,
+                                   WalletTimeoutError, error_from_response)
+from gnostr.wallet.budget import (bolt11_amount_sats, check_budget,
+                                  record_payment)
 from gnostr.wallet.nwc_uri import parse_nwc_uri
 
 NWC_INFO_KIND = 13194
@@ -84,9 +81,7 @@ class _WsTransport:
             if self.on_connected:
                 self.on_connected()
 
-        self._ws = websocket.WebSocketApp(
-            self.url, on_message=on_msg, on_open=on_open
-        )
+        self._ws = websocket.WebSocketApp(self.url, on_message=on_msg, on_open=on_open)
         from gnostr import proxy_settings
 
         self._thread = threading.Thread(
@@ -111,8 +106,14 @@ class NWCBackend(WalletBackend):
     """One connection = one wallet service. `db` (optional) enables the
     §3.3 double-pay guards + §2.5 budget ledger persistence."""
 
-    def __init__(self, uri, db=None, timeout_s=NWC_TIMEOUT_S,
-                 transport_factory=None, budget_sats=None):
+    def __init__(
+        self,
+        uri,
+        db=None,
+        timeout_s=NWC_TIMEOUT_S,
+        transport_factory=None,
+        budget_sats=None,
+    ):
         self.cfg = parse_nwc_uri(uri)
         self.secret = self.cfg["secret"]
         self.client_pubkey = nostr_utils.get_public_key(self.secret)
@@ -196,8 +197,12 @@ class NWCBackend(WalletBackend):
                 "network": content.get("network", "bitcoin"),
             }
         else:
-            self._info = {"alias": "", "color": "", "methods": methods,
-                          "network": "bitcoin"}
+            self._info = {
+                "alias": "",
+                "color": "",
+                "methods": methods,
+                "network": "bitcoin",
+            }
 
     def fetch_info_event(self, timeout_s=None):
         """REQ the kind-13194 info event (snapshot). Returns the DTO or None
@@ -215,8 +220,7 @@ class NWCBackend(WalletBackend):
             [
                 "REQ",
                 "nwc-info",
-                {"kinds": [NWC_INFO_KIND], "authors": [self.wallet_pubkey],
-                 "limit": 1},
+                {"kinds": [NWC_INFO_KIND], "authors": [self.wallet_pubkey], "limit": 1},
             ]
         )
         got = done.wait(timeout_s or self.timeout_s)
@@ -244,9 +248,7 @@ class NWCBackend(WalletBackend):
 
     def _encrypt(self, plaintext):
         if self._encryption == "nip04":
-            return nip04.nip04_encrypt(
-                plaintext, self.secret, self.wallet_pubkey
-            )
+            return nip04.nip04_encrypt(plaintext, self.secret, self.wallet_pubkey)
         conv = nip44.get_conversation_key(
             bytes.fromhex(self.secret), bytes.fromhex(self.wallet_pubkey)
         )
@@ -268,8 +270,9 @@ class NWCBackend(WalletBackend):
         if self._encryption is None:
             # Unknown capabilities: probe the info event once (sets encryption).
             self.fetch_info_event()
-        payload = json.dumps({"method": method, "params": params or {}},
-                             separators=(",", ":"))
+        payload = json.dumps(
+            {"method": method, "params": params or {}}, separators=(",", ":")
+        )
         request = nostr_utils.build_event(
             self.client_pubkey,
             NWC_REQUEST_KIND,
@@ -354,8 +357,11 @@ class NWCBackend(WalletBackend):
                 existing = {}
             if existing.get("settled"):
                 self._record_paid(bolt11, amount_msat)
-                return {"preimage": existing.get("preimage", ""),
-                        "fees_paid_msat": 0, "already_paid": True}
+                return {
+                    "preimage": existing.get("preimage", ""),
+                    "fees_paid_msat": 0,
+                    "already_paid": True,
+                }
             # Guard 4: client soft budget (spec §2.5 layer 2).
             sats = bolt11_amount_sats(bolt11)
             if sats is None and amount_msat:
@@ -384,8 +390,7 @@ class NWCBackend(WalletBackend):
         sats = bolt11_amount_sats(bolt11)
         if sats is None and amount_msat:
             sats = round(amount_msat / 1000)
-        record_payment(self.db, bolt11, sats or 0,
-                       amount_msat or (sats or 0) * 1000)
+        record_payment(self.db, bolt11, sats or 0, amount_msat or (sats or 0) * 1000)
 
     def lookup_invoice(self, payment_hash=None, bolt11=None):
         params = {}
@@ -396,8 +401,7 @@ class NWCBackend(WalletBackend):
         return self.call("lookup_invoice", params)
 
     def list_transactions(self, from_ts, until_ts, limit=50, offset=0, type=None):
-        params = {"from": from_ts, "until": until_ts, "limit": limit,
-                  "offset": offset}
+        params = {"from": from_ts, "until": until_ts, "limit": limit, "offset": offset}
         if type:
             params["type"] = type
         return self.call("list_transactions", params)

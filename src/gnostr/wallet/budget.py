@@ -66,6 +66,7 @@ def wallet_set(key, value):
     except Exception:
         return False
 
+
 _BECH32_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7yl"
 _MULTIPLIER = {"m": 1e-3, "u": 1e-6, "n": 1e-9, "p": 1e-12}
 

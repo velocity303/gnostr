@@ -4,15 +4,10 @@ v1 ships NWCBackend only; the WalletBackend ABC is the v2 expansion seam
 (LndRestBackend / ClnRestBackend drop in behind the same signatures).
 """
 
-from gnostr.wallet.backend import (  # noqa: F401
-    InsufficientBalanceError,
-    PaymentFailedError,
-    QuotaExceededError,
-    WalletBackend,
-    WalletCapabilityError,
-    WalletError,
-    WalletTimeoutError,
-)
+from gnostr.wallet.backend import (InsufficientBalanceError,  # noqa: F401
+                                   PaymentFailedError, QuotaExceededError,
+                                   WalletBackend, WalletCapabilityError,
+                                   WalletError, WalletTimeoutError)
 from gnostr.wallet.nwc import NWCBackend  # noqa: F401
 from gnostr.wallet.nwc_uri import NWCUriError, parse_nwc_uri  # noqa: F401
 

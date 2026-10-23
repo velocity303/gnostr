@@ -52,7 +52,10 @@ def parse_nwc_uri(uri):
         raise NWCUriError("duplicate relay param")
     relay = unquote(relay)
     if not relay.startswith("wss://"):
-        raise NWCUriError("relay must be a wss:// URL")
+        # Loopback ws:// is permitted (local test relays only — the spending
+        # credential never leaves the machine). Everything else: wss only.
+        if not re.match(r"^ws://(127\.0\.0\.1|localhost)(:\d+)?(/|$)", relay):
+            raise NWCUriError("relay must be a wss:// URL")
 
     secret = params.pop("secret", None)
     if secret is None:
