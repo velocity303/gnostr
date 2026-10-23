@@ -458,6 +458,17 @@ class RelayPreferencesWindow(Adw.PreferencesWindow):
         self._refresh_wallet_status()
         g.add(self.wallet_status_row)
 
+        # Received section (Zaps-B, spec §1.4 deliverable 4): recent
+        # verified incoming zaps to self, newest first, from the zaps
+        # table. Unverified receipts never reach the table, so this list
+        # can never show a 'maybe zap'.
+        self.zap_received_group = Adw.PreferencesGroup(
+            title="Received",
+            description="Recent zaps to you (verified receipts only).",
+        )
+        page.add(self.zap_received_group)
+        self._refresh_zap_received()
+
         save = Adw.ActionRow(title="Save wallet settings")
         box = Gtk.Box(spacing=6)
         test_btn = Gtk.Button(label="Test")
@@ -485,6 +496,33 @@ class RelayPreferencesWindow(Adw.PreferencesWindow):
         except Exception:
             pass
         self.wallet_spend_label.set_text(f"Spent this month: {spent:,} sats")
+
+    def _refresh_zap_received(self):
+        """Rebuild the Received rows from the zaps table (own pubkey)."""
+        from gnostr.zaps.ui import recipient_display_name
+
+        group = self.zap_received_group
+        child = group.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            group.remove(child)
+            child = nxt
+        my_pk = getattr(self.client, "my_pubkey", None)
+        rows = self.client.db.zaps_received(my_pk) if my_pk else []
+        if not rows:
+            group.add(
+                Adw.ActionRow(title="No zaps received yet", subtitle="")
+            )
+            return
+        for r in rows:
+            row = Adw.ActionRow()
+            row.set_title(recipient_display_name(self.client.db, r["sender"]))
+            row.set_subtitle(r["comment"] or "")
+            amt = Gtk.Label(label=f"⚡ {max(r['msat'] // 1000, 1):,}")
+            amt.add_css_class("caption")
+            amt.add_css_class("dim-label")
+            row.add_suffix(amt)
+            group.add(row)
 
     def on_save_wallet_settings(self, _btn):
         from gnostr.wallet import budget as wallet_budget

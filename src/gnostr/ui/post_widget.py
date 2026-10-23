@@ -166,11 +166,26 @@ class PostWidget(Adw.Bin):
         except Exception:
             self.btn_zap = None
 
+        # Zap total chip (spec zaps-payments-v1 §1.4 deliverable 3): bolt +
+        # Σ sats of VERIFIED receipts for this post; tap -> zapper list.
+        # Created lazily by set_zap_total() — absent at zero, so an
+        # unverified zap is indistinguishable from absent (the zaps table
+        # only ever holds verified rows).
+        self.lbl_zap = None
+        self.btn_zap_total = None
+
         footer.append(self.btn_reply)
         footer.append(self.btn_repost)
         footer.append(self.btn_like)
         if self.btn_zap is not None:
             footer.append(self.btn_zap)
+        self._footer_box = footer
+        try:
+            totals = self.main_window.db.zap_totals_for_events([event_id])
+            if totals.get(event_id, 0):
+                self.set_zap_total(totals[event_id] // 1000)
+        except Exception:
+            pass
 
         self.main_box.append(footer)
 
@@ -298,7 +313,13 @@ class PostWidget(Adw.Bin):
             # Walk up from the target to see if it's inside an action button.
             w = target
             while w is not None:
-                if w in (self.btn_like, self.btn_repost, self.btn_reply, self.btn_zap):
+                if w in (
+                    self.btn_like,
+                    self.btn_repost,
+                    self.btn_reply,
+                    self.btn_zap,
+                    getattr(self, "btn_zap_total", None),
+                ):
                     return
                 w = w.get_parent()
         self.main_window.show_thread(event_id, pubkey, content, tags)
@@ -412,6 +433,42 @@ class PostWidget(Adw.Bin):
         from ..zaps.ui import start_zap
 
         start_zap(self.main_window, self.pubkey, event=(self.event_id, kind))
+
+    def set_zap_total(self, sats):
+        """Show/refresh the zap-total chip (bolt + Σ sats of verified
+        receipts). sats<=0 removes the chip — no 'maybe zap' state."""
+        if sats <= 0:
+            if getattr(self, "btn_zap_total", None) is not None:
+                self._footer_box.remove(self.btn_zap_total)
+                self.btn_zap_total = None
+                self.lbl_zap = None
+            return
+        if getattr(self, "btn_zap_total", None) is None:
+            btn = Gtk.Button()
+            b = Gtk.Box(spacing=6)
+            img = Gtk.Image.new_from_icon_name(
+                self._resolve_icon_name(
+                    "thunderbolt-symbolic",
+                    ("battery-level-symbolic", "emblem-money-symbolic"),
+                )
+            )
+            b.append(img)
+            lbl = Gtk.Label(label="", css_classes=["caption", "dim-label"])
+            b.append(lbl)
+            btn.set_child(b)
+            btn.set_css_classes(["flat"])
+            btn.connect("clicked", self._on_zap_total)
+            self.btn_zap_total = btn
+            self.lbl_zap = lbl
+            self._footer_box.append(btn)
+        self.lbl_zap.set_label(f"{sats:,}")
+
+    def _on_zap_total(self, _btn):
+        """Tap the zap chip -> list of zappers + amounts (spec §1.4 v1)."""
+        from ..zaps.ui import ZapReceiptsDialog
+
+        rows = self.main_window.db.zaps_for_event(self.event_id)
+        ZapReceiptsDialog(self.main_window, rows).present()
 
     def _copy_post(self):
         display = Gdk.Display.get_default()

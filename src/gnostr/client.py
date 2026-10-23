@@ -465,6 +465,11 @@ class NostrClient(GObject.Object):
         # (or the sweep timed the batch out). Events rode in via event-received
         # and are already in the DB; the feed view re-queries its page.
         "backfill-done": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
+        # zap-received: (info_json:str) — a kind-9735 receipt that passed ALL
+        # spec zaps-payments-v1 §1.4 rules and was persisted to the zaps
+        # table. info_json is the verify_9735 result dict. Unverified
+        # receipts never fire this signal (indistinguishable from absent).
+        "zap-received": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
     }
 
     def __init__(self, db):
@@ -1020,6 +1025,55 @@ class NostrClient(GObject.Object):
         for r in self._read_relays().values():
             r.request_once(sub_id, filters)
 
+    # --- zap receipts (spec zaps-payments-v1 §1.4/§2.3) --------------------
+
+    def subscribe_zaps(self, pubkeys):
+        """Live REQ for kind-9735 receipts whose recipient p-tag is one of
+        `pubkeys` (followed profiles + self). Role routing comes free via
+        subscribe() → _read_relays() (RELSET-2)."""
+        authors = [p for p in dict.fromkeys(pubkeys or []) if p]
+        if not authors:
+            return
+        self.subscribe(
+            "sub_zaps",
+            {"kinds": [9735], "#p": authors[:300], "limit": 50},
+        )
+
+    def _zap_metadata_lookup(self, recipient_pk):
+        """Rule 1 helper: LNURL server nostrPubkey for `recipient_pk`.
+        Cached kind-0 -> resolve_target -> lnurl.fetch_metadata (1h TTL
+        cache inside ZAPS-A lnurl module). None when the recipient has no
+        zapable profile — caller treats that as a hard reject."""
+        try:
+            from .zaps import lnurl as _lnurl
+
+            prof = self.db.get_profile(recipient_pk)
+            if not prof:
+                return None
+            target = _lnurl.resolve_target(prof)
+            if not target:
+                return None
+            return _lnurl.fetch_metadata(target)["nostrPubkey"]
+        except Exception:
+            return None
+
+    def _process_zap_receipt(self, ev):
+        """Off-main-thread §1.4 gate for one 9735 (see _handle_event)."""
+        try:
+            from .zaps.receipt import process_9735
+
+            info, reason = process_9735(
+                ev, self.db, metadata_lookup=self._zap_metadata_lookup
+            )
+            if info is not None:
+                GLib.idle_add(
+                    self.emit, "zap-received", json.dumps(info)
+                )
+            else:
+                print(f"🚫 zap receipt rejected: {reason}")
+        except Exception as e:
+            print(f"❌ zap receipt handling failed: {e}")
+
     # --- infinite-scroll phase 2: history backfill ---
     BACKFILL_MIN_INTERVAL = 2.0  # s between backfill REQs (relay courtesy)
     BACKFILL_TIMEOUT = 10.0  # s before a stalled batch settles anyway
@@ -1481,6 +1535,17 @@ class NostrClient(GObject.Object):
                     backend.handle_event(ev)
                 except Exception as e:
                     print(f"❌ NIP-46 response handling failed: {e}")
+            return
+
+        # Zap receipts (spec zaps-payments-v1 §1.4): the §1.4 gate runs off
+        # the main thread (rule 1 may fetch LNURL metadata); verified
+        # receipts persist to the zaps table and fire zap-received. An
+        # unverified receipt is dropped here and never reaches the DB or
+        # any feed signal — indistinguishable from absent (card constraint).
+        if kind == 9735:
+            threading.Thread(
+                target=self._process_zap_receipt, args=(ev,), daemon=True
+            ).start()
             return
 
         # Dedup FIRST so re-subscribed events (e.g. thread refresh) are never

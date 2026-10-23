@@ -113,6 +113,37 @@ class Database:
                 "ON zap_ledger(month)"
             )
 
+            # Zaps-B (spec zaps-payments-v1 §1.4): verified 9735 receipts.
+            # event_id PK dedupes relay echoes (same event id); split
+            # payments are distinct rows summed by the aggregate queries.
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS zaps (
+                    event_id TEXT PRIMARY KEY,
+                    bolt11 TEXT,
+                    request_id TEXT,
+                    sender TEXT,
+                    recipient TEXT,
+                    target_event TEXT,
+                    msat INTEGER,
+                    comment TEXT,
+                    ts INTEGER
+                )
+            """)
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_zaps_target "
+                "ON zaps(target_event)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_zaps_recipient "
+                "ON zaps(recipient, ts)"
+            )
+            # Rule 6 dedupe key: one receipt per bolt11 even if a relay
+            # re-echoed it as a differently-signed event.
+            cursor.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_zaps_bolt11 "
+                "ON zaps(bolt11)"
+            )
+
             # Indexes for feed queries (JOIN on pubkey + ORDER BY created_at).
             # Without these, feed loads full-table-scan on a growing DB.
             cursor.execute(
@@ -219,6 +250,125 @@ class Database:
             except Exception as e:
                 print(f"⚠️ DB zap_month_spent Error: {e}")
                 return 0
+
+    # --- received zaps (Zaps-B, spec zaps-payments-v1 §1.4) --------------
+
+    def save_zap(self, info):
+        """Persist a *verified* 9735 receipt (verify_9735 output dict).
+        INSERT OR IGNORE on both dedupe keys: event_id (relay echo of the
+        same event) and bolt11 (rule 6: one receipt per zap request)."""
+        if not self.conn:
+            return
+        with self.lock:
+            try:
+                cur = self.conn.cursor()
+                cur.execute(
+                    """
+                    INSERT OR IGNORE INTO zaps
+                        (event_id, bolt11, request_id, sender, recipient,
+                         target_event, msat, comment, ts)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        info["event_id"],
+                        info.get("bolt11"),
+                        info["request_id"],
+                        info["sender"],
+                        info["recipient"],
+                        info.get("target_e"),
+                        info["amount_msat"],
+                        info.get("comment", ""),
+                        int(info.get("ts") or 0) or int(time.time()),
+                    ),
+                )
+                self.conn.commit()
+            except Exception as e:
+                print(f"⚠️ DB save_zap Error: {e}")
+
+    def zap_totals_for_events(self, event_ids):
+        """{event_id: msat} over verified receipts (split receipts summed).
+        Events with no zaps are absent from the map."""
+        if not self.conn or not event_ids:
+            return {}
+        with self.lock:
+            try:
+                cur = self.conn.cursor()
+                marks = ",".join("?" * len(event_ids))
+                cur.execute(
+                    f"SELECT target_event, SUM(msat) FROM zaps "
+                    f"WHERE target_event IN ({marks}) GROUP BY target_event",
+                    list(event_ids),
+                )
+                return {row[0]: int(row[1]) for row in cur.fetchall()}
+            except Exception as e:
+                print(f"⚠️ DB zap_totals_for_events Error: {e}")
+                return {}
+
+    def zap_totals_for_profiles(self, pubkeys):
+        """{recipient_pubkey: msat} over verified receipts."""
+        if not self.conn or not pubkeys:
+            return {}
+        with self.lock:
+            try:
+                cur = self.conn.cursor()
+                marks = ",".join("?" * len(pubkeys))
+                cur.execute(
+                    f"SELECT recipient, SUM(msat) FROM zaps "
+                    f"WHERE recipient IN ({marks}) GROUP BY recipient",
+                    list(pubkeys),
+                )
+                return {row[0]: int(row[1]) for row in cur.fetchall()}
+            except Exception as e:
+                print(f"⚠️ DB zap_totals_for_profiles Error: {e}")
+                return {}
+
+    def zaps_for_event(self, event_id):
+        """Receipt rows for one target event, newest first:
+        [{sender, msat, comment, ts}, ...] — the tap-through list."""
+        if not self.conn:
+            return []
+        with self.lock:
+            try:
+                cur = self.conn.cursor()
+                cur.execute(
+                    "SELECT sender, msat, comment, ts FROM zaps "
+                    "WHERE target_event = ? ORDER BY ts DESC",
+                    (event_id,),
+                )
+                return [
+                    {"sender": r[0], "msat": int(r[1]), "comment": r[2] or "", "ts": int(r[3])}
+                    for r in cur.fetchall()
+                ]
+            except Exception as e:
+                print(f"⚠️ DB zaps_for_event Error: {e}")
+                return []
+
+    def zaps_received(self, pubkey, limit=50):
+        """Recent incoming zaps to `pubkey` (own-received view, newest
+        first): [{sender, msat, comment, ts, target_event}, ...]."""
+        if not self.conn:
+            return []
+        with self.lock:
+            try:
+                cur = self.conn.cursor()
+                cur.execute(
+                    "SELECT sender, msat, comment, ts, target_event FROM zaps "
+                    "WHERE recipient = ? ORDER BY ts DESC LIMIT ?",
+                    (pubkey, limit),
+                )
+                return [
+                    {
+                        "sender": r[0],
+                        "msat": int(r[1]),
+                        "comment": r[2] or "",
+                        "ts": int(r[3]),
+                        "target_event": r[4],
+                    }
+                    for r in cur.fetchall()
+                ]
+            except Exception as e:
+                print(f"⚠️ DB zaps_received Error: {e}")
+                return []
 
     def save_profile(self, pubkey, content_json, created_at):
         if not self.conn:

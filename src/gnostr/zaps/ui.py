@@ -23,6 +23,52 @@ from gnostr.zaps.lnurl import (
 )
 
 
+class ZapReceiptsDialog(Adw.Dialog):
+    """Tap-through list for a post's zap chip: who zapped, how much
+    (spec zaps-payments-v1 §1.4 deliverable 3, v1 rendering). Rows come
+    from the verified-only zaps table — nothing here can be unverified."""
+
+    def __init__(self, parent, rows):
+        super().__init__()
+        self.set_title("Zaps")
+        self.set_content_width(360)
+        self.set_content_height(min(480, 60 + 56 * max(len(rows), 1)))
+
+        clamp = Adw.Clamp(maximum_size=360)
+        outer = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            margin_top=12,
+            margin_bottom=12,
+            margin_start=12,
+            margin_end=12,
+        )
+        clamp.set_child(outer)
+        self.set_child(clamp)
+
+        if not rows:
+            outer.append(
+                Gtk.Label(label="No zap receipts", css_classes=["dim-label"])
+            )
+            return
+
+        total = sum(r["msat"] for r in rows) // 1000
+        head = Gtk.Label(label=f"{total:,} sats from {len(rows)} zaps")
+        head.add_css_class("heading")
+        head.set_xalign(0)
+        outer.append(head)
+
+        for r in rows:
+            row = Adw.ActionRow()
+            row.set_title(recipient_display_name(parent.db, r["sender"]))
+            sats = max(r["msat"] // 1000, 1)
+            row.set_subtitle(r["comment"] or "")
+            amt = Gtk.Label(label=f"⚡ {sats:,}")
+            amt.add_css_class("caption")
+            amt.add_css_class("dim-label")
+            row.add_suffix(amt)
+            outer.append(row)
+
+
 def _spent(db):
     from gnostr.wallet.budget import month_spent_sats
 
