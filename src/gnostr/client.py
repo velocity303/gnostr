@@ -85,6 +85,17 @@ DM_POLL_SINCE_SLACK = 120  # s of overlap re-fetch; dedup absorbs the repeats
 TOR_RETRY_INTERVAL = 30  # s
 TOR_ONION_FAILURE_REPROBE = 3
 
+# --- Startup ingestion batching (spec gnostr-startup-2) ---
+# The startup relay burst (feed backfill + freshness REQ + DM poll +
+# kind-9735 zap history) used to mean one INSERT+commit (fsync) per event
+# under the single shared DB lock: hundreds of fsyncs serialized the main
+# thread's switch_feed read behind the write storm — the reported startup
+# hang. Plain ingestion events now buffer in a flush window and land with
+# ONE executemany+commit (see _buffer_event); WAL (database.init_db) keeps
+# readers unblocked between flushes.
+EVENT_BATCH_SIZE = 50  # events buffered before a synchronous flush
+EVENT_BATCH_FLUSH_MS = 200  # main-thread flush window for a lone straggler
+
 
 class NostrRelay(GObject.Object):
     def __init__(
@@ -481,6 +492,12 @@ class NostrClient(GObject.Object):
         self.relay_entries = None
         self.relay_urls = set(DEFAULT_RELAYS)
         self.seen_events = set()
+        # gnostr-startup-2: batched ingestion buffer (see _buffer_event).
+        # Reader threads append plain events here; they land in the DB in
+        # ONE executemany+commit per flush window instead of one fsync each.
+        self._event_buffer = []
+        self._event_buffer_lock = threading.Lock()
+        self._flush_scheduled = False  # idle_add coalescing flag
         self.db = db
         # event_id -> {"label": str, "expires": float} for OK-ack resolution
         self.pending_publishes = {}
@@ -1066,9 +1083,7 @@ class NostrClient(GObject.Object):
                 ev, self.db, metadata_lookup=self._zap_metadata_lookup
             )
             if info is not None:
-                GLib.idle_add(
-                    self.emit, "zap-received", json.dumps(info)
-                )
+                GLib.idle_add(self.emit, "zap-received", json.dumps(info))
             else:
                 print(f"🚫 zap receipt rejected: {reason}")
         except Exception as e:
@@ -1515,6 +1530,56 @@ class NostrClient(GObject.Object):
                 return t[1]
         return None
 
+    def _buffer_event(self, ev):
+        """Queue a plain ingestion event for batched persistence
+        (gnostr-startup-2). Called from relay reader threads per event.
+
+        The batch lands in ONE executemany+commit either when it reaches
+        EVENT_BATCH_SIZE (flushed here, synchronously, on the calling
+        thread) or on the next main-loop idle hop — a single idle is
+        attached only when the buffer transitions empty -> non-empty, so a
+        lone straggler still lands within the flush window without
+        re-attaching a source per event. Dedup already happened via
+        seen_events; INSERT OR IGNORE covers relay echoes inside a batch."""
+        flush_now = False
+        schedule_idle = False
+        with self._event_buffer_lock:
+            self._event_buffer.append(ev)
+            if len(self._event_buffer) >= EVENT_BATCH_SIZE:
+                flush_now = True
+            elif not self._flush_scheduled:
+                self._flush_scheduled = True
+                schedule_idle = True
+        # Never call out while holding the buffer lock: the flush re-takes it
+        # (threading.Lock is not reentrant), and the idle_add/flush must stay
+        # outside the critical section for any synchronous idle stub too.
+        if flush_now:
+            self._flush_event_buffer()
+        elif schedule_idle:
+            GLib.idle_add(self._flush_event_buffer)
+
+    def _flush_event_buffer(self):
+        """Drain the event buffer into the DB with ONE executemany+commit.
+        Safe from any thread (Database.save_events takes the DB lock).
+        Returns False so it doubles as a one-shot GLib idle callback."""
+        with self._event_buffer_lock:
+            batch = self._event_buffer
+            self._event_buffer = []
+            self._flush_scheduled = False
+        if batch:
+            self.db.save_events(batch)
+        return False
+
+    def _flush_and_emit(self, signal_name, *args):
+        """Idle callback preserving the 'saved before emitted' contract:
+        UI handlers read the just-arrived row out of the DB
+        (main.on_event_received -> get_event_by_id, thread_view ->
+        get_replies), so the buffer MUST be committed before the signal
+        fires. Commit first, then emit. Returns False (one-shot idle)."""
+        self._flush_event_buffer()
+        self.emit(signal_name, *args)
+        return False
+
     def _handle_event(self, ev):
         try:
             eid = ev.get("id")
@@ -1584,7 +1649,14 @@ class NostrClient(GObject.Object):
             if eid not in self.metrics:
                 self.metrics[eid] = {"likes": 0, "reposts": 0, "replies": 0}
 
-        self.db.save_event(ev)
+        # gnostr-startup-2: plain events (including the kind-4 rumor row in
+        # the events table) go through the batched buffer — ONE
+        # executemany+commit per flush window instead of one fsync per event.
+        # The DM gateway's gw.save_event below deliberately stays per-event:
+        # dm_conversations rollups (unread_count, last_activity, direction)
+        # are per-rumor bookkeeping, and DM volume (one poll per minute,
+        # limit 50) never contributes to the ingestion storm.
+        self._buffer_event(ev)
 
         # Fire the quote-event signal for EVERY kind so pending quote/naddr
         # cards can populate on arrival. Addressable events (kind 30000-39999)
@@ -1651,8 +1723,13 @@ class NostrClient(GObject.Object):
             self._resolve_dm_relays(pubkey, nr or None)
 
         elif kind == 1:
+            # Invariant (main.on_event_received hydrates the row via
+            # get_event_by_id, thread_view via get_replies): the event must
+            # be committed BEFORE the signal fires. _flush_and_emit commits
+            # the buffer first, then emits — batching stays intact because
+            # the flush drains every event queued so far, not just this one.
             GLib.idle_add(
-                self.emit,
+                self._flush_and_emit,
                 "event-received",
                 eid,
                 pubkey,
@@ -2261,5 +2338,11 @@ class NostrClient(GObject.Object):
         self.subscribe(f"thread_{root_id}", [f1, f2, f3])
 
     def close(self):
+        # gnostr-startup-2: a batch below the size threshold may still be in
+        # the buffer — flush so "persisted" means persisted at shutdown.
+        try:
+            self._flush_event_buffer()
+        except Exception:
+            pass
         for r in self.active_relays.values():
             r.close()

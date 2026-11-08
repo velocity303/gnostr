@@ -94,6 +94,10 @@ class FakeClient:
         self.my_pubkey = "a" * 64
         self.my_privkey = "b" * 64
         self.seen_events = set()
+        # gnostr-startup-2: buffer state for _buffer_event/_flush_event_buffer
+        self._event_buffer = []
+        self._event_buffer_lock = threading.Lock()
+        self._flush_scheduled = False
         self.metrics = {}
         self.subscribed = []
 
