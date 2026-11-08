@@ -157,7 +157,11 @@ class PostWidget(Adw.Bin):
             from ..zaps.lnurl import zapable_profile
 
             author = self.main_window.db.get_profile(pubkey)
-            if my_pk and pubkey != my_pk and not is_hero and zapable_profile(author):
+            # is_hero is NOT excluded: the thread view renders the root post
+            # as a hero, and the root note is the PRIMARY zap target on Nostr.
+            # Excluding it made the zap icon vanish when opening a thread
+            # (regression found in feed-vs-thread parity check).
+            if my_pk and pubkey != my_pk and zapable_profile(author):
                 _lbl, self.btn_zap = mk_met(
                     "thunderbolt-symbolic",
                     ("battery-level-symbolic", "emblem-money-symbolic"),
@@ -199,11 +203,13 @@ class PostWidget(Adw.Bin):
             self._liked = bool(self.main_window.db.user_reaction(event_id, my_pk))
             self._update_like_icon()
             self.btn_like.connect("clicked", self._on_like)
+            if self.btn_zap is not None:
+                # Zap is wired for the hero too (see creation note above):
+                # the thread root must be zappable from the thread view.
+                self.btn_zap.connect("clicked", self._on_zap)
             if not is_hero:
                 self.btn_repost.connect("clicked", self._on_repost)
                 self.btn_reply.connect("clicked", self._on_reply)
-                if self.btn_zap is not None:
-                    self.btn_zap.connect("clicked", self._on_zap)
         else:
             # not logged in: disable actions
             for b in (self.btn_like, self.btn_repost, self.btn_reply):
