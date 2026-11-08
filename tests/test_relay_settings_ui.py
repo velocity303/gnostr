@@ -79,12 +79,15 @@ def test_page_ids_match_contract():
         if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") == "PAGE_IDS"
     )
     got = tuple(e.value for e in ids.value.elts)
-    assert got == ("account", "relays", "media", "network")
+    # zaps-payments-v1 §3.2 LOCKS a dedicated Wallet page between Media and
+    # Network (spec line: "Wallet UI surface: LOCKED").
+    assert got == ("account", "relays", "media", "wallet", "network")
 
 
 def test_groups_live_on_the_right_pages():
     src = open(_DIALOGS).read()
     assert "self._build_upload_group(self.media_page)" in src
+    assert "self._build_wallet_group(self.wallet_page)" in src
     assert "self._build_proxy_group(self.network_page)" in src
     assert "self._build_tor_group(self.network_page)" in src
 

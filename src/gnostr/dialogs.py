@@ -20,7 +20,7 @@ class RelayPreferencesWindow(Adw.PreferencesWindow):
     with its own horizontal scroll region (tux Q2). The last-used page is
     persisted via client.set_settings_page (AC6 / tux change 6)."""
 
-    PAGE_IDS = ("account", "relays", "media", "network")
+    PAGE_IDS = ("account", "relays", "media", "wallet", "network")
 
     def __init__(self, nostr_client, parent_window):
         super().__init__()
@@ -43,17 +43,22 @@ class RelayPreferencesWindow(Adw.PreferencesWindow):
         self.media_page = Adw.PreferencesPage(
             title="Media", icon_name="image-x-generic-symbolic"
         )
+        self.wallet_page = Adw.PreferencesPage(
+            title="Wallet", icon_name="preferences-other-symbolic"
+        )
         self.network_page = Adw.PreferencesPage(
             title="Network", icon_name="network-vpn-symbolic"
         )
         self.add(self.account_page)
         self.add(self.relays_page)
         self.add(self.media_page)
+        self.add(self.wallet_page)
         self.add(self.network_page)
 
         self._build_account_group()
         self._build_relay_page()
         self._build_upload_group(self.media_page)
+        self._build_wallet_group(self.wallet_page)
         self._build_proxy_group(self.network_page)
         self._build_tor_group(self.network_page)
         self.refresh()
@@ -399,6 +404,206 @@ class RelayPreferencesWindow(Adw.PreferencesWindow):
         btn.connect("clicked", self.on_save_upload_settings)
         save.add_suffix(btn)
         g.add(save)
+
+    # -- Wallet page (spec zaps-payments-v1 §3.2) -----------------------------
+    # NWC connection URI lives in libsecret (NWCUriManager), never GSettings:
+    # it is a spending credential. GSettings holds only the label + budget.
+    # Connection test runs off the main thread (executor pattern) and reports
+    # via toast — the dialog must never block on the NWC relay.
+
+    def _build_wallet_group(self, page):
+        from gnostr.wallet import budget as wallet_budget
+
+        g = Adw.PreferencesGroup(
+            title="Wallet (NWC)",
+            description="Nostr Wallet Connect URI from your wallet service "
+            "(Alby Hub, coinos, ...). Stored in the system keyring.",
+        )
+        page.add(g)
+
+        self.nwc_uri_row = Adw.EntryRow(title="NWC connection URI")
+        self.nwc_uri_row.set_visibility(False)  # spending credential
+        try:
+            from gnostr.key_manager import NWCUriManager
+
+            saved = NWCUriManager.load_uri()
+            if saved:
+                self.nwc_uri_row.set_text(saved)
+        except Exception:
+            pass
+        g.add(self.nwc_uri_row)
+
+        self.nwc_label_row = Adw.EntryRow(title="Connection label")
+        self.nwc_label_row.set_text(
+            wallet_budget.wallet_get("nwc-connection-label")
+        )
+        g.add(self.nwc_label_row)
+
+        self.zap_budget_row = Adw.SpinRow.new_with_range(1000, 10_000_000, 1000)
+        self.zap_budget_row.set_title("Monthly zap budget (sats)")
+        self.zap_budget_row.set_value(
+            float(wallet_budget.monthly_budget_sats())
+        )
+        g.add(self.zap_budget_row)
+
+        # Connection state dot + monthly spend from the zap ledger (spec §3.2).
+        self._wallet_state = "unknown"  # unknown | ok | error
+        self.wallet_status_row = Adw.ActionRow(title="Connection")
+        self._wallet_status_dot = Gtk.Label(label="●")
+        self._wallet_status_dot.set_css_classes(["dim-label"])
+        self.wallet_status_row.add_prefix(self._wallet_status_dot)
+        self.wallet_spend_label = Gtk.Label()
+        self.wallet_spend_label.set_css_classes(["dim-label"])
+        self.wallet_status_row.add_suffix(self.wallet_spend_label)
+        self._refresh_wallet_status()
+        g.add(self.wallet_status_row)
+
+        # Received section (Zaps-B, spec §1.4 deliverable 4): recent
+        # verified incoming zaps to self, newest first, from the zaps
+        # table. Unverified receipts never reach the table, so this list
+        # can never show a 'maybe zap'.
+        self.zap_received_group = Adw.PreferencesGroup(
+            title="Received",
+            description="Recent zaps to you (verified receipts only).",
+        )
+        page.add(self.zap_received_group)
+        self._refresh_zap_received()
+
+        save = Adw.ActionRow(title="Save wallet settings")
+        box = Gtk.Box(spacing=6)
+        test_btn = Gtk.Button(label="Test")
+        test_btn.connect("clicked", self.on_test_nwc)
+        save_btn = Gtk.Button(label="Save", css_classes=["suggested-action"])
+        save_btn.connect("clicked", self.on_save_wallet_settings)
+        box.append(test_btn)
+        box.append(save_btn)
+        save.add_suffix(box)
+        g.add(save)
+
+    def _refresh_wallet_status(self):
+        """State dot + this month's spend from the zap ledger (spec §3.2)."""
+        from gnostr.wallet import budget as wallet_budget
+
+        colors = {"ok": "#2ec27e", "error": "#e01b24", "unknown": "#9a9996"}
+        markup = (
+            f'<span foreground="{colors.get(self._wallet_state, "#9a9996")}">'
+            "●</span>"
+        )
+        self._wallet_status_dot.set_markup(markup)
+        spent = 0
+        try:
+            spent = wallet_budget.month_spent_sats(self.client.db)
+        except Exception:
+            pass
+        self.wallet_spend_label.set_text(f"Spent this month: {spent:,} sats")
+
+    def _refresh_zap_received(self):
+        """Rebuild the Received rows from the zaps table (own pubkey)."""
+        from gnostr.zaps.ui import recipient_display_name
+
+        group = self.zap_received_group
+        child = group.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            group.remove(child)
+            child = nxt
+        my_pk = getattr(self.client, "my_pubkey", None)
+        rows = self.client.db.zaps_received(my_pk) if my_pk else []
+        if not rows:
+            group.add(
+                Adw.ActionRow(title="No zaps received yet", subtitle="")
+            )
+            return
+        for r in rows:
+            row = Adw.ActionRow()
+            row.set_title(recipient_display_name(self.client.db, r["sender"]))
+            row.set_subtitle(r["comment"] or "")
+            amt = Gtk.Label(label=f"⚡ {max(r['msat'] // 1000, 1):,}")
+            amt.add_css_class("caption")
+            amt.add_css_class("dim-label")
+            row.add_suffix(amt)
+            group.add(row)
+
+    def on_save_wallet_settings(self, _btn):
+        from gnostr.wallet import budget as wallet_budget
+        from gnostr.wallet.nwc_uri import NWCUriError, parse_nwc_uri
+
+        uri = self.nwc_uri_row.get_text().strip()
+        if uri:
+            try:
+                parse_nwc_uri(uri)
+            except NWCUriError as e:
+                self.add_toast(Adw.Toast(title=f"Invalid NWC URI: {e}"))
+                return
+            try:
+                from gnostr.key_manager import NWCUriManager
+
+                if not NWCUriManager.save_uri(uri):
+                    self.add_toast(Adw.Toast(title="Keyring unavailable"))
+                    return
+            except Exception:
+                self.add_toast(Adw.Toast(title="Keyring unavailable"))
+                return
+        ok = wallet_budget.wallet_set(
+            "nwc-connection-label", self.nwc_label_row.get_text().strip()
+        )
+        ok = wallet_budget.wallet_set(
+            "monthly-zap-budget-sats", int(self.zap_budget_row.get_value())
+        ) and ok
+        self.add_toast(
+            Adw.Toast(title="Wallet settings saved")
+            if ok
+            else Adw.Toast(title="Could not save (settings schema unavailable)")
+        )
+
+    def on_test_nwc(self, _btn):
+        """Async get_info round trip against the entered URI (spec §2.1)."""
+        from gnostr.wallet import budget as wallet_budget
+
+        uri = self.nwc_uri_row.get_text().strip()
+        if not uri:
+            uri = None
+            try:
+                from gnostr.key_manager import NWCUriManager
+
+                uri = NWCUriManager.load_uri()
+            except Exception:
+                pass
+        if not uri:
+            self.add_toast(Adw.Toast(title="No NWC URI configured"))
+            return
+        self.add_toast(Adw.Toast(title="Testing wallet connection..."))
+
+        def work():
+            from gnostr.wallet import NWCBackend
+            from gnostr.wallet.backend import WalletError
+
+            try:
+                backend = NWCBackend(uri, db=self.client.db)
+                info = backend.get_info()
+                backend.close()
+                alias = (info or {}).get("alias") or "wallet"
+                network = (info or {}).get("network") or "?"
+                result = f"Connected: {alias} ({network})"
+                self._wallet_state = "ok"
+            except WalletError as e:
+                result = f"Wallet error: {e}"
+                self._wallet_state = "error"
+            except Exception as e:
+                result = f"Wallet test failed: {e}"
+                self._wallet_state = "error"
+            from gi.repository import GLib
+
+            GLib.idle_add(
+                lambda: (
+                    (self.add_toast(Adw.Toast(title=result)),
+                     self._refresh_wallet_status(), False)[2]
+                )
+            )
+
+        import threading
+
+        threading.Thread(target=work, daemon=True).start()
 
     # -- Tor help (tor-v1-docs) -----------------------------------------------
     # v1 tor support is "opt-in SOCKS5 proxy + docs": gnostr never starts or

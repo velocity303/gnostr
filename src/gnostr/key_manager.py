@@ -112,3 +112,53 @@ class BunkerSessionManager:
         except GLib.Error as e:
             print(f"❌ Failed to delete bunker session: {e}")
             return False
+
+
+# NWC connection URI (spec zaps-payments-v1 §3.2): a SPENDING credential,
+# stored with the same treatment as the NIP-44 DM key — libsecret only,
+# never GSettings/config JSON.
+NWC_SCHEMA = Secret.Schema.new(
+    "tech.livingonlinux.gnostr.NwcUri",
+    Secret.SchemaFlags.NONE,
+    {
+        "application": Secret.SchemaAttributeType.STRING,
+    },
+)
+
+
+class NWCUriManager:
+    @staticmethod
+    def save_uri(uri):
+        attributes = {"application": "gnostr-nwc"}
+        try:
+            Secret.password_store_sync(
+                NWC_SCHEMA,
+                attributes,
+                Secret.COLLECTION_DEFAULT,
+                "Gnostr NWC Wallet Connection",
+                uri,
+                None,
+            )
+            return True
+        except GLib.Error as e:
+            print(f"❌ Failed to save NWC URI: {e}")
+            return False
+
+    @staticmethod
+    def load_uri():
+        attributes = {"application": "gnostr-nwc"}
+        try:
+            return Secret.password_lookup_sync(NWC_SCHEMA, attributes, None)
+        except GLib.Error as e:
+            print(f"❌ Failed to load NWC URI: {e}")
+            return None
+
+    @staticmethod
+    def delete_uri():
+        attributes = {"application": "gnostr-nwc"}
+        try:
+            Secret.password_clear_sync(NWC_SCHEMA, attributes, None)
+            return True
+        except GLib.Error as e:
+            print(f"❌ Failed to delete NWC URI: {e}")
+            return False

@@ -182,13 +182,30 @@ class ProfileView(Adw.Bin):
             self._following = pubkey in self.main_window.db.get_following_list(
                 my_pubkey
             )
+            btn_row = Gtk.Box(spacing=8, homogeneous=True)
+            btn_row.set_halign(Gtk.Align.CENTER)
             self.btn_follow = Gtk.Button(
                 label="Unfollow" if self._following else "Follow",
                 css_classes=["pill", "suggested-action"],
             )
-            self.btn_follow.set_halign(Gtk.Align.CENTER)
             self.btn_follow.connect("clicked", lambda b: self.toggle_follow())
-            header.append(self.btn_follow)
+            btn_row.append(self.btn_follow)
+            # Zap (spec §2.1 profile zap): hidden unless the kind-0 carries an
+            # LNURL candidate; §1.2 gate runs at click.
+            self.btn_zap = None
+            try:
+                from ..zaps.lnurl import zapable_profile
+
+                if zapable_profile(prof):
+                    self.btn_zap = Gtk.Button(label="Zap", css_classes=["pill"])
+                    self.btn_zap.connect(
+                        "clicked",
+                        lambda b: self._on_zap(),
+                    )
+                    btn_row.append(self.btn_zap)
+            except Exception:
+                self.btn_zap = None
+            header.append(btn_row)
         elif my_pubkey and pubkey == my_pubkey:
             # Own profile — Edit Profile + Sync Follows instead of Follow
             # toggle. Sync re-publishes the DB following list (kind-3) —
@@ -311,6 +328,12 @@ class ProfileView(Adw.Bin):
         clipboard.set_content(provider)
         toast = Adw.Toast(title="Copied npub")
         self.main_window.toast_overlay.add_toast(toast)
+
+    def _on_zap(self):
+        """Profile zap (no e/k tags — recipient-only 9734, spec §1.3)."""
+        from ..zaps.ui import start_zap
+
+        start_zap(self.main_window, self.pubkey, event=None)
 
     def toggle_follow(self):
         self._following = not self._following

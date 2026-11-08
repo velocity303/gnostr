@@ -44,6 +44,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.client.connect("contacts-updated", self.on_contacts_updated)
         self.client.connect("profile-updated", self.on_profile_updated)
         self.client.connect("metrics-updated", self.on_metrics_updated)
+        self.client.connect("zap-received", self.on_zap_received)
         self.client.connect("publish-result", self.on_publish_result)
         self.client.connect("relay-log-updated", self.on_relay_log_updated)
         self.client.connect("dm-unreachable", self.on_dm_unreachable)
@@ -761,6 +762,12 @@ class MainWindow(Adw.ApplicationWindow):
         # so fire the one bounded pull now.
         if pubkey == self.pub_key and not self._freshness_pulled:
             self._pull_feed_freshness()
+        # Zap subscription follows the follow list (spec §1.4): a new follow
+        # means receipts for that recipient must start arriving live.
+        if pubkey == self.pub_key:
+            self.client.subscribe_zaps(
+                self.db.get_following_list(self.pub_key) + [self.pub_key]
+            )
 
     def on_profile_updated(self, client, pubkey):
         # Profile metadata (kind 0) arrived — refresh avatars/names in existing
@@ -805,6 +812,19 @@ class MainWindow(Adw.ApplicationWindow):
             widget.lbl_likes.set_label(str(likes))
             widget.lbl_reposts.set_label(str(reposts))
             widget.lbl_replies.set_label(str(replies))
+
+    def on_zap_received(self, client, info_json):
+        # A §1.4-verified 9735 landed (client already persisted it). Update
+        # the zap chip on the target card with the per-event sats total.
+        try:
+            info = json.loads(info_json)
+        except Exception:
+            return
+        eid = info.get("target_e")
+        if not eid or eid not in self.event_widgets:
+            return
+        totals = self.db.zap_totals_for_events([eid])
+        self.event_widgets[eid].set_zap_total(totals.get(eid, 0) // 1000)
 
     def _sweep_publishes(self):
         # Callback for GLib.timeout_add_seconds — returns True to keep repeating.
@@ -901,6 +921,9 @@ class MainWindow(Adw.ApplicationWindow):
                     "sub_following",
                     {"kinds": [1], "authors": contacts[:300], "limit": 50},
                 )
+            # Zap receipts for everyone in the feed + self (spec §1.4
+            # subscription). Runs even with no contacts: own zaps still land.
+            self.client.subscribe_zaps(contacts + [self.pub_key])
         elif feed_type == "global":
             # limit matches the model page size so the DB has a full
             # first page (and one backfill page) to paginate over.

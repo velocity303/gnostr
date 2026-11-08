@@ -36,6 +36,8 @@ subdir('gateway')
 subdir('service')
 subdir('signer')
 subdir('ui')
+subdir('wallet')
+subdir('zaps')
 
 # Compile and install the GResource bundle (GTK UI files)
 gnome.compile_resources(
