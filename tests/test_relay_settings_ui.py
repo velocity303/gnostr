@@ -401,3 +401,45 @@ def test_role_summary_copy():
     assert rs(["read"]) == "Read only"
     assert rs(["write", "dm"]) == "Write · DM"
     assert rs([]) == "No roles"
+
+
+# --- regression: settings window crashed on open (FuriPhone 2026-11-08) -----
+# `self.nwc_uri_row.set_visibility(False)` — Adw.EntryRow has no
+# set_visibility(); the AttributeError killed RelayPreferencesWindow.__init__
+# the moment Settings was clicked. The row must be an Adw.PasswordEntryRow
+# (masked spending credential) and no widget in dialogs.py may call the
+# non-existent set_visibility() (only Gtk.Entry-style widgets have it).
+
+
+def _walk_calls(tree):
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Attribute)
+        ):
+            yield node.func.value.attr, node.func.attr
+
+
+def test_no_set_visibility_calls_in_dialogs():
+    tree = ast.parse(open(_DIALOGS).read())
+    bad = [
+        f"{obj}.{meth}"
+        for obj, meth in _walk_calls(tree)
+        if meth == "set_visibility"
+    ]
+    assert bad == [], f"widgets have no set_visibility(): {bad}"
+
+
+def test_nwc_uri_row_is_password_entry_row():
+    tree = ast.parse(open(_DIALOGS).read())
+    kinds = [
+        node.value.func.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Attribute)
+        and isinstance(node.targets[0], ast.Attribute)
+        and node.targets[0].attr == "nwc_uri_row"
+    ]
+    assert kinds == ["PasswordEntryRow"]

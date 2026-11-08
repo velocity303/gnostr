@@ -421,8 +421,11 @@ class RelayPreferencesWindow(Adw.PreferencesWindow):
         )
         page.add(g)
 
-        self.nwc_uri_row = Adw.EntryRow(title="NWC connection URI")
-        self.nwc_uri_row.set_visibility(False)  # spending credential
+        # Adw.PasswordEntryRow (not EntryRow): the URI is a spending
+        # credential — masked by default with an eye toggle. EntryRow has no
+        # set_visibility() at all; the previous line crashed the settings
+        # window on open (FuriPhone crash report, 2026-11-08).
+        self.nwc_uri_row = Adw.PasswordEntryRow(title="NWC connection URI")
         try:
             from gnostr.key_manager import NWCUriManager
 
