@@ -1,6 +1,7 @@
 import gi
 
 import json
+import threading
 
 # FIX: Namespace is 'Secret', not 'Libsecret'
 gi.require_version("Secret", "1")
@@ -60,6 +61,26 @@ class KeyManager:
         except GLib.Error as e:
             print(f"❌ Failed to delete key: {e}")
             return False
+
+
+def load_key_async(callback):
+    """KeyManager.load_key() off the GTK main thread (startup-hang fix).
+
+    Secret.password_lookup_sync blocks the caller until the D-Bus secret
+    service answers: multi-second on cold boot, INDEFINITELY on a locked
+    keyring (the unlock prompt waits on the user), worse through the Flatpak
+    portal. The lookup runs on a daemon worker thread and callback(nsec_or_None)
+    is dispatched on the main thread via GLib.idle_add — the house pattern
+    (client.py connect_all / probe_tor). Returns the Thread so callers and
+    tests can join it."""
+
+    def _worker():
+        nsec = KeyManager.load_key()
+        GLib.idle_add(callback, nsec)
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+    return t
 
 
 # NIP-46 bunker session (P2 #15): a separate libsecret item — the session is a
