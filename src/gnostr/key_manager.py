@@ -63,6 +63,27 @@ class KeyManager:
             return False
 
 
+def run_off_main(fn, callback):
+    """Run fn() on a daemon worker thread and dispatch its result to
+    callback(value) on the GTK main thread via GLib.idle_add.
+
+    The house pattern for anything that may block (libsecret D-Bus lookups,
+    scrypt, network) from a UI callback. Exceptions collapse to None so a
+    dead keyring never takes the loop with it. Returns the Thread so tests
+    can join it."""
+
+    def _worker():
+        try:
+            val = fn()
+        except Exception:
+            val = None
+        GLib.idle_add(callback, val)
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+    return t
+
+
 def load_key_async(callback):
     """KeyManager.load_key() off the GTK main thread (startup-hang fix).
 

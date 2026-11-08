@@ -288,13 +288,28 @@ def start_zap(main_window, pubkey, event=None):
     dialog is the payment boundary: confirming runs one pay_invoice,
     cancelling runs nothing (§3.4).
     """
-    from gnostr.zaps.send import ZapFlow
-
     mw = main_window
     if not getattr(mw, "pub_key", None):
         mw.add_toast(Adw.Toast(title="Log in to send zaps"))
         return
-    backend = wallet_backend_for(mw)
+    # wallet_backend_for() may hit libsecret (sync D-Bus). If the backend
+    # isn't already cached, build it off-thread and continue on the main
+    # loop — a first zap tap on a slow keyring must not freeze the UI.
+    if getattr(mw, "_zap_backend", None) is None:
+        from gnostr.key_manager import run_off_main
+
+        def _with_backend(backend):
+            _start_zap_with_backend(mw, pubkey, event, backend)
+            return False
+
+        run_off_main(lambda: wallet_backend_for(mw), _with_backend)
+        return
+    _start_zap_with_backend(mw, pubkey, event, mw._zap_backend)
+
+
+def _start_zap_with_backend(mw, pubkey, event, backend):
+    from gnostr.zaps.send import ZapFlow
+
     if backend is None:
         mw.add_toast(
             Adw.Toast(title="No wallet connected — add an NWC URI in Settings → Wallet")

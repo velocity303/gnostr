@@ -426,14 +426,19 @@ class RelayPreferencesWindow(Adw.PreferencesWindow):
         # set_visibility() at all; the previous line crashed the settings
         # window on open (FuriPhone crash report, 2026-11-08).
         self.nwc_uri_row = Adw.PasswordEntryRow(title="NWC connection URI")
-        try:
-            from gnostr.key_manager import NWCUriManager
+        # The URI is a spending credential in libsecret; the lookup is a
+        # synchronous D-Bus call and MUST NOT run here — it froze the whole
+        # app when Settings opened on a slow keyring (FuriPhone 2026-11-08).
+        # Prefill asynchronously; a URI the user typed first is never
+        # overwritten.
 
-            saved = NWCUriManager.load_uri()
-            if saved:
-                self.nwc_uri_row.set_text(saved)
-        except Exception:
-            pass
+        def _prefill(uri):
+            if uri and not self.nwc_uri_row.get_text():
+                self.nwc_uri_row.set_text(uri)
+
+        from gnostr.key_manager import NWCUriManager, run_off_main
+
+        run_off_main(NWCUriManager.load_uri, _prefill)
         g.add(self.nwc_uri_row)
 
         self.nwc_label_row = Adw.EntryRow(title="Connection label")
@@ -505,17 +510,19 @@ class RelayPreferencesWindow(Adw.PreferencesWindow):
         from gnostr.zaps.ui import recipient_display_name
 
         group = self.zap_received_group
-        child = group.get_first_child()
-        while child is not None:
-            nxt = child.get_next_sibling()
-            group.remove(child)
-            child = nxt
+        # AdwPreferencesGroup.get_first_child() returns the group's INTERNAL
+        # GtkBox, not the added rows — removing it spams
+        # "tried to remove non-child GtkBox" CRITICALs and clears nothing.
+        # Track the rows we added and remove exactly those.
+        for row in getattr(self, "_zap_received_rows", []):
+            group.remove(row)
+        self._zap_received_rows = []
         my_pk = getattr(self.client, "my_pubkey", None)
         rows = self.client.db.zaps_received(my_pk) if my_pk else []
         if not rows:
-            group.add(
-                Adw.ActionRow(title="No zaps received yet", subtitle="")
-            )
+            empty = Adw.ActionRow(title="No zaps received yet", subtitle="")
+            group.add(empty)
+            self._zap_received_rows.append(empty)
             return
         for r in rows:
             row = Adw.ActionRow()
@@ -526,6 +533,7 @@ class RelayPreferencesWindow(Adw.PreferencesWindow):
             amt.add_css_class("dim-label")
             row.add_suffix(amt)
             group.add(row)
+            self._zap_received_rows.append(row)
 
     def on_save_wallet_settings(self, _btn):
         from gnostr.wallet import budget as wallet_budget
@@ -564,25 +572,37 @@ class RelayPreferencesWindow(Adw.PreferencesWindow):
         from gnostr.wallet import budget as wallet_budget
 
         uri = self.nwc_uri_row.get_text().strip()
-        if not uri:
-            uri = None
-            try:
-                from gnostr.key_manager import NWCUriManager
+        # Empty row: fall back to the stored URI INSIDE the worker (a sync
+        # libsecret read here would freeze the UI on a slow keyring).
+        from gnostr.key_manager import NWCUriManager
 
-                uri = NWCUriManager.load_uri()
-            except Exception:
-                pass
         if not uri:
-            self.add_toast(Adw.Toast(title="No NWC URI configured"))
-            return
+            uri = None  # resolved in work()
         self.add_toast(Adw.Toast(title="Testing wallet connection..."))
 
         def work():
+            from gi.repository import GLib
             from gnostr.wallet import NWCBackend
             from gnostr.wallet.backend import WalletError
 
+            local_uri = uri
+            if local_uri is None:
+                try:
+                    local_uri = NWCUriManager.load_uri()
+                except Exception:
+                    local_uri = None
+            if not local_uri:
+                GLib.idle_add(
+                    lambda: (
+                        self.add_toast(
+                            Adw.Toast(title="No NWC URI configured")
+                        ),
+                        False,
+                    )[1]
+                )
+                return
             try:
-                backend = NWCBackend(uri, db=self.client.db)
+                backend = NWCBackend(local_uri, db=self.client.db)
                 info = backend.get_info()
                 backend.close()
                 alias = (info or {}).get("alias") or "wallet"
@@ -615,7 +635,10 @@ class RelayPreferencesWindow(Adw.PreferencesWindow):
 
     def _build_tor_group(self, page):
         g = Adw.PreferencesGroup(
-            title="Tor & Privacy",
+            # AdwPreferencesGroup renders its title through Pango markup:
+            # a bare '&' is a parse error (Gtk-WARNING on every open) and
+            # must be escaped.
+            title="Tor &amp; Privacy",
             description="Route relays, LNURL, and media through a local tor SOCKS5 proxy.",
         )
         page.add(g)
@@ -902,19 +925,41 @@ class ExportKeyDialog(Adw.Window):
         if len(p1) < 8 or p1 != self.pw2.get_text():
             self.err.set_text("Use at least 8 characters, entered identically.")
             return
-        nsec_hex = KeyManager.load_key()
-        if not nsec_hex:
-            self.err.set_text("No key in the keyring.")
-            return
-        from gnostr.nip49 import nip49_encrypt
+        # Keyring read + scrypt are both blocking (D-Bus round trip + a
+        # deliberately slow KDF): run off the main thread so the dialog
+        # never freezes (same class of bug as the settings-open hang).
+        btn.set_sensitive(False)
+        btn.set_label("Encrypting…")
 
-        self.result_label.set_text(nip49_encrypt(nsec_hex, p1))
-        self.copy_btn.set_visible(True)
-        # Key-health (P3 #16): producing the backup artifact counts as a
-        # verified backup — Settings shows this timestamp.
-        from gnostr import key_health
+        def work():
+            from gnostr.key_manager import KeyManager
+            from gnostr.nip49 import nip49_encrypt
 
-        key_health.mark_backup_verified()
+            try:
+                nsec_hex = KeyManager.load_key()
+                return nip49_encrypt(nsec_hex, p1) if nsec_hex else None
+            except Exception:
+                return None
+
+        from gi.repository import GLib
+
+        def done(result):
+            btn.set_sensitive(True)
+            btn.set_label("Encrypt")
+            if not result:
+                self.err.set_text("No key in the keyring.")
+                return
+            self.result_label.set_text(result)
+            self.copy_btn.set_visible(True)
+            # Key-health (P3 #16): producing the backup artifact counts as a
+            # verified backup — Settings shows this timestamp.
+            from gnostr import key_health
+
+            key_health.mark_backup_verified()
+
+        from gnostr.key_manager import run_off_main
+
+        run_off_main(work, done)
 
 
 class ComposeWindow(Adw.Window):
@@ -1005,7 +1050,7 @@ class EditProfileDialog(Adw.Window):
         )
         self.ent_banner = self._entry_row(g2, "Banner URL", prof.get("banner", ""))
 
-        g3 = Adw.PreferencesGroup(title="Links & Verification")
+        g3 = Adw.PreferencesGroup(title="Links &amp; Verification")
         p.add(g3)
         self.ent_website = self._entry_row(g3, "Website", prof.get("website", ""))
         self.ent_nip05 = self._entry_row(
