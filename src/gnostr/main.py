@@ -12,7 +12,7 @@ import gnostr
 from .client import NostrClient
 from .database import Database
 from .dialogs import LoginDialog, RelayPreferencesWindow
-from .key_manager import KeyManager
+from .key_manager import KeyManager, load_key_async
 from .renderer import ContentRenderer, ImageLoader
 from .ui.feed_view import FeedView
 from .ui.post_widget import PostWidget
@@ -192,12 +192,17 @@ class MainWindow(Adw.ApplicationWindow):
         self.main_stack.add_named(self.split_view, "app")
 
         self.detect_display_metrics()
-        saved = KeyManager.load_key()
-        if saved:
-            self.perform_login(saved)
-        else:
-            self.main_stack.set_visible_child_name("login")
-            self._try_restore_bunker_session()
+        # Startup keyring lookup runs OFF the main thread (startup-hang fix):
+        # Secret.password_lookup_sync blocks the GTK main loop until the D-Bus
+        # secret service answers — multi-second on cold boot, INDEFINITELY on a
+        # locked keyring, worse through the Flatpak portal. The login page is
+        # the neutral startup state; a saved key switches to the app view from
+        # the completion callback (_on_startup_key).
+        self.main_stack.set_visible_child_name("login")
+        # Double-activation guard: a manual login started while the lookup is
+        # in flight wins — the late callback must not clobber it.
+        self._startup_login_superseded = False
+        load_key_async(self._on_startup_key)
 
         GLib.idle_add(self.client.connect_all)
         # tor-v1: paint the icon at startup (no tor-state-changed fires when
@@ -218,8 +223,6 @@ class MainWindow(Adw.ApplicationWindow):
         # flag guards "exactly one freshness REQ per startup".
         self._freshness_hold = 0.0
         self._freshness_pulled = False
-        if saved:
-            GLib.idle_add(lambda: self.switch_feed(self.active_feed_type))
 
     def detect_display_metrics(self):
         try:
@@ -382,27 +385,47 @@ class MainWindow(Adw.ApplicationWindow):
         self.sidebar.update_dm_badge(count)
 
     def on_login_clicked(self, btn):
+        self._startup_login_superseded = True
         LoginDialog(self.client, self).present()
 
     def on_connect_signer_clicked(self, btn):
+        self._startup_login_superseded = True
         from .dialogs import ConnectSignerWindow
 
         ConnectSignerWindow(self.client, self).present()
 
+    def _on_startup_key(self, saved):
+        """Main-thread completion of the async startup keyring lookup
+        (startup-hang fix). With a saved key: log in and schedule the feed
+        load. Without one: the login page stays up and a saved bunker session
+        gets its chance. Double-activation guard: a manual login started while
+        the lookup was in flight (or any key already loaded) wins — this late
+        callback must never clobber it."""
+        if self._startup_login_superseded or self.pub_key or self.priv_key:
+            return
+        if saved:
+            self.perform_login(saved)
+            # Populate the feed from the DB right away so Back never lands on a
+            # blank feed (the startup subscribe is a no-op until relays
+            # connect; on_status_changed re-runs switch_feed on first relay).
+            GLib.idle_add(lambda: self.switch_feed(self.active_feed_type))
+        else:
+            self._try_restore_bunker_session()
+
     def _try_restore_bunker_session(self):
         """Startup restore (P2 #15): a saved bunker session reconnects without
-        user interaction. Runs on a worker thread — the handshake needs live
-        relays, and relays connect asynchronously. Failure is silent: the
-        login view simply stays up."""
-        from .key_manager import BunkerSessionManager
-
-        session = BunkerSessionManager.load_session()
-        if not session:
-            return
+        user interaction. The libsecret read runs INSIDE the worker thread
+        (startup-hang fix: a sync lookup here would block the main loop on a
+        locked keyring) — the handshake needs live relays, and relays connect
+        asynchronously. Failure is silent: the login view simply stays up."""
 
         def _worker():
+            from .key_manager import BunkerSessionManager
             from .signer import reconnect_from_session
 
+            session = BunkerSessionManager.load_session()
+            if not session:
+                return
             try:
                 backend = reconnect_from_session(
                     self.client,
@@ -490,6 +513,7 @@ class MainWindow(Adw.ApplicationWindow):
         return answer["ok"]
 
     def on_create_account_clicked(self, btn):
+        self._startup_login_superseded = True
         from .ui.onboarding import CreateAccountWindow
 
         CreateAccountWindow(self.client, self).present()
@@ -506,6 +530,7 @@ class MainWindow(Adw.ApplicationWindow):
         ExportKeyDialog(self).present()
 
     def on_derive_key_clicked(self, btn):
+        self._startup_login_superseded = True
         from .ui.derive_key import DeriveKeyDialog
 
         DeriveKeyDialog(self.client, self).present()
