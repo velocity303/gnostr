@@ -14,6 +14,7 @@ client.py code without instantiating GObject.
 import ast
 import inspect
 import os
+import threading
 import types
 from unittest.mock import MagicMock, patch
 
@@ -26,6 +27,19 @@ _CLIENT_PATH = os.path.normpath(
 )
 
 _client_src = open(_CLIENT_PATH, encoding="utf-8").read()
+
+# gnostr-startup-2: module-level constants (EVENT_BATCH_SIZE, ...) that
+# extracted methods reference; exec'd from source so values never drift.
+_MODULE_CONSTS = {}
+for _node in ast.parse(_client_src).body:
+    if isinstance(_node, ast.Assign) and any(
+        isinstance(t, ast.Name) and t.id.startswith("EVENT_BATCH")
+        for t in _node.targets
+    ):
+        exec(
+            compile(ast.Module(body=[_node], type_ignores=[]), _CLIENT_PATH, "exec"),
+            _MODULE_CONSTS,
+        )
 
 
 def _unbound(method_name):
@@ -47,8 +61,11 @@ def _unbound(method_name):
     ns = {
         "json": _json,
         "time": _time,
+        "threading": __import__("threading"),
         "gnostr": __import__("gnostr"),
         "GLib": types.SimpleNamespace(idle_add=lambda fn, *a: fn(*a)),
+        # gnostr-startup-2: module-level constants extracted methods reference
+        **_MODULE_CONSTS,
     }
     exec(compile(mod, _CLIENT_PATH, "exec"), ns)
     return ns[method_name]
@@ -78,6 +95,10 @@ class FakeClient:
         self.pending_publishes = {}
         self.relay_urls = set()
         self.seen_events = set()
+        # gnostr-startup-2: buffer state for _buffer_event/_flush_event_buffer
+        self._event_buffer = []
+        self._event_buffer_lock = threading.Lock()
+        self._flush_scheduled = False
 
     def publish(self, ev):
         self.published.append(ev)

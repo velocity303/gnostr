@@ -21,6 +21,22 @@ class Database:
                 os.makedirs(self.data_dir)
 
             self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
+
+            # gnostr-startup-2 (startup hang fix #2): journal_mode=WAL lets
+            # readers — the main thread's switch_feed feed queries — run
+            # CONCURRENTLY with the relay ingestion writes; the legacy
+            # rollback journal serialized every read behind every INSERT.
+            # synchronous=NORMAL is safe under WAL (only checkpoints fsync;
+            # a crash loses at most the un-checkpointed WAL tail, and any
+            # lost event is simply re-fetched from the relays). busy_timeout
+            # rides out write contention with the DM gateway's second
+            # connection to this file. journal_mode is PERSISTENT (stored in
+            # the DB header), so every later connection — gateway included —
+            # gets WAL without re-setting the pragma.
+            self.conn.execute("PRAGMA journal_mode=WAL")
+            self.conn.execute("PRAGMA synchronous=NORMAL")
+            self.conn.execute("PRAGMA busy_timeout=5000")
+
             cursor = self.conn.cursor()
 
             cursor.execute("""
@@ -165,16 +181,26 @@ class Database:
             traceback.print_exc()
 
     def save_event(self, event):
-        if not self.conn:
+        """Persist a single event. Thin wrapper over save_events so every
+        existing caller (publish echo, DM rumor row, backfill helpers) keeps
+        its exact behavior; the batching lives in client._buffer_event."""
+        self.save_events([event])
+
+    def save_events(self, events):
+        """Persist a batch of events with ONE executemany + ONE commit
+        (gnostr-startup-2: the relay ingestion burst used to mean one
+        fsync per event while the main thread's feed read waited on the
+        same lock — the startup hang). INSERT OR IGNORE dedupes both relay
+        echoes inside a batch and rows already in the table. Atomic: a
+        mid-batch failure rolls the whole batch back rather than leaving a
+        partial transaction for the next commit to publish. Malformed rows
+        (missing keys) are skipped with a log line, same as save_event."""
+        if not self.conn or not events:
             return
-        with self.lock:
+        rows = []
+        for event in events:
             try:
-                cursor = self.conn.cursor()
-                cursor.execute(
-                    """
-                    INSERT OR IGNORE INTO events (id, pubkey, created_at, kind, content, tags, sig)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
+                rows.append(
                     (
                         event["id"],
                         event["pubkey"],
@@ -183,11 +209,28 @@ class Database:
                         event["content"],
                         json.dumps(event["tags"]),
                         event["sig"],
-                    ),
+                    )
+                )
+            except Exception as e:
+                print(f"⚠️ DB Save Events skipped malformed event: {e}")
+        if not rows:
+            return
+        with self.lock:
+            try:
+                self.conn.executemany(
+                    """
+                    INSERT OR IGNORE INTO events (id, pubkey, created_at, kind, content, tags, sig)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                    rows,
                 )
                 self.conn.commit()
             except Exception as e:
-                print(f"⚠️ DB Save Event Error: {e}")
+                try:
+                    self.conn.rollback()
+                except Exception:
+                    pass
+                print(f"⚠️ DB Save Events Error: {e}")
 
     def is_invoice_paid(self, bolt11):
         """Double-pay guard (spec zaps-payments-v1 §3.3): True when this
@@ -197,9 +240,7 @@ class Database:
         with self.lock:
             try:
                 cur = self.conn.cursor()
-                cur.execute(
-                    "SELECT 1 FROM paid_invoices WHERE bolt11 = ?", (bolt11,)
-                )
+                cur.execute("SELECT 1 FROM paid_invoices WHERE bolt11 = ?", (bolt11,))
                 return cur.fetchone() is not None
             except Exception as e:
                 print(f"⚠️ DB is_invoice_paid Error: {e}")
@@ -216,9 +257,7 @@ class Database:
         with self.lock:
             try:
                 cur = self.conn.cursor()
-                cur.execute(
-                    "SELECT 1 FROM paid_invoices WHERE bolt11 = ?", (bolt11,)
-                )
+                cur.execute("SELECT 1 FROM paid_invoices WHERE bolt11 = ?", (bolt11,))
                 if cur.fetchone() is not None:
                     return
                 now = int(time.time())
@@ -336,7 +375,12 @@ class Database:
                     (event_id,),
                 )
                 return [
-                    {"sender": r[0], "msat": int(r[1]), "comment": r[2] or "", "ts": int(r[3])}
+                    {
+                        "sender": r[0],
+                        "msat": int(r[1]),
+                        "comment": r[2] or "",
+                        "ts": int(r[3]),
+                    }
                     for r in cur.fetchall()
                 ]
             except Exception as e:

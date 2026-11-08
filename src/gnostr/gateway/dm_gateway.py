@@ -104,6 +104,15 @@ class SQLiteDMGateway(AbstractDMGateway):
                 os.makedirs(os.path.dirname(self.db_path))
 
             self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            # gnostr-startup-2: this connection shares the main events DB
+            # file. journal_mode=WAL is persistent (set by Database.init_db),
+            # but synchronous/busy_timeout are PER-CONNECTION: without a
+            # busy_timeout this connection raises 'database is locked'
+            # instantly whenever the batched ingestion writer holds the
+            # write lock.
+            self.conn.execute("PRAGMA journal_mode=WAL")
+            self.conn.execute("PRAGMA synchronous=NORMAL")
+            self.conn.execute("PRAGMA busy_timeout=5000")
             cursor = self.conn.cursor()
 
             # Conversations: one row per peer, keyed by their pubkey.
