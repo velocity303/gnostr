@@ -53,6 +53,7 @@ if pytest_prog.found()
   test('test_main_init_order', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_main_init_order.py'], env: test_env, timeout: 120)
   test('test_startup_keyring_async', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_startup_keyring_async.py'], env: test_env, timeout: 120)
   test('test_settings_no_sync_secrets', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_settings_no_sync_secrets.py'], env: test_env, timeout: 120)
+  test('test_zap_flood_pipeline', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_zap_flood_pipeline.py'], env: test_env, timeout: 120)
   test('test_markup', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_markup.py'], env: test_env, timeout: 120)
   test('test_uploader', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_uploader.py'], env: test_env, timeout: 120)
   # VID-1: mobile video buffering — prefill props, threshold-gated play,
