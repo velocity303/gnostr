@@ -1,6 +1,7 @@
 import collections
 import json
 import os
+import queue
 import random
 import threading
 import time
@@ -492,6 +493,20 @@ class NostrClient(GObject.Object):
         self.relay_entries = None
         self.relay_urls = set(DEFAULT_RELAYS)
         self.seen_events = set()
+        # Zap receipt pipeline (FuriPhone lockup 2026-11-08): the old path
+        # spawned ONE THREAD PER 9735 with no dedupe — every reconnect
+        # reprocessed the whole spam backlog, and each thread ran pure-
+        # Python schnorr + bolt11 decode (GIL-bound) plus an uncached 10s
+        # LNURL timeout. Dozens of such threads saturated the GIL and the
+        # main loop froze until the flood drained. Now: one worker thread,
+        # event-id dedupe, negative metadata cache, rate-limited logging.
+        self._zap_queue = queue.Queue()
+        self._zap_worker = None
+        self._zap_worker_lock = threading.Lock()
+        self._zap_seen = collections.deque(maxlen=4096)
+        self._zap_seen_set = set()
+        self._zap_meta_negative = {}  # recipient_pk -> monotonic expiry
+        self._zap_reject_logged = {}  # reason prefix -> monotonic
         # gnostr-startup-2: batched ingestion buffer (see _buffer_event).
         # Reader threads append plain events here; they land in the DB in
         # ONE executemany+commit per flush window instead of one fsync each.
@@ -1056,6 +1071,38 @@ class NostrClient(GObject.Object):
             {"kinds": [9735], "#p": authors[:300], "limit": 50},
         )
 
+    def _enqueue_zap_receipt(self, ev):
+        """Queue one 9735 for the single verification worker.
+
+        Dedupe on the event id BEFORE any expensive work: relays re-send
+        the whole receipt window on every (re)subscribe, and rejected
+        receipts never enter seen_events, so without this the entire spam
+        backlog is re-verified on every reconnect. Bounded FIFO so the
+        dedupe set cannot grow without limit."""
+        eid = ev.get("id") or ""
+        if not eid or eid in self._zap_seen_set:
+            return
+        if len(self._zap_seen) == self._zap_seen.maxlen:
+            self._zap_seen_set.discard(self._zap_seen[0])
+        self._zap_seen.append(eid)
+        self._zap_seen_set.add(eid)
+        self._zap_queue.put(ev)
+        if self._zap_worker is None:
+            with self._zap_worker_lock:
+                if self._zap_worker is None:
+                    self._zap_worker = threading.Thread(
+                        target=self._zap_worker_loop, daemon=True
+                    )
+                    self._zap_worker.start()
+
+    def _zap_worker_loop(self):
+        while True:
+            ev = self._zap_queue.get()
+            try:
+                self._process_zap_receipt(ev)
+            except Exception:
+                pass  # one bad receipt must not kill the pipeline
+
     def _zap_metadata_lookup(self, recipient_pk):
         """Rule 1 helper: LNURL server nostrPubkey for `recipient_pk`.
         Cached kind-0 -> resolve_target -> lnurl.fetch_metadata (1h TTL
@@ -1064,6 +1111,9 @@ class NostrClient(GObject.Object):
         try:
             from .zaps import lnurl as _lnurl
 
+            now = time.monotonic()
+            if self._zap_meta_negative.get(recipient_pk, 0) > now:
+                return None
             prof = self.db.get_profile(recipient_pk)
             if not prof:
                 return None
@@ -1072,6 +1122,10 @@ class NostrClient(GObject.Object):
                 return None
             return _lnurl.fetch_metadata(target)["nostrPubkey"]
         except Exception:
+            # Negative cache (15 min): an unreachable LNURL server costs
+            # the full 10s HTTP timeout per receipt otherwise — a spam
+            # flood then stalls the worker for minutes at a time.
+            self._zap_meta_negative[recipient_pk] = time.monotonic() + 900
             return None
 
     def _process_zap_receipt(self, ev):
@@ -1085,7 +1139,13 @@ class NostrClient(GObject.Object):
             if info is not None:
                 GLib.idle_add(self.emit, "zap-received", json.dumps(info))
             else:
-                print(f"🚫 zap receipt rejected: {reason}")
+                # Rate-limit: spam floods print the same reason hundreds
+                # of times (one line per reason per minute).
+                prefix = (reason or "?").split(":")[0]
+                now = time.monotonic()
+                if now - self._zap_reject_logged.get(prefix, -60) >= 60:
+                    self._zap_reject_logged[prefix] = now
+                    print(f"🚫 zap receipt rejected: {reason}")
         except Exception as e:
             print(f"❌ zap receipt handling failed: {e}")
 
@@ -1608,9 +1668,7 @@ class NostrClient(GObject.Object):
         # unverified receipt is dropped here and never reaches the DB or
         # any feed signal — indistinguishable from absent (card constraint).
         if kind == 9735:
-            threading.Thread(
-                target=self._process_zap_receipt, args=(ev,), daemon=True
-            ).start()
+            self._enqueue_zap_receipt(ev)
             return
 
         # Dedup FIRST so re-subscribed events (e.g. thread refresh) are never
