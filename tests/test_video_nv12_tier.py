@@ -1,4 +1,4 @@
-"""VID-FLX1-NV12: tests for the NV12-direct tier gate + renderer wiring.
+"""VID-FLX1-NV12 / VID-FLX1-DMABUF: tier gate + renderer wiring tests.
 
 video_probe gate functions are exercised against fake factory/enum objects
 (conftest mocks gi). The renderer tier helpers run against the mocked Gst.
@@ -17,8 +17,12 @@ import gnostr.video_probe as vp
 @pytest.fixture(autouse=True)
 def reset_nv12_gate():
     vp._nv12_gate_cache = None
+    vp._dmabuf_gate_cache = None
+    renderer._tier_floor = None
     yield
     vp._nv12_gate_cache = None
+    vp._dmabuf_gate_cache = None
+    renderer._tier_floor = None
 
 
 # ------------------------------------------------------------------ fakes
@@ -96,14 +100,34 @@ def _fake_gst(factories, state_null=0):
 def test_capture_io_mode_reads_mmap_live(monkeypatch):
     # mmap at a NON-STANDARD value: an implementation that hardcoded 2 would
     # return 2 here and fail — the value must come from the live enum.
-    monkeypatch.setattr(_IOMode, "_members", [
-        _Member(0, "auto"),
-        _Member(1, "read"),
-        _Member(5, "mmap"),
-        _Member(7, "dmabuf"),
-    ])
+    monkeypatch.setattr(
+        _IOMode,
+        "_members",
+        [
+            _Member(0, "auto"),
+            _Member(1, "read"),
+            _Member(5, "mmap"),
+            _Member(7, "dmabuf"),
+        ],
+    )
     monkeypatch.setattr(vp, "Gst", _fake_gst({"v4l2h264dec": _Factory(_El(_Spec()))}))
     assert vp.capture_io_mode_value("v4l2h264dec") == 5
+
+
+def test_capture_io_mode_reads_dmabuf_live(monkeypatch):
+    # The FLX1 probe showed dmabuf at value 4; a driver may register it
+    # elsewhere. The value must come from the live enum, never a hardcoded 4.
+    monkeypatch.setattr(
+        _IOMode,
+        "_members",
+        [
+            _Member(0, "auto"),
+            _Member(2, "mmap"),
+            _Member(9, "dmabuf"),
+        ],
+    )
+    monkeypatch.setattr(vp, "Gst", _fake_gst({"v4l2h264dec": _Factory(_El(_Spec()))}))
+    assert vp.capture_io_mode_value("v4l2h264dec", "dmabuf") == 9
 
 
 def test_capture_io_mode_missing_factory(monkeypatch):
@@ -166,52 +190,68 @@ SINK_CAPS_NO_SYS_NV12 = (
 
 
 def test_sink_advertises_nv12_systemmem(monkeypatch):
-    monkeypatch.setattr(vp, "Gst", _fake_gst({"gtk4paintablesink": _Factory(_sink_el(SINK_CAPS_NV12))}))
+    monkeypatch.setattr(
+        vp, "Gst", _fake_gst({"gtk4paintablesink": _Factory(_sink_el(SINK_CAPS_NV12))})
+    )
     assert vp._sink_advertises_nv12_systemmem() is True
 
 
 def test_sink_dmabuf_only_nv12_does_not_count(monkeypatch):
-    monkeypatch.setattr(vp, "Gst", _fake_gst(
-        {"gtk4paintablesink": _Factory(_sink_el(SINK_CAPS_NO_SYS_NV12))}
-    ))
+    monkeypatch.setattr(
+        vp,
+        "Gst",
+        _fake_gst({"gtk4paintablesink": _Factory(_sink_el(SINK_CAPS_NO_SYS_NV12))}),
+    )
     assert vp._sink_advertises_nv12_systemmem() is False
 
 
 def test_gate_true_on_flx1_shape(monkeypatch):
-    monkeypatch.setattr(vp, "Gst", _fake_gst(
-        {
-            "v4l2h264dec": _Factory(_El(_Spec())),
-            "gtk4paintablesink": _Factory(_sink_el(SINK_CAPS_NV12)),
-        }
-    ))
+    monkeypatch.setattr(
+        vp,
+        "Gst",
+        _fake_gst(
+            {
+                "v4l2h264dec": _Factory(_El(_Spec())),
+                "gtk4paintablesink": _Factory(_sink_el(SINK_CAPS_NV12)),
+            }
+        ),
+    )
     assert vp.nv12_tier_available() is True
 
 
 def test_gate_false_desktop_no_v4l2(monkeypatch):
-    monkeypatch.setattr(vp, "Gst", _fake_gst(
-        {"gtk4paintablesink": _Factory(_sink_el(SINK_CAPS_NV12))}
-    ))
+    monkeypatch.setattr(
+        vp, "Gst", _fake_gst({"gtk4paintablesink": _Factory(_sink_el(SINK_CAPS_NV12))})
+    )
     assert vp.nv12_tier_available() is False
 
 
 def test_gate_false_l5_stateless_only(monkeypatch):
     # L5 registers v4l2slh264dec — deliberately NOT in the gate.
-    monkeypatch.setattr(vp, "Gst", _fake_gst(
-        {
-            "v4l2slh264dec": _Factory(_El(_Spec())),
-            "gtk4paintablesink": _Factory(_sink_el(SINK_CAPS_NV12)),
-        }
-    ))
+    monkeypatch.setattr(
+        vp,
+        "Gst",
+        _fake_gst(
+            {
+                "v4l2slh264dec": _Factory(_El(_Spec())),
+                "gtk4paintablesink": _Factory(_sink_el(SINK_CAPS_NV12)),
+            }
+        ),
+    )
     assert vp.nv12_tier_available() is False
 
 
 def test_gate_false_sink_lacks_system_nv12(monkeypatch):
-    monkeypatch.setattr(vp, "Gst", _fake_gst(
-        {
-            "v4l2h264dec": _Factory(_El(_Spec())),
-            "gtk4paintablesink": _Factory(_sink_el(SINK_CAPS_NO_SYS_NV12)),
-        }
-    ))
+    monkeypatch.setattr(
+        vp,
+        "Gst",
+        _fake_gst(
+            {
+                "v4l2h264dec": _Factory(_El(_Spec())),
+                "gtk4paintablesink": _Factory(_sink_el(SINK_CAPS_NO_SYS_NV12)),
+            }
+        ),
+    )
     assert vp.nv12_tier_available() is False
 
 
@@ -223,13 +263,74 @@ def test_gate_cached(monkeypatch):
             calls.append(n)
             return None
 
-    monkeypatch.setattr(vp, "Gst", SimpleNamespace(
-        ElementFactory=_Find(), State=SimpleNamespace(NULL=0)
-    ))
+    monkeypatch.setattr(
+        vp,
+        "Gst",
+        SimpleNamespace(ElementFactory=_Find(), State=SimpleNamespace(NULL=0)),
+    )
     assert vp.nv12_tier_available() is False
     n = len(calls)
     assert vp.nv12_tier_available() is False
     assert len(calls) == n  # second call served from cache
+
+
+# ------------------------------------------- dmabuf tier gate (VID-FLX1-DMABUF)
+
+
+def _flx1_gst():
+    return _fake_gst(
+        {
+            "v4l2h264dec": _Factory(_El(_Spec())),
+            "gtk4paintablesink": _Factory(_sink_el(SINK_CAPS_NV12)),
+        }
+    )
+
+
+def test_dmabuf_gate_true_on_flx1_shape(monkeypatch):
+    monkeypatch.setattr(vp, "Gst", _flx1_gst())
+    monkeypatch.setattr(vp, "_nv12_linear_importable", lambda: True)
+    assert vp.dmabuf_tier_available() is True
+
+
+def test_dmabuf_gate_false_without_nv12_linear(monkeypatch):
+    # nv12_linear=False (e.g. tiled-only driver): the GL sink cannot import
+    # the decoder's NV12 dmabufs — stay on the nv12 tier.
+    monkeypatch.setattr(vp, "Gst", _flx1_gst())
+    monkeypatch.setattr(vp, "_nv12_linear_importable", lambda: False)
+    assert vp.dmabuf_tier_available() is False
+
+
+def test_dmabuf_gate_false_when_linear_check_unavailable(monkeypatch):
+    monkeypatch.setattr(vp, "Gst", _flx1_gst())
+    monkeypatch.setattr(vp, "_nv12_linear_importable", lambda: None)
+    assert vp.dmabuf_tier_available() is False
+
+
+def test_dmabuf_gate_false_without_dmabuf_nick(monkeypatch):
+    # Driver enum has no "dmabuf" nick — the decoder cannot export dmabufs;
+    # the value must be read live, never guessed.
+    monkeypatch.setattr(_IOMode, "_members", [_Member(0, "auto"), _Member(2, "mmap")])
+    monkeypatch.setattr(vp, "Gst", _flx1_gst())
+    monkeypatch.setattr(vp, "_nv12_linear_importable", lambda: True)
+    assert vp.dmabuf_tier_available() is False
+
+
+def test_dmabuf_gate_false_without_nv12_gate(monkeypatch):
+    # No v4l2 decoder: the nv12 fallback tier is not viable either.
+    monkeypatch.setattr(
+        vp, "Gst", _fake_gst({"gtk4paintablesink": _Factory(_sink_el(SINK_CAPS_NV12))})
+    )
+    monkeypatch.setattr(vp, "_nv12_linear_importable", lambda: True)
+    assert vp.dmabuf_tier_available() is False
+
+
+def test_dmabuf_gate_cached(monkeypatch):
+    monkeypatch.setattr(vp, "Gst", _flx1_gst())
+    monkeypatch.setattr(vp, "_nv12_linear_importable", lambda: True)
+    assert vp.dmabuf_tier_available() is True
+    # Flip the underlying signal; the cached answer must stand.
+    monkeypatch.setattr(vp, "_nv12_linear_importable", lambda: False)
+    assert vp.dmabuf_tier_available() is True
 
 
 # ---------------------------------------------------- renderer tier select
@@ -240,17 +341,67 @@ def test_select_tier_env_forced(monkeypatch):
     assert renderer._select_video_tier() == "cpu"
     monkeypatch.setenv("GNOSTR_VIDEO_TIER", "NV12")
     assert renderer._select_video_tier() == "nv12"
+    monkeypatch.setenv("GNOSTR_VIDEO_TIER", "dmabuf")
+    assert renderer._select_video_tier() == "dmabuf"
 
 
 def test_select_tier_auto(monkeypatch):
     monkeypatch.delenv("GNOSTR_VIDEO_TIER", raising=False)
+    monkeypatch.setattr(renderer.video_probe, "dmabuf_tier_available", lambda: False)
     monkeypatch.setattr(renderer.video_probe, "nv12_tier_available", lambda: True)
     assert renderer._select_video_tier() == "nv12"
     monkeypatch.setattr(renderer.video_probe, "nv12_tier_available", lambda: False)
     assert renderer._select_video_tier() == "cpu"
 
 
-# ------------------------------------------------- renderer nv12 sink bin
+def test_select_tier_auto_dmabuf(monkeypatch):
+    monkeypatch.delenv("GNOSTR_VIDEO_TIER", raising=False)
+    monkeypatch.setattr(renderer.video_probe, "dmabuf_tier_available", lambda: True)
+    assert renderer._select_video_tier() == "dmabuf"
+
+
+def test_next_tier_down_chain():
+    assert renderer._next_tier_down("dmabuf") == "nv12"
+    assert renderer._next_tier_down("nv12") == "cpu"
+    assert renderer._next_tier_down("cpu") is None
+    assert renderer._next_tier_down("bogus") is None
+
+
+def test_select_tier_floor_after_downgrade(monkeypatch):
+    monkeypatch.delenv("GNOSTR_VIDEO_TIER", raising=False)
+    monkeypatch.setattr(renderer.video_probe, "dmabuf_tier_available", lambda: True)
+    monkeypatch.setattr(renderer.video_probe, "nv12_tier_available", lambda: True)
+    assert renderer._select_video_tier() == "dmabuf"
+    # dmabuf fails negotiation at runtime -> floor at nv12.
+    assert renderer._downgrade_tier("dmabuf") == "nv12"
+    assert renderer._select_video_tier() == "nv12"
+    # nv12 fails too -> floor at cpu (never below).
+    assert renderer._downgrade_tier("nv12") == "cpu"
+    assert renderer._select_video_tier() == "cpu"
+    # cpu is terminal: downgrade is a no-op, floor stays cpu.
+    assert renderer._downgrade_tier("cpu") is None
+    assert renderer._tier_floor == "cpu"
+
+
+def test_select_tier_floor_only_lowers(monkeypatch):
+    # A floor never RAISES: device without dmabuf capability stays nv12 even
+    # if a stale floor from elsewhere says nv12.
+    monkeypatch.delenv("GNOSTR_VIDEO_TIER", raising=False)
+    monkeypatch.setattr(renderer, "_tier_floor", "nv12")
+    monkeypatch.setattr(renderer.video_probe, "dmabuf_tier_available", lambda: False)
+    monkeypatch.setattr(renderer.video_probe, "nv12_tier_available", lambda: True)
+    assert renderer._select_video_tier() == "nv12"
+
+
+def test_select_tier_env_beats_floor(monkeypatch):
+    # The env override is an explicit operator choice — it wins over the
+    # runtime floor (A/B measurement must stay possible after a fallback).
+    monkeypatch.setenv("GNOSTR_VIDEO_TIER", "dmabuf")
+    monkeypatch.setattr(renderer, "_tier_floor", "cpu")
+    assert renderer._select_video_tier() == "dmabuf"
+
+
+# ------------------------------------------------- renderer direct sink bin
 
 
 class _Bin:
@@ -294,12 +445,15 @@ def _gst_for_bin(make_result):
         made.append((fact, name))
         return make_result
 
-    return SimpleNamespace(
-        Bin=SimpleNamespace(new=lambda: _Bin()),
-        ElementFactory=SimpleNamespace(make=make),
-        Caps=SimpleNamespace(from_string=lambda s: ("caps", s)),
-        GhostPad=SimpleNamespace(new=lambda name, pad: ("ghost", name, pad)),
-    ), made
+    return (
+        SimpleNamespace(
+            Bin=SimpleNamespace(new=lambda: _Bin()),
+            ElementFactory=SimpleNamespace(make=make),
+            Caps=SimpleNamespace(from_string=lambda s: ("caps", s)),
+            GhostPad=SimpleNamespace(new=lambda name, pad: ("ghost", name, pad)),
+        ),
+        made,
+    )
 
 
 def test_build_nv12_sink_bin_chain(monkeypatch):
@@ -316,10 +470,26 @@ def test_build_nv12_sink_bin_chain(monkeypatch):
     assert bin_.pads == [("ghost", "sink", ("pad", "sink"))]
 
 
+def test_build_dmabuf_sink_bin_chain(monkeypatch):
+    # Zero-copy chain: memory:DMABuf NV12 caps, no videoconvert, no
+    # videoscale — GTK scales GPU-side (card spec).
+    cap = _CapEl()
+    gst, made = _gst_for_bin(cap)
+    monkeypatch.setattr(renderer, "Gst", gst)
+    sink = _SinkEl()
+    bin_ = renderer._build_nv12_sink_bin(sink, dmabuf=True)
+    assert bin_ is not None
+    assert made == [("capsfilter", "dmabuf_direct")]
+    assert cap.props["caps"] == ("caps", "video/x-raw(memory:DMABuf),format=NV12")
+    assert bin_.added == [cap, sink]
+    assert cap.links == [sink]
+
+
 def test_build_nv12_sink_bin_no_capsfilter(monkeypatch):
     gst, _ = _gst_for_bin(None)
     monkeypatch.setattr(renderer, "Gst", gst)
     assert renderer._build_nv12_sink_bin(_SinkEl()) is None
+    assert renderer._build_nv12_sink_bin(_SinkEl(), dmabuf=True) is None
 
 
 # ------------------------------------------------- element-setup wiring
@@ -361,7 +531,7 @@ class _DecoderEl:
 
 def test_apply_decoder_io_mode(monkeypatch):
     monkeypatch.setattr(
-        renderer.video_probe, "capture_io_mode_value", lambda n: 7
+        renderer.video_probe, "capture_io_mode_value", lambda n, nick="mmap": 7
     )
     p = _Pipeline()
     assert renderer._apply_decoder_io_mode(p) == 7
@@ -378,13 +548,50 @@ def test_apply_decoder_io_mode(monkeypatch):
     assert other.set_props == []
 
 
+def test_apply_decoder_io_mode_dmabuf_nick(monkeypatch):
+    # The dmabuf tier must read the "dmabuf" nick (never hardcoded 4) and
+    # wire the value it returns.
+    seen = []
+
+    def fake_value(name, nick="mmap"):
+        seen.append((name, nick))
+        return 5
+
+    monkeypatch.setattr(renderer.video_probe, "capture_io_mode_value", fake_value)
+    p = _Pipeline()
+    assert renderer._apply_decoder_io_mode(p, "dmabuf") == 5
+    assert seen == [(renderer.video_probe.NV12_TIER_DECODER, "dmabuf")]
+    dec = _DecoderEl()
+    p.handlers[0][1](p, dec)
+    assert dec.set_props == [("capture-io-mode", 5)]
+
+
 def test_apply_decoder_io_mode_unreadable(monkeypatch):
     monkeypatch.setattr(
-        renderer.video_probe, "capture_io_mode_value", lambda n: None
+        renderer.video_probe, "capture_io_mode_value", lambda n, nick="mmap": None
     )
     p = _Pipeline()
     assert renderer._apply_decoder_io_mode(p) is None
     assert p.handlers == []  # never guess a number into the pipeline
+
+
+# ------------------------------------------------- negotiation-error detect
+
+
+def test_is_negotiation_error():
+    ok = renderer._is_negotiation_error
+    assert ok(SimpleNamespace(message="Failed to negotiate caps")) is True
+    assert ok(SimpleNamespace(message="not-negotiated")) is True
+    assert (
+        ok(SimpleNamespace(message="Output pad ... not-negotiated: failed to link"))
+        is True
+    )
+    assert (
+        ok(SimpleNamespace(message="Your GStreamer installation is missing a plugin"))
+        is False
+    )
+    assert ok(SimpleNamespace(message=None)) is False
+    assert ok(object()) is False  # no .message attribute at all
 
 
 # ------------------------------------------------- tier label honesty
@@ -399,11 +606,72 @@ def test_tier_from_caps_real_qualified_strings():
         "pixel-aspect-ratio=(fraction)1/1, format=(string)NV12"
     )
     assert vp.tier_from_caps(real_nv12) == "nv12"
-    real_rgba = (
-        "video/x-raw, width=(int)720, height=(int)406, "
-        "format=(string)RGBA"
-    )
+    real_rgba = "video/x-raw, width=(int)720, height=(int)406, " "format=(string)RGBA"
     assert vp.tier_from_caps(real_rgba) == "cpu"
+    real_dmabuf = (
+        "video/x-raw(memory:DMABuf), width=(int)1280, height=(int)720, "
+        "format=(string)NV12"
+    )
+    assert vp.tier_from_caps(real_dmabuf) == "dmabuf"
+
+
+# ------------------------------------------------- runtime fallback rebuild
+
+
+class _RebuildPipeline:
+    def __init__(self, tier, args):
+        self._video_tier = tier
+        self._tier_rebuild = args
+        self.states = []
+
+    def set_state(self, s):
+        self.states.append(s)
+
+
+def _capture_idle(monkeypatch):
+    scheduled = []
+    monkeypatch.setattr(
+        renderer.GLib, "idle_add", lambda fn, *a: scheduled.append((fn, a))
+    )
+    monkeypatch.setattr(renderer.video_probe, "stop_sampler", lambda p, u: None)
+    return scheduled
+
+
+def test_fallback_rebuild_dmabuf_to_nv12(monkeypatch):
+    scheduled = _capture_idle(monkeypatch)
+    args = ("url", "cb", "orig", True, "key")
+    p = _RebuildPipeline("dmabuf", args)
+    assert renderer.VideoPlayer._fallback_rebuild(p, "url") is True
+    assert p.states  # old pipeline torn down
+    fn, a = scheduled[0]
+    assert fn is renderer.VideoPlayer._build_and_deliver
+    # Rebuild carries the original args + force_tier=nv12 (one step down).
+    assert a == ("url", "cb", "orig", True, "key", "nv12")
+    assert renderer._tier_floor == "nv12"
+
+
+def test_fallback_rebuild_nv12_to_cpu(monkeypatch):
+    scheduled = _capture_idle(monkeypatch)
+    p = _RebuildPipeline("nv12", ("u", "c", None, False, None))
+    assert renderer.VideoPlayer._fallback_rebuild(p, "u") is True
+    assert scheduled[0][1][-1] == "cpu"
+    assert renderer._tier_floor == "cpu"
+
+
+def test_fallback_rebuild_cpu_is_terminal(monkeypatch):
+    scheduled = _capture_idle(monkeypatch)
+    p = _RebuildPipeline("cpu", ("u", "c", None, False, None))
+    assert renderer.VideoPlayer._fallback_rebuild(p, "u") is False
+    assert scheduled == []
+    assert renderer._tier_floor is None  # nothing recorded, nothing floored
+
+
+def test_fallback_rebuild_without_args_still_floors(monkeypatch):
+    scheduled = _capture_idle(monkeypatch)
+    p = _RebuildPipeline("dmabuf", None)
+    assert renderer.VideoPlayer._fallback_rebuild(p, "u") is False
+    assert scheduled == []  # nothing to rebuild, but the floor is recorded
+    assert renderer._tier_floor == "nv12"
 
 
 # ------------------------------------------------- build-path source scan
@@ -417,13 +685,23 @@ def _build_src():
 
 def test_build_path_wires_tiers():
     src = _build_src()
-    assert "tier = _select_video_tier()" in src
-    assert "_build_nv12_sink_bin(sink)" in src
-    assert "_apply_decoder_io_mode(pipeline)" in src
+    assert "tier = force_tier or _select_video_tier()" in src
+    assert '_build_nv12_sink_bin(sink, dmabuf=(tier == "dmabuf"))' in src
+    assert "_apply_decoder_io_mode(pipeline, io_nick)" in src
     # cpu capped chain must stay gated behind tier == "cpu" (fallback intact).
     assert 'if tier == "cpu" and _MAX_VIDEO_WIDTH' in src
-    # nv12 tier prefers GraphicsOffload, falls back to Gtk.Picture.
+    # direct tiers prefer GraphicsOffload, fall back to Gtk.Picture.
     assert "GraphicsOffload" in src
+    assert 'if tier in ("nv12", "dmabuf")' in src
+    # fallback-chain inputs recorded on the pipeline for the bus handler.
+    assert "pipeline._video_tier = tier" in src
+    assert (
+        "pipeline._tier_rebuild = (url, callback, original_url, autoplay, cache_key)"
+        in src
+    )
+    # bus ERROR handler triggers the runtime fallback on negotiation failure.
+    assert "_is_negotiation_error(err)" in src
+    assert "_fallback_rebuild(p, media_url)" in src
 
 
 def test_find_video_prefers_tagged_widget():

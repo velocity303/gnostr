@@ -1051,35 +1051,107 @@ def _resume_if_viewport_paused(video):
 
 
 # --------------------------------------------------------------- VID-FLX1-NV12
-# NV12-direct tier (FLX1): v4l2h264dec -> NV12 capsfilter -> gtk4paintablesink.
-# No videoconvert, no glupload — decodebin3 autoplugs the hardware decoder to
-# satisfy the NV12 requirement and hands frames straight to the sink; GTK's GL
-# renderer converts NV12->RGB at texture upload. The capped cpu tier below
-# stays the fallback everywhere else (desktop, L5).
+# Video tier machinery. "cpu" is the historical capped chain (decode ->
+# videoconvert -> videoscale -> sink: every frame copied and color-converted
+# in software). "nv12" is the direct chain for FLX1-class devices: the V4L2
+# stateful decoder outputs NV12 in system memory and gtk4paintablesink
+# uploads it to GL as-is (no videoconvert, no videoscale). "dmabuf"
+# (VID-FLX1-DMABUF) is the zero-copy chain: the decoder exports NV12 as DRM
+# PRIME dmabufs (capture-io-mode=dmabuf) and the GL sink imports them via
+# EGLImage — frames never touch system memory. GNOSTR_VIDEO_TIER forces a
+# tier for on-device A/B measurement; otherwise the video_probe gate
+# decides. A runtime caps-negotiation failure floors auto-selection one
+# tier down (dmabuf -> nv12 -> cpu), so a device that cannot sustain a
+# tier at runtime never rebuilds it.
+
+_TIER_ORDER = ("dmabuf", "nv12", "cpu")
+_tier_floor = None  # set by _downgrade_tier after a runtime negotiation failure
+
+
+def _next_tier_down(tier):
+    """dmabuf -> nv12 -> cpu -> None (cpu is terminal — nothing below it)."""
+    try:
+        i = _TIER_ORDER.index(tier)
+    except ValueError:
+        return None
+    return _TIER_ORDER[i + 1] if i + 1 < len(_TIER_ORDER) else None
+
+
+def _downgrade_tier(tier):
+    """Record a runtime negotiation failure at `tier`: future auto-selection
+    never builds above the tier below the one that just failed. Returns the
+    tier to rebuild at, or None when there is nothing below."""
+    global _tier_floor
+    nxt = _next_tier_down(tier)
+    if nxt is not None:
+        idx = _TIER_ORDER.index(nxt)
+        # The floor only ever moves down the order (toward cpu).
+        if _tier_floor is None or _TIER_ORDER.index(_tier_floor) < idx:
+            _tier_floor = nxt
+    return nxt
+
+
+def _is_negotiation_error(err):
+    """True when a bus error is a caps-negotiation failure. Matched on the
+    stable GStreamer error text ("Failed to negotiate caps" from
+    decodebin3/playbin3, "not-negotiated" from sink negotiation) — the
+    domain/code enum members are inconsistently exposed across PyGObject
+    builds, the message strings are not."""
+    try:
+        text = (err.message or "").lower()
+    except Exception:
+        return False
+    return "negotiat" in text
 
 
 def _select_video_tier():
-    """Which video tier this pipeline uses: "nv12" (direct) or "cpu" (capped
-    videoconvert chain). GNOSTR_VIDEO_TIER=cpu|nv12 forces a tier for
-    on-device A/B measurement without a rebuild — the PERF line's tier stays
-    measured from negotiated caps, so the log always reflects what ran."""
+    """Which video tier this pipeline uses: "dmabuf" (zero-copy), "nv12"
+    (direct, system memory), or "cpu" (capped videoconvert chain).
+    GNOSTR_VIDEO_TIER=cpu|nv12|dmabuf forces a tier for on-device A/B
+    measurement without a rebuild — the PERF line's tier stays measured from
+    negotiated caps, so the log always reflects what ran. The env override
+    always wins (explicit operator choice); auto-selection respects the
+    runtime floor set by _downgrade_tier."""
     forced = os.environ.get("GNOSTR_VIDEO_TIER", "").strip().lower()
-    if forced in ("cpu", "nv12"):
+    if forced in _TIER_ORDER:
         return forced
-    return "nv12" if video_probe.nv12_tier_available() else "cpu"
+    if video_probe.dmabuf_tier_available():
+        auto = "dmabuf"
+    elif video_probe.nv12_tier_available():
+        auto = "nv12"
+    else:
+        auto = "cpu"
+    if _tier_floor is not None and _TIER_ORDER.index(auto) < _TIER_ORDER.index(
+        _tier_floor
+    ):
+        return _tier_floor
+    return auto
 
 
-def _build_nv12_sink_bin(sink_el):
-    """NV12-direct sink bin: capsfilter(NV12) -> gtk4paintablesink. Exactly
-    the card chain — no videorate, no videoconvert, no videoscale (GTK scales
-    GPU-side at paint). Returns None if the bin cannot be built so the caller
-    falls back to the capped cpu chain."""
+def _build_nv12_sink_bin(sink_el, dmabuf=False):
+    """Direct sink bin: capsfilter -> gtk4paintablesink. Exactly the card
+    chain — no videorate, no videoconvert, no videoscale (GTK scales
+    GPU-side at paint). dmabuf=False: system-memory NV12 (nv12 tier).
+    dmabuf=True: video/x-raw(memory:DMABuf),format=NV12 — the decoder must
+    export dmabufs (capture-io-mode=dmabuf) and the sink must import them;
+    a runtime negotiation failure is caught by the fallback chain. Returns
+    None if the bin cannot be built so the caller falls back to the capped
+    cpu chain."""
     try:
         sink_bin = Gst.Bin.new()
-        cap = Gst.ElementFactory.make("capsfilter", "nv12_direct")
+        cap = Gst.ElementFactory.make(
+            "capsfilter", "dmabuf_direct" if dmabuf else "nv12_direct"
+        )
         if cap is None:
             return None
-        cap.set_property("caps", Gst.Caps.from_string("video/x-raw,format=NV12"))
+        cap.set_property(
+            "caps",
+            Gst.Caps.from_string(
+                "video/x-raw(memory:DMABuf),format=NV12"
+                if dmabuf
+                else "video/x-raw,format=NV12"
+            ),
+        )
         chain = [cap, sink_el]
         for el in chain:
             sink_bin.add(el)
@@ -1093,28 +1165,27 @@ def _build_nv12_sink_bin(sink_el):
         return None
 
 
-def _apply_decoder_io_mode(pipeline):
-    """Wire capture-io-mode=mmap onto the hardware decoder as playbin3
+def _apply_decoder_io_mode(pipeline, nick="mmap"):
+    """Wire capture-io-mode=<nick> onto the hardware decoder as playbin3
     creates it. playbin3 has NO decoder-props property (verified absent on
     GStreamer 1.26 — the earlier structure-based version silently no-opped,
     every FLX1 run logged driver-default); its real configuration hook is
     the element-setup signal, fired for every internal element at creation
-    time while the element is still configurable. Returns the enum value
-    wired, or None when the driver's capture-io-mode enum has no readable
-    mmap nick — then the driver default stands, never a guessed number."""
-    mmap_val = video_probe.capture_io_mode_value(video_probe.NV12_TIER_DECODER)
-    if mmap_val is None:
+    time while the element is still configurable. The enum value is READ
+    live from the driver's capture-io-mode nick table (mmap for the nv12
+    tier, dmabuf for the zero-copy tier). Returns the enum value wired, or
+    None when the driver's enum has no readable nick — then the driver
+    default stands, never a guessed number."""
+    io_val = video_probe.capture_io_mode_value(video_probe.NV12_TIER_DECODER, nick)
+    if io_val is None:
         return None
 
     def on_element_setup(_playbin, element):
         try:
             factory = element.get_factory()
-            if (
-                factory is None
-                or factory.get_name() != video_probe.NV12_TIER_DECODER
-            ):
+            if factory is None or factory.get_name() != video_probe.NV12_TIER_DECODER:
                 return
-            element.set_property("capture-io-mode", mmap_val)
+            element.set_property("capture-io-mode", io_val)
         except Exception:
             pass  # property rejected — driver default stands for that element
 
@@ -1122,7 +1193,7 @@ def _apply_decoder_io_mode(pipeline):
         pipeline.connect("element-setup", on_element_setup)
     except Exception:
         return None
-    return mmap_val
+    return io_val
 
 
 class VideoLoader:
@@ -1223,8 +1294,51 @@ class VideoPlayer:
         )
 
     @staticmethod
+    def _fallback_rebuild(pipeline, media_url):
+        """Runtime tier fallback (VID-FLX1-DMABUF): a direct tier failed caps
+        negotiation at runtime. Floor the tier (future pipelines skip the
+        broken one), tear this pipeline down, and rebuild the same URL one
+        tier down via force_tier — dmabuf -> nv12 -> cpu, cpu is terminal.
+        Returns True when a rebuild was scheduled."""
+        tier = getattr(pipeline, "_video_tier", "cpu")
+        nxt = _downgrade_tier(tier)
+        print(
+            f"🎬[PERF] tier={tier} negotiation failed — "
+            + (f"rebuilding at tier={nxt}" if nxt else "no tier below, giving up")
+        )
+        if nxt is None:
+            return False
+        try:
+            video_probe.stop_sampler(pipeline, media_url)
+        except Exception:
+            pass
+        try:
+            pipeline.set_state(Gst.State.NULL)
+        except Exception:
+            pass
+        args = getattr(pipeline, "_tier_rebuild", None)
+        if args is None:
+            return False
+        url, callback, original_url, autoplay, cache_key = args
+        GLib.idle_add(
+            VideoPlayer._build_and_deliver,
+            url,
+            callback,
+            original_url,
+            autoplay,
+            cache_key,
+            nxt,
+        )
+        return True
+
+    @staticmethod
     def _build_and_deliver(
-        url, callback, original_url=None, autoplay=False, cache_key=None
+        url,
+        callback,
+        original_url=None,
+        autoplay=False,
+        cache_key=None,
+        force_tier=None,
     ):
         video = None
         try:
@@ -1291,20 +1405,25 @@ class VideoPlayer:
             # converter's RGBA output for the same reason: format adaptation
             # must stay deterministic regardless of autoplug's choices.
             video_sink = sink
-            # VID-FLX1-NV12: tier choice happens once per pipeline. nv12 = the
-            # direct chain (hardware decoder -> NV12 capsfilter -> sink); cpu
-            # = the capped chain below, unchanged, and the fallback whenever
-            # the nv12 bin cannot be built.
-            tier = _select_video_tier()
-            if tier == "nv12":
-                nv12_bin = _build_nv12_sink_bin(sink)
-                if nv12_bin is not None:
-                    video_sink = nv12_bin
-                    io_val = _apply_decoder_io_mode(pipeline)
+            # VID-FLX1-NV12 / VID-FLX1-DMABUF: tier choice happens once per
+            # pipeline. dmabuf = zero-copy direct chain (hardware decoder
+            # exports dmabufs -> memory:DMABuf NV12 capsfilter -> sink);
+            # nv12 = the system-memory direct chain; cpu = the capped chain
+            # below, unchanged, and the fallback whenever a direct bin cannot
+            # be built. force_tier is set by the runtime fallback rebuild
+            # (caps negotiation failed at a higher tier); otherwise auto.
+            tier = force_tier or _select_video_tier()
+            if tier in ("nv12", "dmabuf"):
+                direct_bin = _build_nv12_sink_bin(sink, dmabuf=(tier == "dmabuf"))
+                if direct_bin is not None:
+                    video_sink = direct_bin
+                    io_nick = "dmabuf" if tier == "dmabuf" else "mmap"
+                    io_val = _apply_decoder_io_mode(pipeline, io_nick)
                     print(
-                        "🎬[PERF] tier=nv12 selected "
+                        f"🎬[PERF] tier={tier} selected "
                         f"decoder={video_probe.NV12_TIER_DECODER} "
-                        f"capture-io-mode={'mmap=' + str(io_val) if io_val is not None else 'driver-default'}"
+                        f"capture-io-mode={io_nick}="
+                        + (str(io_val) if io_val is not None else "driver-default")
                     )
                 else:
                     tier = "cpu"
@@ -1368,16 +1487,23 @@ class VideoPlayer:
                 except Exception:
                     video_sink = sink  # keep video working
 
+            # VID-FLX1-DMABUF: remember the tier this pipeline was built at
+            # (the PERF tier label stays measured from caps; this is only the
+            # fallback-chain's starting point) plus the build args so the bus
+            # handler can rebuild one tier down on a negotiation failure.
+            pipeline._video_tier = tier
+            pipeline._tier_rebuild = (url, callback, original_url, autoplay, cache_key)
             pipeline.set_property("video-sink", video_sink)
             _vlog("🎬 [Video] gtk4paintablesink created and set as video-sink OK")
 
             # Create a Gtk.Picture and bind the sink's paintable directly — no
-            # manual frame loop, no per-frame texture churn. On the nv12 tier
-            # prefer Gtk.GraphicsOffload (GTK 4.20+): it hosts the paintable on
-            # a GL-native surface so NV12 frames never round-trip through the
-            # widget tree's CPU path. Falls back to Gtk.Picture everywhere else.
+            # manual frame loop, no per-frame texture churn. On the direct
+            # tiers (nv12, dmabuf) prefer Gtk.GraphicsOffload (GTK 4.20+): it
+            # hosts the paintable on a GL-native surface so NV12 frames never
+            # round-trip through the widget tree's CPU path. Falls back to
+            # Gtk.Picture everywhere else.
             picture = None
-            if tier == "nv12":
+            if tier in ("nv12", "dmabuf"):
                 offload_cls = getattr(Gtk, "GraphicsOffload", None)
                 if offload_cls is not None:
                     try:
@@ -1408,6 +1534,14 @@ class VideoPlayer:
                     try:
                         err, debug = msg.parse_error()
                         _vlog(f"🎬 [Media Codec Error] {media_url}\n  -> {err.message}")
+                        # VID-FLX1-DMABUF: a caps-negotiation failure on a
+                        # direct tier means this runtime cannot feed that
+                        # memory/format combo to the sink — rebuild one tier
+                        # down (dmabuf -> nv12 -> cpu).
+                        if _is_negotiation_error(err) and getattr(
+                            p, "_video_tier", "cpu"
+                        ) in ("dmabuf", "nv12"):
+                            VideoPlayer._fallback_rebuild(p, media_url)
                     except Exception:
                         _vlog(f"🎬 [Media] Bus message: {t}")
                 elif t == Gst.MessageType.EOS:

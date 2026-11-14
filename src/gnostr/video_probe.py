@@ -254,6 +254,35 @@ def _graphics_offload():
         return f"error ({exc.__class__.__name__})"
 
 
+def _nv12_linear_importable():
+    """Whether the display can import NV12 LINEAR dmabufs: True/False when
+    determinable, None when the check is unavailable. GTK populates
+    Gdk.DmabufFormats from the GL renderer's EGLImage support, so a non-GL
+    (cairo/vulkan) renderer reports no formats at all — this check doubles
+    as the GL-renderer requirement for the dmabuf tier."""
+    try:
+        display = Gdk.Display.get_default()
+        if display is None or not hasattr(display, "get_dmabuf_formats"):
+            return None
+        fmts = display.get_dmabuf_formats()
+        if fmts is None:
+            return None
+        try:
+            # GTK 4.10+: direct membership check (fourcc + modifier).
+            return bool(fmts.contains(DRM_FORMAT_NV12, DRM_MOD_LINEAR))
+        except Exception:
+            try:
+                return any(
+                    getattr(e, "format", None) == DRM_FORMAT_NV12
+                    and getattr(e, "modifier", None) == DRM_MOD_LINEAR
+                    for e in fmts.get_formats()
+                )
+            except Exception:
+                return None
+    except Exception:
+        return None
+
+
 def _dmabuf_line():
     try:
         display = Gdk.Display.get_default()
@@ -266,18 +295,9 @@ def _dmabuf_line():
             count = fmts.get_n_formats()
         except Exception:
             count = -1
-        try:
-            # GTK 4.10+: direct membership check (fourcc + modifier).
-            nv12_linear = fmts.contains(DRM_FORMAT_NV12, DRM_MOD_LINEAR)
-        except Exception:
-            try:
-                nv12_linear = any(
-                    getattr(e, "format", None) == DRM_FORMAT_NV12
-                    and getattr(e, "modifier", None) == DRM_MOD_LINEAR
-                    for e in fmts.get_formats()
-                )
-            except Exception:
-                nv12_linear = "unknown"
+        nv12_linear = _nv12_linear_importable()
+        if nv12_linear is None:
+            nv12_linear = "unknown"
         return f"available count={count} nv12_linear={nv12_linear}"
     except Exception as exc:
         return f"error ({exc.__class__.__name__})"
@@ -458,14 +478,45 @@ def nv12_tier_available():
     if _nv12_gate_cache is None:
         ok = False
         try:
-            if any(
-                Gst.ElementFactory.find(n) is not None for n in _NV12_GATE_DECODERS
-            ):
+            if any(Gst.ElementFactory.find(n) is not None for n in _NV12_GATE_DECODERS):
                 ok = _sink_advertises_nv12_systemmem()
         except Exception:
             ok = False
         _nv12_gate_cache = ok
     return _nv12_gate_cache
+
+
+# -------------------------------------------------------------- VID-FLX1-DMABUF
+# Zero-copy DMABuf tier gate. The FLX1 probe (vid_nv12.log) showed the Mali GL
+# renderer imports NV12 LINEAR dmabufs (nv12_linear=True) and v4l2h264dec's
+# capture-io-mode enum carries a "dmabuf" nick — so the decoder can export
+# dmabufs and the sink can import them: frames never touch system memory.
+
+_dmabuf_gate_cache = None
+
+
+def dmabuf_tier_available():
+    """Whether this device qualifies for the zero-copy DMABuf tier (cached).
+    Requires ALL of:
+      - the nv12 gate (v4l2h264dec + NV12 sink) — the nv12 tier is the
+        immediate runtime fallback, so it must be viable;
+      - NV12+LINEAR importable by the display (GL renderer implied — see
+        _nv12_linear_importable; cairo/vulkan report no formats);
+      - the decoder's capture-io-mode enum carries a "dmabuf" nick, READ
+        live (a driver without it keeps its default; never a guessed 4)."""
+    global _dmabuf_gate_cache
+    if _dmabuf_gate_cache is None:
+        ok = False
+        try:
+            ok = bool(
+                nv12_tier_available()
+                and _nv12_linear_importable() is True
+                and capture_io_mode_value(NV12_TIER_DECODER, "dmabuf") is not None
+            )
+        except Exception:
+            ok = False
+        _dmabuf_gate_cache = ok
+    return _dmabuf_gate_cache
 
 
 def run_probe(window):
