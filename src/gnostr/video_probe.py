@@ -229,7 +229,32 @@ def _probe_tick(window):
         return True  # not presented yet — retry
     run_probe(window)
     _probe_state["done"] = True
+    start_loop_lag_probe()
     return False
+
+
+_loop_lag_state = {"last": None}
+
+
+def _loop_lag_tick():
+    """VID-DECODE-UX: is the 1-2 Hz stutter main-thread contention? A
+    timeout that should fire every 500 ms but fires late proves the GLib
+    loop is being blocked; silence while the user still sees stutter
+    disproves it and points at the GPU/display side instead."""
+    now = GLib.get_monotonic_time() / 1000.0
+    last = _loop_lag_state["last"]
+    _loop_lag_state["last"] = now
+    if last is not None:
+        lag = now - last - 500.0
+        if lag > 150.0:
+            print(f"🎬[PERF] main-loop lag {lag:.0f}ms")
+    return True
+
+
+def start_loop_lag_probe():
+    if _loop_lag_state["last"] is not None:
+        return
+    GLib.timeout_add(500, _loop_lag_tick)
 
 
 def _renderer_name(window):
