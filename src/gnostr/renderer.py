@@ -1094,17 +1094,32 @@ def _build_nv12_sink_bin(sink_el):
 
 
 def _apply_decoder_io_mode(pipeline):
-    """Set capture-io-mode on playbin3's decoder-props structure (forwarded to
-    every decoder that owns the property — in practice the v4l2 decoder) using
-    the mmap enum value READ live from v4l2h264dec. Returns the value applied,
-    or None when unreadable — then the driver default stands, never a guess."""
+    """Wire capture-io-mode=mmap onto the hardware decoder as playbin3
+    creates it. playbin3 has NO decoder-props property (verified absent on
+    GStreamer 1.26 — the earlier structure-based version silently no-opped,
+    every FLX1 run logged driver-default); its real configuration hook is
+    the element-setup signal, fired for every internal element at creation
+    time while the element is still configurable. Returns the enum value
+    wired, or None when the driver's capture-io-mode enum has no readable
+    mmap nick — then the driver default stands, never a guessed number."""
     mmap_val = video_probe.capture_io_mode_value(video_probe.NV12_TIER_DECODER)
     if mmap_val is None:
         return None
+
+    def on_element_setup(_playbin, element):
+        try:
+            factory = element.get_factory()
+            if (
+                factory is None
+                or factory.get_name() != video_probe.NV12_TIER_DECODER
+            ):
+                return
+            element.set_property("capture-io-mode", mmap_val)
+        except Exception:
+            pass  # property rejected — driver default stands for that element
+
     try:
-        props = Gst.Structure.new_empty("decoder-props")
-        props["capture-io-mode"] = mmap_val
-        pipeline.set_property("decoder-props", props)
+        pipeline.connect("element-setup", on_element_setup)
     except Exception:
         return None
     return mmap_val

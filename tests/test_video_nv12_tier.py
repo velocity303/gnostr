@@ -322,37 +322,60 @@ def test_build_nv12_sink_bin_no_capsfilter(monkeypatch):
     assert renderer._build_nv12_sink_bin(_SinkEl()) is None
 
 
-# ------------------------------------------------- decoder-props wiring
-
-
-class _Struct:
-    def __init__(self):
-        self.fields = {}
-
-    def __setitem__(self, k, v):
-        self.fields[k] = v
+# ------------------------------------------------- element-setup wiring
 
 
 class _Pipeline:
     def __init__(self):
         self.props = {}
+        self.handlers = []
 
     def set_property(self, k, v):
         self.props[k] = v
 
+    def connect(self, name, handler):
+        self.handlers.append((name, handler))
+
+
+class _DecoderEl:
+    """Stands in for a freshly created decoder element inside playbin3."""
+
+    def __init__(self, factory_name=None):
+        self.set_props = []
+        self._factory = factory_name or renderer.video_probe.NV12_TIER_DECODER
+
+    def get_factory(self):
+        if self._factory is None:
+            return None
+        outer = self
+
+        class _F:
+            def get_name(self):
+                return outer._factory
+
+        return _F()
+
+    def set_property(self, k, v):
+        self.set_props.append((k, v))
+
 
 def test_apply_decoder_io_mode(monkeypatch):
-    struct = _Struct()
-    monkeypatch.setattr(renderer, "Gst", SimpleNamespace(
-        Structure=SimpleNamespace(new_empty=lambda name: struct)
-    ))
     monkeypatch.setattr(
         renderer.video_probe, "capture_io_mode_value", lambda n: 7
     )
     p = _Pipeline()
     assert renderer._apply_decoder_io_mode(p) == 7
-    assert p.props["decoder-props"] is struct
-    assert struct.fields == {"capture-io-mode": 7}
+    # playbin3 has no decoder-props property — the ONLY real hook is the
+    # element-setup signal (verified live on GStreamer 1.26).
+    assert [name for name, _ in p.handlers] == ["element-setup"]
+    # Firing the signal with the hardware decoder must apply the live value.
+    dec = _DecoderEl()
+    p.handlers[0][1](p, dec)
+    assert dec.set_props == [("capture-io-mode", 7)]
+    # Non-matching elements are left untouched.
+    other = _DecoderEl(factory_name="avdec_h264")
+    p.handlers[0][1](p, other)
+    assert other.set_props == []
 
 
 def test_apply_decoder_io_mode_unreadable(monkeypatch):
@@ -361,7 +384,7 @@ def test_apply_decoder_io_mode_unreadable(monkeypatch):
     )
     p = _Pipeline()
     assert renderer._apply_decoder_io_mode(p) is None
-    assert p.props == {}  # never guess a number into the pipeline
+    assert p.handlers == []  # never guess a number into the pipeline
 
 
 # ------------------------------------------------- tier label honesty
