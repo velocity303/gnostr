@@ -364,6 +364,25 @@ def test_apply_decoder_io_mode_unreadable(monkeypatch):
     assert p.props == {}  # never guess a number into the pipeline
 
 
+# ------------------------------------------------- tier label honesty
+
+
+def test_tier_from_caps_real_qualified_strings():
+    # Real Gst.Caps.to_string() qualifies fields: format=(string)NV12.
+    # The PERF tier label must reflect what actually ran (acceptance).
+    real_nv12 = (
+        "video/x-raw, width=(int)1280, height=(int)720, "
+        "interlace-mode=(string)progressive, "
+        "pixel-aspect-ratio=(fraction)1/1, format=(string)NV12"
+    )
+    assert vp.tier_from_caps(real_nv12) == "nv12"
+    real_rgba = (
+        "video/x-raw, width=(int)720, height=(int)406, "
+        "format=(string)RGBA"
+    )
+    assert vp.tier_from_caps(real_rgba) == "cpu"
+
+
 # ------------------------------------------------- build-path source scan
 
 

@@ -63,7 +63,9 @@ def tier_from_caps(caps_str):
     s = caps_str or ""
     if "memory:DMABuf" in s:
         return "dmabuf"
-    if "memory:GLMemory" in s or "format=NV12" in s:
+    # Real Gst.Caps.to_string() qualifies the field: `format=(string)NV12`.
+    # Match the bare fourcc so real negotiated caps classify correctly.
+    if "memory:GLMemory" in s or "NV12" in s:
         return "nv12"
     return "cpu"
 
