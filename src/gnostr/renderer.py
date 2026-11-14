@@ -1050,6 +1050,66 @@ def _resume_if_viewport_paused(video):
         video._offscreen_paused = False
 
 
+# --------------------------------------------------------------- VID-FLX1-NV12
+# NV12-direct tier (FLX1): v4l2h264dec -> NV12 capsfilter -> gtk4paintablesink.
+# No videoconvert, no glupload — decodebin3 autoplugs the hardware decoder to
+# satisfy the NV12 requirement and hands frames straight to the sink; GTK's GL
+# renderer converts NV12->RGB at texture upload. The capped cpu tier below
+# stays the fallback everywhere else (desktop, L5).
+
+
+def _select_video_tier():
+    """Which video tier this pipeline uses: "nv12" (direct) or "cpu" (capped
+    videoconvert chain). GNOSTR_VIDEO_TIER=cpu|nv12 forces a tier for
+    on-device A/B measurement without a rebuild — the PERF line's tier stays
+    measured from negotiated caps, so the log always reflects what ran."""
+    forced = os.environ.get("GNOSTR_VIDEO_TIER", "").strip().lower()
+    if forced in ("cpu", "nv12"):
+        return forced
+    return "nv12" if video_probe.nv12_tier_available() else "cpu"
+
+
+def _build_nv12_sink_bin(sink_el):
+    """NV12-direct sink bin: capsfilter(NV12) -> gtk4paintablesink. Exactly
+    the card chain — no videorate, no videoconvert, no videoscale (GTK scales
+    GPU-side at paint). Returns None if the bin cannot be built so the caller
+    falls back to the capped cpu chain."""
+    try:
+        sink_bin = Gst.Bin.new()
+        cap = Gst.ElementFactory.make("capsfilter", "nv12_direct")
+        if cap is None:
+            return None
+        cap.set_property("caps", Gst.Caps.from_string("video/x-raw,format=NV12"))
+        chain = [cap, sink_el]
+        for el in chain:
+            sink_bin.add(el)
+        for a, b in zip(chain, chain[1:]):
+            a.link(b)
+        ghost = Gst.GhostPad.new("sink", chain[0].get_static_pad("sink"))
+        if ghost is None or not sink_bin.add_pad(ghost):
+            return None
+        return sink_bin
+    except Exception:
+        return None
+
+
+def _apply_decoder_io_mode(pipeline):
+    """Set capture-io-mode on playbin3's decoder-props structure (forwarded to
+    every decoder that owns the property — in practice the v4l2 decoder) using
+    the mmap enum value READ live from v4l2h264dec. Returns the value applied,
+    or None when unreadable — then the driver default stands, never a guess."""
+    mmap_val = video_probe.capture_io_mode_value(video_probe.NV12_TIER_DECODER)
+    if mmap_val is None:
+        return None
+    try:
+        props = Gst.Structure.new_empty("decoder-props")
+        props["capture-io-mode"] = mmap_val
+        pipeline.set_property("decoder-props", props)
+    except Exception:
+        return None
+    return mmap_val
+
+
 class VideoLoader:
     @staticmethod
     def load_and_play(url, container, spinner, window_ref=None, autoplay=False):
@@ -1216,7 +1276,24 @@ class VideoPlayer:
             # converter's RGBA output for the same reason: format adaptation
             # must stay deterministic regardless of autoplug's choices.
             video_sink = sink
-            if _MAX_VIDEO_WIDTH and _MAX_VIDEO_HEIGHT:
+            # VID-FLX1-NV12: tier choice happens once per pipeline. nv12 = the
+            # direct chain (hardware decoder -> NV12 capsfilter -> sink); cpu
+            # = the capped chain below, unchanged, and the fallback whenever
+            # the nv12 bin cannot be built.
+            tier = _select_video_tier()
+            if tier == "nv12":
+                nv12_bin = _build_nv12_sink_bin(sink)
+                if nv12_bin is not None:
+                    video_sink = nv12_bin
+                    io_val = _apply_decoder_io_mode(pipeline)
+                    print(
+                        "🎬[PERF] tier=nv12 selected "
+                        f"decoder={video_probe.NV12_TIER_DECODER} "
+                        f"capture-io-mode={'mmap=' + str(io_val) if io_val is not None else 'driver-default'}"
+                    )
+                else:
+                    tier = "cpu"
+            if tier == "cpu" and _MAX_VIDEO_WIDTH and _MAX_VIDEO_HEIGHT:
                 try:
                     capfilter = Gst.ElementFactory.make("capsfilter", "mobile_res_cap")
                     fps_clause = (
@@ -1280,13 +1357,30 @@ class VideoPlayer:
             _vlog("🎬 [Video] gtk4paintablesink created and set as video-sink OK")
 
             # Create a Gtk.Picture and bind the sink's paintable directly — no
-            # manual frame loop, no per-frame texture churn.
-            picture = Gtk.Picture()
-            picture.set_can_shrink(True)
+            # manual frame loop, no per-frame texture churn. On the nv12 tier
+            # prefer Gtk.GraphicsOffload (GTK 4.20+): it hosts the paintable on
+            # a GL-native surface so NV12 frames never round-trip through the
+            # widget tree's CPU path. Falls back to Gtk.Picture everywhere else.
+            picture = None
+            if tier == "nv12":
+                offload_cls = getattr(Gtk, "GraphicsOffload", None)
+                if offload_cls is not None:
+                    try:
+                        picture = offload_cls()
+                        picture.set_can_shrink(True)
+                    except Exception:
+                        picture = None
+            if picture is None:
+                picture = Gtk.Picture()
+                picture.set_can_shrink(True)
+            picture._gnostr_video_widget = True
             paintable = sink.get_property("paintable")
             if paintable:
                 picture.set_paintable(paintable)
-            _vlog("🎬 [Video] Gtk.Picture bound to gtk4paintablesink paintable")
+            _vlog(
+                f"🎬 [Video] {type(picture).__name__} bound to "
+                "gtk4paintablesink paintable"
+            )
 
             # Bus for error/EOS handling
             bus = pipeline.get_bus()
@@ -1598,8 +1692,11 @@ class VideoPlayer:
 
     @staticmethod
     def _find_video(video_container):
-        """Find the video widget (Gtk.Picture) in the container."""
+        """Find the video widget (Gtk.Picture, or the nv12 tier's
+        Gtk.GraphicsOffload — tagged at build time) in the container."""
         for child in video_container:
+            if getattr(child, "_gnostr_video_widget", False):
+                return child
             if isinstance(child, Gtk.Picture):
                 return child
         return None

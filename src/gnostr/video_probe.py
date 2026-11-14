@@ -367,6 +367,105 @@ def _predicted_tier(renderer, dmabuf_line, v4l2_line):
         return "cpu"
 
 
+# --------------------------------------------------------------- VID-FLX1-NV12
+# NV12-direct tier gate. VID-PROBE verified gtk4paintablesink's SystemMemory
+# structs include NV12 — on a device with the stateful v4l2h264dec (FLX1's
+# MediaTek) the renderer can hand NV12 straight to the sink: no videoconvert,
+# no full-frame RGBA memcpy. Enum values are READ live from the property spec,
+# never hardcoded (card rule: "do not hardcode 2").
+
+NV12_TIER_DECODER = "v4l2h264dec"
+# The gate matches ONLY the stateful decoder on purpose: L5's stateless
+# v4l2slh264dec has its own tuned capped-cpu tier and the card requires
+# "Desktop/L5 unaffected".
+_NV12_GATE_DECODERS = (NV12_TIER_DECODER,)
+
+_nv12_gate_cache = None
+
+
+def capture_io_mode_value(element_name, nick="mmap"):
+    """Live enum value of `nick` in the element's capture-io-mode property.
+    Returns None when the property/enum/nick is unreadable — callers must then
+    leave the property at its driver default rather than guess a number."""
+    try:
+        factory = Gst.ElementFactory.find(element_name)
+        if factory is None:
+            return None
+        el = factory.create(f"nv12-gate-{element_name}")
+        if el is None:
+            return None
+        try:
+            spec = el.find_property("capture-io-mode")
+            if spec is None:
+                return None
+            default = spec.get_default_value()
+            for member in list(type(default)):
+                if getattr(member, "value_nick", None) == nick:
+                    return int(member)
+        finally:
+            try:
+                el.set_state(Gst.State.NULL)
+            except Exception:
+                pass
+    except Exception:
+        return None
+    return None
+
+
+def _sink_advertises_nv12_systemmem():
+    """True when gtk4paintablesink's sink template carries a plain
+    video/x-raw struct (no memory: qualifier — DMABuf/GLMemory structs do
+    not count) that includes NV12."""
+    try:
+        factory = Gst.ElementFactory.find("gtk4paintablesink")
+        if factory is None:
+            return False
+        el = factory.create("nv12-gate-sink")
+        if el is None:
+            return False
+        try:
+            pad = el.get_static_pad("sink")
+            tmpl = pad.get_pad_template() if pad is not None else None
+        finally:
+            try:
+                el.set_state(Gst.State.NULL)
+            except Exception:
+                pass
+        if tmpl is None:
+            return False
+        try:
+            caps = tmpl.get_caps()
+        except Exception:
+            caps = getattr(tmpl, "caps", None)
+        if caps is None:
+            return False
+        for s in caps.to_string().split(";"):
+            if "video/x-raw" in s and "memory:" not in s and "NV12" in s:
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def nv12_tier_available():
+    """Whether this device qualifies for the NV12-direct tier (cached — the
+    factory registry and pad templates are static once Gst.init has run).
+    Desktop: no v4l2 decoder -> False. L5: stateless decoder only -> False.
+    FLX1: v4l2h264dec + system-memory NV12 sink caps -> True."""
+    global _nv12_gate_cache
+    if _nv12_gate_cache is None:
+        ok = False
+        try:
+            if any(
+                Gst.ElementFactory.find(n) is not None for n in _NV12_GATE_DECODERS
+            ):
+                ok = _sink_advertises_nv12_systemmem()
+        except Exception:
+            ok = False
+        _nv12_gate_cache = ok
+    return _nv12_gate_cache
+
+
 def run_probe(window):
     """Log the one-shot 🎬[PROBE] block. Safe to call directly (tests)."""
     # ElementFactory.find needs the plugin registry loaded. Gst.init is
