@@ -24,6 +24,7 @@ from gi.repository import Gtk, Adw, GLib, Gdk, GdkPixbuf, Pango, Gst, GstApp, Gi
 
 from . import nostr_utils
 from . import proxy_opener
+from . import video_probe
 from .markup import emphasis_to_pango
 
 # Set to True to enable verbose 🎬 debug logging. Now env-driven so the whole
@@ -367,6 +368,9 @@ class ContentRenderer:
 
     @staticmethod
     def render(content, window_ref, post_widget_ref=None):
+        # VID-PROBE: one-shot startup capability probe (🎬[PROBE] block).
+        # Guarded + deferred inside the module; costs one bool check per render.
+        video_probe.ensure_probe(window_ref)
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
 
         if not content:
@@ -1348,6 +1352,19 @@ class VideoPlayer:
                             f"🎬 [Media] State changed: {old} → {new} "
                             f"{_elapsed} {media_url[:40]}"
                         )
+                        # VID-PROBE: CPU measurement window = the pipeline's
+                        # own PLAYING span. start/stop are idempotent; stop
+                        # logs the 🎬[PERF] tier/cpu line. Filtered to the
+                        # pipeline itself so child-element state chatter
+                        # can't open or close windows spuriously.
+                        try:
+                            if msg.src == p:
+                                if new == Gst.State.PLAYING:
+                                    video_probe.start_sampler(p, media_url)
+                                elif old == Gst.State.PLAYING:
+                                    video_probe.stop_sampler(p, media_url)
+                        except Exception:
+                            pass
                         # Task 10: report decoder + negotiated video caps once per
                         # pipeline. Deferred ~600ms after the first PAUSED/PLAYING
                         # so caps have time to negotiate — with lazy-load autoplay
@@ -1436,6 +1453,10 @@ class VideoPlayer:
                     try:
                         p = getattr(old_video, "_pipeline", None)
                         if p:
+                            # VID-PROBE: evicting mid-playback is a playback
+                            # stop — close the CPU window before teardown so
+                            # its 🎬[PERF] line still gets logged.
+                            video_probe.stop_sampler(p, old_url)
                             # Task 10: per-pipeline QOS summary before teardown.
                             # qos_events = dropped-frame reports; qos_dropped = sum of
                             # buffers dropped-late; qos_prop_min = worst 1.0→0 quality
