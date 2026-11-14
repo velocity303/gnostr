@@ -18,10 +18,12 @@ import gnostr.video_probe as vp
 def reset_nv12_gate():
     vp._nv12_gate_cache = None
     vp._dmabuf_gate_cache = None
+    vp._sink_dmabuf_nv12_cache = None
     renderer._tier_floor = None
     yield
     vp._nv12_gate_cache = None
     vp._dmabuf_gate_cache = None
+    vp._sink_dmabuf_nv12_cache = None
     renderer._tier_floor = None
 
 
@@ -286,8 +288,35 @@ def _flx1_gst():
     )
 
 
-def test_dmabuf_gate_true_on_flx1_shape(monkeypatch):
+def _dmabuf_ok_gst():
+    """FLX1-class device whose sink DMABuf struct ALSO lists NV12 — the
+    only shape under which the decoder's NV12 dmabufs can reach the sink."""
+    return _fake_gst(
+        {
+            "v4l2h264dec": _Factory(_El(_Spec())),
+            "gtk4paintablesink": _Factory(
+                _sink_el(
+                    "video/x-raw(memory:DMABuf),format=(string){ NV12, DMA_DRM }; "
+                    "video/x-raw,format=(string){ I420, NV12, RGBA }"
+                )
+            ),
+        }
+    )
+
+
+def test_dmabuf_gate_false_on_dma_drm_only_sink(monkeypatch):
+    """The REAL FLX1 shape (vid_dmabuf.log): sink DMABuf struct is
+    DMA_DRM-only while the v4l2 decoders export NV12-in-dmabuf — the
+    zero-copy combo can never negotiate and stalls SILENTLY (black
+    rectangle, no bus error). The gate must read the sink template and
+    refuse, keeping the device on the nv12 tier."""
     monkeypatch.setattr(vp, "Gst", _flx1_gst())
+    monkeypatch.setattr(vp, "_nv12_linear_importable", lambda: True)
+    assert vp.dmabuf_tier_available() is False
+
+
+def test_dmabuf_gate_true_on_nv12_dmabuf_sink(monkeypatch):
+    monkeypatch.setattr(vp, "Gst", _dmabuf_ok_gst())
     monkeypatch.setattr(vp, "_nv12_linear_importable", lambda: True)
     assert vp.dmabuf_tier_available() is True
 
@@ -325,7 +354,7 @@ def test_dmabuf_gate_false_without_nv12_gate(monkeypatch):
 
 
 def test_dmabuf_gate_cached(monkeypatch):
-    monkeypatch.setattr(vp, "Gst", _flx1_gst())
+    monkeypatch.setattr(vp, "Gst", _dmabuf_ok_gst())
     monkeypatch.setattr(vp, "_nv12_linear_importable", lambda: True)
     assert vp.dmabuf_tier_available() is True
     # Flip the underlying signal; the cached answer must stand.

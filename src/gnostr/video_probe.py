@@ -376,11 +376,10 @@ def _predicted_tier(renderer, dmabuf_line, v4l2_line):
     """Informational only — the PERF line's tier is measured from negotiated
     caps, this is the pre-playback best guess from probe facts."""
     try:
-        nv12_ok = "nv12_linear=True" in dmabuf_line
         hw = v4l2_line != "none registered" and "error" not in v4l2_line
         if "vulkan" in renderer.lower():
             return "cpu (vulkan GSK: no GL context for sink upload)"
-        if nv12_ok and hw:
+        if dmabuf_tier_available():
             return "dmabuf (hardware decoder + NV12 LINEAR dmabuf import)"
         if hw and "gl" in renderer.lower():
             return "nv12 (hardware decoder + GL upload)"
@@ -493,6 +492,39 @@ def nv12_tier_available():
 # dmabufs and the sink can import them: frames never touch system memory.
 
 _dmabuf_gate_cache = None
+_sink_dmabuf_nv12_cache = None
+
+
+def _sink_dmabuf_accepts_nv12():
+    """True when a gtk4paintablesink DMABuf struct also lists NV12.
+
+    The v4l2 decoders export NV12-in-dmabuf (format=NV12, memory:DMABuf).
+    If the sink's DMABuf struct lists ONLY format=DMA_DRM (opaque DRM
+    passthrough), NV12 dmabufs can never negotiate — the zero-copy tier
+    silently stalls (FLX1, 2026-11-13: video pad stays caps=None, NO bus
+    error, black rectangle). Read live from the sink template, cached."""
+    global _sink_dmabuf_nv12_cache
+    if _sink_dmabuf_nv12_cache is None:
+        ok = False
+        try:
+            factory = Gst.ElementFactory.find("gtk4paintablesink")
+            el = factory.create("vid-probe-dmabuf-gate") if factory else None
+            if el is not None:
+                try:
+                    tmpl = el.get_static_pad("sink").get_pad_template()
+                    caps = tmpl.get_caps()
+                    # Same string-walk style as _sink_advertises_nv12_systemmem:
+                    # the DMABuf STRUCT (not just the caps blob) must list NV12.
+                    for s in caps.to_string().split(";"):
+                        if "memory:DMABuf" in s and "NV12" in s:
+                            ok = True
+                            break
+                finally:
+                    el.set_state(Gst.State.NULL)
+        except Exception:
+            ok = False
+        _sink_dmabuf_nv12_cache = ok
+    return _sink_dmabuf_nv12_cache
 
 
 def dmabuf_tier_available():
@@ -503,7 +535,10 @@ def dmabuf_tier_available():
       - NV12+LINEAR importable by the display (GL renderer implied — see
         _nv12_linear_importable; cairo/vulkan report no formats);
       - the decoder's capture-io-mode enum carries a "dmabuf" nick, READ
-        live (a driver without it keeps its default; never a guessed 4)."""
+        live (a driver without it keeps its default; never a guessed 4);
+      - the sink's DMABuf struct accepts NV12 — otherwise the decoder's
+        NV12 dmabufs can never match the sink (FLX1: sink DMABuf struct is
+        DMA_DRM-only) and the tier stalls silently at runtime."""
     global _dmabuf_gate_cache
     if _dmabuf_gate_cache is None:
         ok = False
@@ -512,6 +547,7 @@ def dmabuf_tier_available():
                 nv12_tier_available()
                 and _nv12_linear_importable() is True
                 and capture_io_mode_value(NV12_TIER_DECODER, "dmabuf") is not None
+                and _sink_dmabuf_accepts_nv12()
             )
         except Exception:
             ok = False

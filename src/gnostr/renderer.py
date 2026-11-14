@@ -1839,6 +1839,37 @@ class VideoPlayer:
             f"video_caps={caps_str}"
         )
 
+        if caps_str in ("none", "query-error") and getattr(
+            pipeline, "_video_tier", "cpu"
+        ) in ("dmabuf", "nv12"):
+            # Silent-stall safety net: a direct tier can fail caps
+            # negotiation WITHOUT a bus error (FLX1 dmabuf tier, 2026-11-13:
+            # pad stays caps=None while PLAYING, black rectangle, no error
+            # message — the bus-driven fallback never fires). Re-check after
+            # a preroll grace window; rebuild one tier down if still starved.
+            def _recheck(p=pipeline, u=url):
+                try:
+                    if p.get_state(0)[1] != Gst.State.PLAYING:
+                        return False  # paused (viewport gate) — not a stall
+                    sink = p.get_property("video-sink")
+                    real = (
+                        sink.get_by_name("sink")
+                        if sink is not None and hasattr(sink, "get_by_name")
+                        else sink
+                    )
+                    pad = real.get_static_pad("sink") if real else None
+                    if pad is not None and pad.get_current_caps() is None:
+                        print(
+                            "🎬[PERF] silent stall — PLAYING with no video "
+                            "caps; treating as negotiation failure"
+                        )
+                        VideoPlayer._fallback_rebuild(p, u)
+                except Exception:
+                    pass
+                return False
+
+            GLib.timeout_add(3000, _recheck)
+
     @staticmethod
     def _find_video(video_container):
         """Find the video widget (Gtk.Picture, or the nv12 tier's

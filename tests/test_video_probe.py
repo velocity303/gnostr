@@ -174,6 +174,9 @@ class _Struct:
     def get_name(self):
         return self._name
 
+    def to_string(self):
+        return self._name
+
 
 class _Caps:
     NAMES = ["video/x-raw(memory:DMABuf)", "video/x-raw(memory:GLMemory)"]
@@ -305,3 +308,42 @@ def test_renderer_wiring_present():
     assert "video_probe.stop_sampler(p, media_url)" in src
     # Eviction closes the window before set NULL.
     assert "video_probe.stop_sampler(p, old_url)" in src
+
+
+# ------------------------------------------- VID-FLX1-DMABUF sink-format gate
+
+
+def test_sink_dmabuf_gate_blocks_nv12less_sink(fake_gi, monkeypatch):
+    """FLX1 case: the sink's DMABuf struct is DMA_DRM-only. The v4l2
+    decoders export NV12-in-dmabuf, which could NEVER match — the tier
+    stalls silently at runtime (black rectangle, no bus error), so the
+    gate must read the template and refuse."""
+    monkeypatch.setattr(vp, "_sink_dmabuf_nv12_cache", None)
+    assert vp._sink_dmabuf_accepts_nv12() is False
+
+
+def test_sink_dmabuf_gate_allows_nv12_sink(fake_gi, monkeypatch):
+    monkeypatch.setattr(
+        _Caps,
+        "NAMES",
+        ["video/x-raw(memory:DMABuf),format=(string)NV12"],
+    )
+    monkeypatch.setattr(vp, "_sink_dmabuf_nv12_cache", None)
+    assert vp._sink_dmabuf_accepts_nv12() is True
+
+
+def test_dmabuf_gate_requires_sink_nv12(fake_gi, monkeypatch):
+    monkeypatch.setattr(vp, "_sink_dmabuf_nv12_cache", None)
+    monkeypatch.setattr(vp, "_dmabuf_gate_cache", None)
+    monkeypatch.setattr(vp, "nv12_tier_available", lambda: True)
+    monkeypatch.setattr(vp, "_nv12_linear_importable", lambda: True)
+    monkeypatch.setattr(
+        vp,
+        "capture_io_mode_value",
+        lambda n, nick="mmap": 4 if nick == "dmabuf" else 2,
+    )
+    # Default fake sink: DMABuf struct without NV12 -> gate closed.
+    assert vp.dmabuf_tier_available() is False
+    monkeypatch.setattr(vp, "_sink_dmabuf_nv12_cache", True)
+    monkeypatch.setattr(vp, "_dmabuf_gate_cache", None)
+    assert vp.dmabuf_tier_available() is True
