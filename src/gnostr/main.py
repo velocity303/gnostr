@@ -1000,6 +1000,9 @@ class GnostrApp(Adw.Application):
             Gst.init(None)
         except Exception as e:
             print(f"GStreamer init failed: {e}")
+        from . import debug_resize
+
+        debug_resize.install()
         # Register CSS BEFORE presenting so the first window layout pass sees
         # the toast rule: narrow phones (e.g. Librem 5: 720 px panel at scale
         # 2 = 360 logical px) cannot fit libadwaita's fixed 368 px toast
