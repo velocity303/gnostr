@@ -271,6 +271,12 @@ class ContentRenderer:
                 lambda s: VideoPlayer.seek_to(video_area, s.get_value()),
             )
             position_label = Gtk.Label(label="0:00 / 0:00")
+            # VID-DECODE-UX: tabular digits keep the label pixel-width constant.
+            # With a proportional font every tick changed the label width →
+            # queue_resize → scrolled-viewport relayout at 2 Hz — the exact
+            # "finger-tap" stutter (A1b Finding 3; scale/label damage was the
+            # last suspect after decode/main-loop/bursts were exonerated).
+            position_label.add_css_class("numeric")
             mute_btn = Gtk.Button(icon_name="audio-volume-high-symbolic")
             mute_btn.set_tooltip_text("Mute/Unmute")
             mute_btn.connect(
@@ -2152,9 +2158,12 @@ class VideoPlayer:
                     pos_min, pos_s = divmod(pos_sec, 60)
                     dur_min, dur_s = divmod(dur_sec, 60)
                     if position_label:
-                        position_label.set_text(
-                            f"{pos_min}:{pos_s:02d} / {dur_min}:{dur_s:02d}"
-                        )
+                        txt = f"{pos_min}:{pos_s:02d} / {dur_min}:{dur_s:02d}"
+                        # gtk_label_set_text queues resize+redraw even for
+                        # identical text — only write on actual change so the
+                        # 500 ms tick is damage-free within the same second.
+                        if position_label.get_text() != txt:
+                            position_label.set_text(txt)
             return True
 
         GLib.timeout_add(500, update)
