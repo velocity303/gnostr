@@ -206,9 +206,7 @@ class ContentRenderer:
             spinner.set_valign(Gtk.Align.CENTER)
             spinner.set_vexpand(True)
             video_area.append(spinner)
-            VideoPlayer.load_and_play(
-                url, video_area, spinner, window_ref, original_url, autoplay=True
-            )
+            _schedule_media_build(url, video_area, spinner, window_ref, original_url)
         else:
             # Real videos: lazy-load. Don't build a playbin3 pipeline (and pull
             # the stream) until the user actually taps play — prerolling every
@@ -342,9 +340,7 @@ class ContentRenderer:
         spinner.set_valign(Gtk.Align.CENTER)
         spinner.set_vexpand(True)
         video_area.append(spinner)
-        VideoPlayer.load_and_play(
-            url, video_area, spinner, window_ref, original_url, autoplay=True
-        )
+        _schedule_media_build(url, video_area, spinner, window_ref, original_url)
 
     @staticmethod
     def _activation_gated(window_ref):
@@ -1194,6 +1190,33 @@ def _apply_decoder_io_mode(pipeline, nick="mmap"):
     except Exception:
         return None
     return io_val
+
+
+_MEDIA_BUILD_MIN_GAP_MS = 200.0
+_media_build_state = {"last": -_MEDIA_BUILD_MIN_GAP_MS}
+
+
+def _schedule_media_build(url, container, spinner, window_ref, original_url=None):
+    """VID-DECODE-UX: stagger playbin3 builds. Each build costs ~100-300 ms
+    of main-thread time on the FLX1; a burst of card renders blocked the GLib
+    loop for 881-1625 ms (main-loop lag probe, 2026-11-13 log) — that block
+    IS the perceived stutter, not decode (fps_dropped=0). A spinner is already
+    up, so a <=200 ms stagger is invisible while the burst stall is not."""
+    def _run():
+        if container.get_parent() is None:
+            return False  # card scrolled away / re-rendered while queued
+        _media_build_state["last"] = GLib.get_monotonic_time() / 1000.0
+        VideoPlayer.load_and_play(
+            url, container, spinner, window_ref, original_url, autoplay=True
+        )
+        return False
+
+    now = GLib.get_monotonic_time() / 1000.0
+    wait = _MEDIA_BUILD_MIN_GAP_MS - (now - _media_build_state["last"])
+    if wait <= 0:
+        _run()
+    else:
+        GLib.timeout_add(int(wait), _run)
 
 
 class VideoLoader:
