@@ -171,13 +171,28 @@ class ProfileView(Adw.Bin):
             lud16_row.append(lbl_lud16)
             header.append(lud16_row)
 
-        # NIP-39 external identities (GitHub/Twitter/etc.)
-        self.identities_box = Gtk.Box(spacing=8, halign=Gtk.Align.CENTER)
+        # NIP-39 external identities (GitHub/Twitter/etc.) — FlowBox so a
+        # long identity list wraps instead of widening the page.
+        self.identities_box = Gtk.FlowBox(
+            selection_mode=Gtk.SelectionMode.NONE,
+            column_spacing=8,
+            row_spacing=4,
+            halign=Gtk.Align.CENTER,
+            max_children_per_line=16,
+        )
         header.append(self.identities_box)
         self._render_external_identities()
 
         # NIP-58 badges row
-        self.badges_box = Gtk.Box(spacing=8, halign=Gtk.Align.CENTER)
+        # FlowBox: badge rows can be dozens of chips; a plain Box would
+        # request the full row width and blow the page past the screen.
+        self.badges_box = Gtk.FlowBox(
+            selection_mode=Gtk.SelectionMode.NONE,
+            column_spacing=8,
+            row_spacing=4,
+            halign=Gtk.Align.CENTER,
+            max_children_per_line=32,
+        )
         header.append(self.badges_box)
         self._render_badges()
 
@@ -297,7 +312,7 @@ class ProfileView(Adw.Bin):
             btn = Gtk.Button(label=label, css_classes=["flat", "caption"])
             if url:
                 btn.connect("clicked", lambda b, u=url: self._open_url(u))
-            self.identities_box.append(btn)
+            self.identities_box.insert(btn, -1)
 
     def _render_badges(self):
         """Render NIP-58 profile badges. Resolves kind-30009 definitions for
@@ -318,14 +333,14 @@ class ProfileView(Adw.Bin):
             else:
                 # No cached definition — show a placeholder chip
                 chip = Gtk.Label(label="🏅", css_classes=["caption"])
-                self.badges_box.append(chip)
+                self.badges_box.insert(chip, -1)
 
     def _append_badge_image(self, texture, definition):
         if texture:
             img = Gtk.Image.new_from_paintable(texture)
             img.set_size_request(48, 48)
             img.set_tooltip_text(definition.get("name", ""))
-            self.badges_box.append(img)
+            self.badges_box.insert(img, -1)
         return False
 
     def _open_url(self, url):

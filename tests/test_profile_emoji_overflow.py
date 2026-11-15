@@ -13,6 +13,17 @@ from pathlib import Path
 SRC = Path(__file__).resolve().parent.parent / "src" / "gnostr" / "ui" / "profile_view.py"
 
 
+def test_badge_and_identity_rows_wrap():
+    # The 🏅 placeholder row (NIP-58) blew the frame on badge-heavy
+    # profiles: a plain Gtk.Box requests the full row width.
+    src = SRC.read_text()
+    assert "self.badges_box = Gtk.FlowBox(" in src
+    assert "self.identities_box = Gtk.FlowBox(" in src
+    assert "self.badges_box.append(" not in src
+    assert "self.identities_box.append(" not in src
+    assert "self.badges_box.insert(chip, -1)" in src
+
+
 def test_pango_imported():
     src = SRC.read_text()
     assert any(
