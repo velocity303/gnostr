@@ -4,6 +4,7 @@ install_data(
     'connection_state.py',
     'cache_manager.py',
     'scroll_gate.py',
+    'text_truncate.py',
     'tor_state.py',
   ],
   install_dir: pkgdatadir / pkg_name / 'util'

@@ -5,6 +5,8 @@ gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw
 from gnostr.ui.post_widget import PostWidget
 
+from ..util.text_truncate import SAFE_TRUNCATE_LIMIT, safe_truncate
+
 
 class ThreadView(Adw.Bin):
     def __init__(self, main_window, event_id, pubkey, content, tags=[]):
@@ -78,8 +80,8 @@ class ThreadView(Adw.Bin):
         self._hero_toggle = None
 
         display_content = content
-        if len(content) > 500:
-            display_content = content[:500] + "…"
+        if len(content) > SAFE_TRUNCATE_LIMIT:
+            display_content = safe_truncate(content, SAFE_TRUNCATE_LIMIT) + "…"
             self._hero_truncated = True
 
         hero = PostWidget(
@@ -244,7 +246,9 @@ class ThreadView(Adw.Bin):
         self._hero_truncated = not self._hero_truncated
         if self._hero_truncated:
             self._rebuild_hero(
-                self._hero_pubkey, self._hero_content[:500] + "…", self._hero_tags
+                self._hero_pubkey,
+                safe_truncate(self._hero_content, SAFE_TRUNCATE_LIMIT) + "…",
+                self._hero_tags,
             )
             self._hero_toggle.set_label("Show more")
         else:
@@ -259,7 +263,7 @@ class ThreadView(Adw.Bin):
         self._hero_tags = ev.get("tags", [])
         display = ev["content"]
         if self._hero_truncated:
-            display = ev["content"][:500] + "…"
+            display = safe_truncate(ev["content"], SAFE_TRUNCATE_LIMIT) + "…"
         self._rebuild_hero(ev["pubkey"], display, self._hero_tags)
 
     def reload_replies(self):
