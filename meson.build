@@ -73,6 +73,9 @@ if pytest_prog.found()
   # parking, reorder persistence, import merge, activity-log role tags).
   test('test_relay_entries', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_relay_entries.py'], env: test_env, timeout: 120)
   test('test_relay_roles_client', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_relay_roles_client.py'], env: test_env, timeout: 120)
+  # THREAD-TRUNC: token-safe hero truncation (util.text_truncate) — pure
+  # function tests + source guard that thread_view slices no raw [:500].
+  test('test_thread_truncate', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_thread_truncate.py'], env: test_env, timeout: 120)
   test('test_tor_docs', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_tor_docs.py'], env: test_env, timeout: 120)
   test('test_clipboard_api', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_clipboard_api.py'], env: test_env, timeout: 120)
   # Startup feed-freshness (spec Phase B): bounded freshness REQ window,
