@@ -42,5 +42,8 @@ def test_npub_ellipsizes_with_cap():
 
 def test_website_and_lud16_ellipsize():
     src = SRC.read_text()
-    assert "btn_website.child.set_ellipsize(Pango.EllipsizeMode.END)" in src
+    # Button has no Python `.child` attribute — must use get_child().
+    assert "btn_website.get_child()" in src
+    assert "btn_website.child." not in src
+    assert "site_lbl.set_ellipsize(Pango.EllipsizeMode.END)" in src
     assert "lbl_lud16.set_ellipsize(Pango.EllipsizeMode.END)" in src
