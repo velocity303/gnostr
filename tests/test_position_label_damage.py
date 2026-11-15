@@ -24,6 +24,7 @@ def test_label_text_only_written_on_change():
 
 
 def test_scale_updates_stay_quiet():
-    # The seek handler must not fire a FLUSH-seek on programmatic updates.
+    # The timer's programmatic set_value must not re-enter the seek handler.
     src = SRC.read_text()
-    assert "_set_scale_quietly" in src
+    assert "_seek_on_drag" in src
+    assert "position_scale._quiet = True" in src

@@ -15,6 +15,7 @@ install_data(
     'proxy_settings.py',
     'proxy_opener.py',
     'video_probe.py',
+    'debug_resize.py',
     'key_manager.py',
     'nip49.py',
     'nostr_utils.py',

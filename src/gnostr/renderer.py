@@ -266,10 +266,17 @@ class ContentRenderer:
             position_scale.set_hexpand(True)
             position_scale.set_draw_value(False)
             position_scale.set_sensitive(False)
-            position_scale.connect(
-                "value-changed",
-                lambda s: VideoPlayer.seek_to(video_area, s.get_value()),
-            )
+
+            def _seek_on_drag(s):
+                # VID-DECODE-UX: the 500 ms position timer also drives
+                # set_value(); without this guard every tick re-entered
+                # seek_to() -> seek_simple(FLUSH) at 2 Hz — the audible
+                # "finger-tap" stutter. Only user drags may seek.
+                if getattr(s, "_quiet", False):
+                    return
+                VideoPlayer.seek_to(video_area, s.get_value())
+
+            position_scale.connect("value-changed", _seek_on_drag)
             position_label = Gtk.Label(label="0:00 / 0:00")
             # VID-DECODE-UX: tabular digits keep the label pixel-width constant.
             # With a proportional font every tick changed the label width →
@@ -2150,7 +2157,13 @@ class VideoPlayer:
                 pos_ns = pos_result[1]
                 if dur_ns > 0:
                     pct = pos_ns * 100.0 / dur_ns
-                    position_scale.set_value(pct)
+                    # Quiet update: suppress the value-changed seek handler
+                    # (see _seek_on_drag) and skip no-op writes so the tick
+                    # stays damage-free.
+                    if abs(position_scale.get_value() - pct) >= 0.01:
+                        position_scale._quiet = True
+                        position_scale.set_value(pct)
+                        position_scale._quiet = False
                     position_scale.set_sensitive(True)
                     # Update label
                     pos_sec = pos_ns // 1000000000
