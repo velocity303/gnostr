@@ -153,8 +153,9 @@ class ProfileView(Adw.Bin):
             website = prof["website"]
             btn_website = Gtk.Button(label=website, css_classes=["flat", "accent"])
             btn_website.set_halign(Gtk.Align.CENTER)
-            btn_website.child.set_ellipsize(Pango.EllipsizeMode.END)
-            btn_website.child.set_max_width_chars(24)
+            site_lbl = btn_website.get_child()
+            site_lbl.set_ellipsize(Pango.EllipsizeMode.END)
+            site_lbl.set_max_width_chars(24)
             btn_website.connect("clicked", lambda b: self._open_url(website))
             header.append(btn_website)
 
