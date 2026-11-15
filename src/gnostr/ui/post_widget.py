@@ -6,6 +6,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw, GLib, Pango, Gdk
 from ..renderer import ContentRenderer, ImageLoader
 from ..util.scroll_gate import ScrollGate
+from ..util import collapse as collapse_util
 
 
 class PostWidget(Adw.Bin):
@@ -20,12 +21,25 @@ class PostWidget(Adw.Bin):
         created_at=None,
         root_id=None,
         root_pk=None,
+        collapse_cap=0,
     ):
         super().__init__(css_classes=["card"])
         self.main_window = main_window
         self.pubkey = pubkey
         self.event_id = event_id
-        self.content = content
+        # FEED-TRUNC: feed cards pass collapse_cap>0 and render a token-safe
+        # cut of the post behind a 'Show more' row. The FULL content is kept
+        # on the widget: copy and open-thread must never see the truncated
+        # string (a truncated open-thread would persist the cut as the
+        # thread hero).
+        self._full_content = content
+        self._collapsed = False
+        display_content = content
+        cap = collapse_util.normalize_cap(collapse_cap) if collapse_cap else 0
+        if cap and len(content) > cap:
+            display_content = collapse_util.safe_truncate(content, cap)
+            self._collapsed = True
+        self.content = display_content
         self._root_id = root_id or event_id  # thread root (self if root post)
         self._root_pk = root_pk or pubkey  # thread root author
 
@@ -101,7 +115,9 @@ class PostWidget(Adw.Bin):
 
         # Content
         try:
-            rendered_content = ContentRenderer.render(content, self.main_window, self)
+            rendered_content = ContentRenderer.render(
+                display_content, self.main_window, self
+            )
             self.main_box.append(rendered_content)
         except Exception:
             self.main_box.append(Gtk.Label(label="[Content Error]"))
@@ -192,6 +208,21 @@ class PostWidget(Adw.Bin):
             pass
 
         self.main_box.append(footer)
+
+        # FEED-TRUNC: 'Show more' row for collapsed cards, below the footer so
+        # the action buttons stay visible in the collapsed state. Flat style +
+        # start alignment mirror thread_view._hero_toggle; the 44px min height
+        # is the touch-target floor (Librem 5). set_content keeps widget
+        # identity, so expanding never re-runs the header/footer or the
+        # open-thread gesture wiring.
+        self._collapse_toggle = None
+        if self._collapsed:
+            btn = Gtk.Button(label="Show more", css_classes=["flat"])
+            btn.set_halign(Gtk.Align.START)
+            btn.set_size_request(-1, 44)
+            btn.connect("clicked", self._on_collapse_toggle)
+            self._collapse_toggle = btn
+            self.main_box.append(btn)
 
         # Wire the social actions (only when logged in). The hero card in a
         # thread gets its like button wired + state applied too — the thread
@@ -325,10 +356,19 @@ class PostWidget(Adw.Bin):
                     self.btn_reply,
                     self.btn_zap,
                     getattr(self, "btn_zap_total", None),
+                    # FEED-TRUNC: the Show-more row expands in place; it must
+                    # never open the thread (same skip rule as the footer
+                    # buttons — do NOT add a CLAIM gesture here, it would
+                    # kill the button's own clicked signal).
+                    getattr(self, "_collapse_toggle", None),
                 ):
                     return
                 w = w.get_parent()
-        self.main_window.show_thread(event_id, pubkey, content, tags)
+        # Open with the FULL content, never the collapsed display string —
+        # a truncated hero would persist the cut into the thread view.
+        self.main_window.show_thread(
+            event_id, pubkey, self._full_content, tags
+        )
 
     @staticmethod
     def _resolve_icon_name(name, fallbacks=()):
@@ -481,9 +521,27 @@ class PostWidget(Adw.Bin):
         clipboard = display.get_clipboard() if display else None
         if clipboard is None:
             return
-        provider = Gdk.ContentProvider.new_for_value(self.content)
+        # Copy the FULL post even while the card is collapsed (FEED-TRUNC).
+        provider = Gdk.ContentProvider.new_for_value(self._full_content)
         clipboard.set_content(provider)
         self.main_window.add_toast(Adw.Toast(title="Copied post"))
+
+    def _on_collapse_toggle(self, _btn):
+        """FEED-TRUNC: expand a collapsed feed card in place. Expanding swaps
+        in the full content via set_content (widget identity kept — the same
+        mechanism thread_view's hero toggle uses) and drops the row; the
+        collapsed state is one-way per widget lifetime, matching the feed's
+        never-re-render contract (widgets are reused by event id)."""
+        if not self._collapsed:
+            return
+        self._collapsed = False
+        self.set_content(self._full_content)
+        btn = getattr(self, "_collapse_toggle", None)
+        if btn is not None:
+            self._collapse_toggle = None
+            parent = btn.get_parent()
+            if parent is not None:
+                parent.remove(btn)
 
     def set_content(self, content):
         """Swap just the rendered content box (child 1, between header and

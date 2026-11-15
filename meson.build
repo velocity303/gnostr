@@ -57,6 +57,7 @@ if pytest_prog.found()
   test('test_settings_no_sync_secrets', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_settings_no_sync_secrets.py'], env: test_env, timeout: 120)
   test('test_zap_flood_pipeline', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_zap_flood_pipeline.py'], env: test_env, timeout: 120)
   test('test_markup', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_markup.py'], env: test_env, timeout: 120)
+  test('test_feed_collapse', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_feed_collapse.py'], env: test_env, timeout: 120)
   test('test_uploader', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_uploader.py'], env: test_env, timeout: 120)
   # VID-1: mobile video buffering — prefill props, threshold-gated play,
   # BUFFERING UX transitions + mid-playback pause-and-resume (mocked bus).
@@ -73,9 +74,8 @@ if pytest_prog.found()
   # parking, reorder persistence, import merge, activity-log role tags).
   test('test_relay_entries', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_relay_entries.py'], env: test_env, timeout: 120)
   test('test_relay_roles_client', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_relay_roles_client.py'], env: test_env, timeout: 120)
-  # THREAD-TRUNC: token-safe hero truncation (util.text_truncate) — pure
-  # function tests + source guard that thread_view slices no raw [:500].
-  test('test_thread_truncate', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_thread_truncate.py'], env: test_env, timeout: 120)
+  # THREAD-TRUNC regression lives in test_feed_collapse (util.collapse is
+  # the single token-safe truncation helper for hero + feed).
   test('test_tor_docs', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_tor_docs.py'], env: test_env, timeout: 120)
   test('test_clipboard_api', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_clipboard_api.py'], env: test_env, timeout: 120)
   # Startup feed-freshness (spec Phase B): bounded freshness REQ window,

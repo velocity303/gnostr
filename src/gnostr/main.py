@@ -17,6 +17,7 @@ from .renderer import ContentRenderer, ImageLoader
 from .ui.feed_view import FeedView
 from .ui.post_widget import PostWidget
 from .ui.sidebar import Sidebar
+from .util import collapse as collapse_util
 
 # Ensure package imports work when run as __main__
 if __name__ == "__main__":
@@ -685,7 +686,10 @@ class MainWindow(Adw.ApplicationWindow):
                 if getattr(child, "event_id", None) == eid:
                     return
                 child = child.get_next_sibling()
-            w = PostWidget(self, pubkey, content, eid, tags)
+            w = PostWidget(
+                self, pubkey, content, eid, tags,
+                collapse_cap=collapse_util.collapse_chars(),
+            )
             # Slot into the correct time position (newest-at-top), not a blind
             # prepend — backfilled/older posts keep the feed in time order.
             PostWidget.insert_time_sorted(self.feed_view.posts_box, w)
@@ -981,6 +985,7 @@ class MainWindow(Adw.ApplicationWindow):
             ev["id"],
             ev.get("tags", []),
             created_at=ev.get("created_at"),
+            collapse_cap=collapse_util.collapse_chars(),
         )
 
 

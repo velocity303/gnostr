@@ -9,6 +9,8 @@ from gi.repository import Adw, Gtk, Pango
 import gnostr.nostr_utils as nostr_utils
 from gnostr.key_manager import KeyManager
 
+from .util import collapse as collapse_util
+
 
 class RelayPreferencesWindow(Adw.PreferencesWindow):
     """Settings (spec relays-and-settings-v1 §B): four pages
@@ -58,6 +60,7 @@ class RelayPreferencesWindow(Adw.PreferencesWindow):
         self._build_account_group()
         self._build_relay_page()
         self._build_upload_group(self.media_page)
+        self._build_feed_display_group(self.media_page)
         self._build_wallet_group(self.wallet_page)
         self._build_proxy_group(self.network_page)
         self._build_tor_group(self.network_page)
@@ -402,6 +405,42 @@ class RelayPreferencesWindow(Adw.PreferencesWindow):
         save = Adw.ActionRow(title="Save upload settings")
         btn = Gtk.Button(label="Save", css_classes=["suggested-action"])
         btn.connect("clicked", self.on_save_upload_settings)
+        save.add_suffix(btn)
+        g.add(save)
+
+    # -- Feed display (FEED-TRUNC) ---------------------------------------------
+    # One row: how many characters a feed card shows before collapsing behind
+    # 'Show more'. 0 = never collapse; the shared helper clamps other values
+    # into the schema range (200-5000). Thread view keeps its own fixed hero
+    # cap and is unaffected.
+
+    def _build_feed_display_group(self, page):
+        g = Adw.PreferencesGroup(
+            title="Feed display",
+            description="Long posts in the feed collapse behind 'Show more'.",
+        )
+        page.add(g)
+
+        row = Adw.SpinRow.new_with_range(0, 5000, 100)
+        row.set_title("Collapse posts after (characters)")
+        row.set_value(collapse_util.collapse_chars())
+        g.add(row)
+
+        save = Adw.ActionRow(title="Save this setting", activatable_widget=None)
+        btn = Gtk.Button(label="Save")
+        btn.set_valign(Gtk.Align.CENTER)
+
+        def on_save(_b):
+            ok = collapse_util.set_collapse_chars(int(row.get_value()))
+            self.main_window.add_toast(
+                Adw.Toast(
+                    title="Feed collapse saved"
+                    if ok
+                    else "Could not save (settings unavailable)"
+                )
+            )
+
+        btn.connect("clicked", on_save)
         save.add_suffix(btn)
         g.add(save)
 

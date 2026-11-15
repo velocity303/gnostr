@@ -5,7 +5,12 @@ gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw
 from gnostr.ui.post_widget import PostWidget
 
-from ..util.text_truncate import SAFE_TRUNCATE_LIMIT, safe_truncate
+from ..util import collapse as collapse_util
+
+# THREAD-TRUNC: the hero collapses at this many characters so replies stay
+# reachable. Deterministic on purpose (thread behavior must not depend on the
+# feed setting); the cut itself is the shared token-safe helper.
+_HERO_CAP = collapse_util.DEFAULT_COLLAPSE_CHARS
 
 
 class ThreadView(Adw.Bin):
@@ -79,10 +84,7 @@ class ThreadView(Adw.Bin):
         self._hero_truncated = False
         self._hero_toggle = None
 
-        display_content = content
-        if len(content) > SAFE_TRUNCATE_LIMIT:
-            display_content = safe_truncate(content, SAFE_TRUNCATE_LIMIT) + "…"
-            self._hero_truncated = True
+        display_content = self._hero_display(content)
 
         hero = PostWidget(
             self.main_window, pubkey, display_content, event_id, tags, is_hero=True
@@ -242,12 +244,20 @@ class ThreadView(Adw.Bin):
         # PostWidget every toggle, racing image/video loads).
         self.hero_widget.set_content(content)
 
+    def _hero_display(self, content):
+        """THREAD-TRUNC: token-safe hero cut (shared FEED-TRUNC helper — a cut
+        must never split a URL/mention/domain). Sets the truncated flag as a
+        side effect so the toggle row always matches what is rendered."""
+        display = collapse_util.safe_truncate(content, _HERO_CAP)
+        self._hero_truncated = display != content
+        return display
+
     def toggle_hero(self):
         self._hero_truncated = not self._hero_truncated
         if self._hero_truncated:
             self._rebuild_hero(
                 self._hero_pubkey,
-                safe_truncate(self._hero_content, SAFE_TRUNCATE_LIMIT) + "…",
+                self._hero_display(self._hero_content),
                 self._hero_tags,
             )
             self._hero_toggle.set_label("Show more")
@@ -263,7 +273,7 @@ class ThreadView(Adw.Bin):
         self._hero_tags = ev.get("tags", [])
         display = ev["content"]
         if self._hero_truncated:
-            display = safe_truncate(ev["content"], SAFE_TRUNCATE_LIMIT) + "…"
+            display = self._hero_display(ev["content"])
         self._rebuild_hero(ev["pubkey"], display, self._hero_tags)
 
     def reload_replies(self):

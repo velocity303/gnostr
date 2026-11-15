@@ -45,6 +45,16 @@
 			<summary>Resolve hostnames through the proxy (SOCKS5h)</summary>
 			<description>Must stay true whenever .onion endpoints are used: the hostname is sent to the proxy verbatim and never touches a local DNS resolver.</description>
 		</key>
+		<!-- Feed collapse (FEED-TRUNC): feed cards cut long posts at this
+		     character boundary (word/URL/mention-safe cut, shared helper in
+		     util/collapse.py) behind a 'Show more' row. 0 = never collapse.
+		     Values below the minimum are clamped up by the app. -->
+		<key name="feed-collapse-chars" type="i">
+			<default>500</default>
+			<range min="200" max="5000"/>
+			<summary>Characters shown before a feed post collapses</summary>
+			<description>Feed cards collapse posts longer than this behind a 'Show more' button. 0 disables collapsing. The cut never splits a link or mention.</description>
+		</key>
 		<!-- Zaps (spec zaps-payments-v1 §2.5/§3.2): non-secret prefs only.
 		     The NWC connection URI itself is a spending credential and lives
 		     in libsecret via KeyManager, NEVER here. -->
