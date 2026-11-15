@@ -2,7 +2,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, Adw, Gdk, GLib
+from gi.repository import Gtk, Adw, Gdk, GLib, Pango
 from .post_widget import PostWidget
 from ..renderer import ContentRenderer, ImageLoader, VideoPlayer
 from ..nostr_utils import hex_to_npub
@@ -104,14 +104,23 @@ class ProfileView(Adw.Bin):
                     picture_url, lambda t: self.avatar.set_custom_image(t)
                 )
 
-        # Username (big bold)
+        # Username (big bold). CHAR wrap so a long emoji/ZWJ run — which
+        # Pango measures as one unbreakable "word" — wraps instead of
+        # forcing the whole page wider than the window.
         lbl_name = Gtk.Label(label=name, xalign=0.5, css_classes=["heading", "large"])
+        lbl_name.set_wrap(True)
+        lbl_name.set_wrap_mode(Pango.WrapMode.CHAR)
+        lbl_name.set_max_width_chars(16)
         header.append(lbl_name)
 
         # Npub with copy button
         npub = hex_to_npub(pubkey) or pubkey
         npub_box = Gtk.Box(spacing=8, halign=Gtk.Align.CENTER)
         lbl_npub = Gtk.Label(label=npub, xalign=0, css_classes=["caption", "dim-label"])
+        # 63-char unbroken base32: cap natural width and ellipsize rather
+        # than widen the header (hexpand can't shrink a center-aligned box).
+        lbl_npub.set_ellipsize(Pango.EllipsizeMode.END)
+        lbl_npub.set_max_width_chars(20)
         npub_box.append(lbl_npub)
 
         btn_copy = Gtk.Button(icon_name="edit-copy-symbolic", css_classes=["flat"])
@@ -128,11 +137,14 @@ class ProfileView(Adw.Bin):
             header.append(self.nip05_label)
             self._verify_nip05_async(prof["nip05"])
 
-        # Bio / about (NIP-01 `about`)
+        # Bio / about (NIP-01 `about`). CHAR wrap: emoji runs have no word
+        # boundaries and would otherwise widen the page.
         if prof and prof.get("about"):
             lbl_about = Gtk.Label(
                 label=prof["about"], xalign=0.5, wrap=True, css_classes=["body"]
             )
+            lbl_about.set_wrap_mode(Pango.WrapMode.CHAR)
+            lbl_about.set_max_width_chars(24)
             lbl_about.set_halign(Gtk.Align.CENTER)
             header.append(lbl_about)
 
@@ -141,6 +153,8 @@ class ProfileView(Adw.Bin):
             website = prof["website"]
             btn_website = Gtk.Button(label=website, css_classes=["flat", "accent"])
             btn_website.set_halign(Gtk.Align.CENTER)
+            btn_website.child.set_ellipsize(Pango.EllipsizeMode.END)
+            btn_website.child.set_max_width_chars(24)
             btn_website.connect("clicked", lambda b: self._open_url(website))
             header.append(btn_website)
 
@@ -151,6 +165,8 @@ class ProfileView(Adw.Bin):
             bolt = Gtk.Image(icon_name="emblem-important-symbolic")
             lud16_row.append(bolt)
             lbl_lud16 = Gtk.Label(label=lud16, css_classes=["caption", "dim-label"])
+            lbl_lud16.set_ellipsize(Pango.EllipsizeMode.END)
+            lbl_lud16.set_max_width_chars(24)
             lud16_row.append(lbl_lud16)
             header.append(lud16_row)
 
