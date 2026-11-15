@@ -32,9 +32,14 @@ def _widget_path(widget):
     return "<-".join(names)
 
 
-def install():
-    if os.environ.get("GNOSTR_DEBUG_RESIZE") != "1":
-        return
+def install(window=None):
+    if os.environ.get("GNOSTR_DEBUG_RESIZE") == "1":
+        _install_resize_tracer()
+    if window is not None and os.environ.get("GNOSTR_DEBUG_PAINT") == "1":
+        _install_paint_probe(window)
+
+
+def _install_resize_tracer():
     orig = Gtk.Widget.queue_resize
     last = [0.0]
 
@@ -56,3 +61,25 @@ def install():
         return orig(self)
 
     Gtk.Widget.queue_resize = traced
+
+
+def _install_paint_probe(window):
+    """Log every >60 ms gap between painted frames (frame clock, µs).
+
+    VID-DECODE-UX: quantifies the on-device stutter rhythm without a
+    rebuild-per-guess loop: regular ~500 ms/1 s gaps name a timer;
+    irregular bursts name event-driven content churn."""
+    clock = window.get_frame_clock()
+    if clock is None:
+        return
+    state = {"last": 0}
+
+    def on_tick(_fc, frame_time_us):
+        last = state["last"]
+        state["last"] = frame_time_us
+        if last:
+            gap = (frame_time_us - last) / 1000.0
+            if gap > 60.0:
+                print(f"[PAINT] gap {gap:.0f}ms", flush=True)
+
+    clock.connect("paint-tick", on_tick)
