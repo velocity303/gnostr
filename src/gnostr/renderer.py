@@ -24,6 +24,7 @@ from gi.repository import Gtk, Adw, GLib, Gdk, GdkPixbuf, Pango, Gst, GstApp, Gi
 
 from . import nostr_utils
 from . import proxy_opener
+from . import video_probe
 from .markup import emphasis_to_pango
 
 # Set to True to enable verbose 🎬 debug logging. Now env-driven so the whole
@@ -205,9 +206,7 @@ class ContentRenderer:
             spinner.set_valign(Gtk.Align.CENTER)
             spinner.set_vexpand(True)
             video_area.append(spinner)
-            VideoPlayer.load_and_play(
-                url, video_area, spinner, window_ref, original_url, autoplay=True
-            )
+            _schedule_media_build(url, video_area, spinner, window_ref, original_url)
         else:
             # Real videos: lazy-load. Don't build a playbin3 pipeline (and pull
             # the stream) until the user actually taps play — prerolling every
@@ -267,11 +266,24 @@ class ContentRenderer:
             position_scale.set_hexpand(True)
             position_scale.set_draw_value(False)
             position_scale.set_sensitive(False)
-            position_scale.connect(
-                "value-changed",
-                lambda s: VideoPlayer.seek_to(video_area, s.get_value()),
-            )
+
+            def _seek_on_drag(s):
+                # VID-DECODE-UX: the 500 ms position timer also drives
+                # set_value(); without this guard every tick re-entered
+                # seek_to() -> seek_simple(FLUSH) at 2 Hz — the audible
+                # "finger-tap" stutter. Only user drags may seek.
+                if getattr(s, "_quiet", False):
+                    return
+                VideoPlayer.seek_to(video_area, s.get_value())
+
+            position_scale.connect("value-changed", _seek_on_drag)
             position_label = Gtk.Label(label="0:00 / 0:00")
+            # VID-DECODE-UX: tabular digits keep the label pixel-width constant.
+            # With a proportional font every tick changed the label width →
+            # queue_resize → scrolled-viewport relayout at 2 Hz — the exact
+            # "finger-tap" stutter (A1b Finding 3; scale/label damage was the
+            # last suspect after decode/main-loop/bursts were exonerated).
+            position_label.add_css_class("numeric")
             mute_btn = Gtk.Button(icon_name="audio-volume-high-symbolic")
             mute_btn.set_tooltip_text("Mute/Unmute")
             mute_btn.connect(
@@ -341,9 +353,7 @@ class ContentRenderer:
         spinner.set_valign(Gtk.Align.CENTER)
         spinner.set_vexpand(True)
         video_area.append(spinner)
-        VideoPlayer.load_and_play(
-            url, video_area, spinner, window_ref, original_url, autoplay=True
-        )
+        _schedule_media_build(url, video_area, spinner, window_ref, original_url)
 
     @staticmethod
     def _activation_gated(window_ref):
@@ -367,6 +377,9 @@ class ContentRenderer:
 
     @staticmethod
     def render(content, window_ref, post_widget_ref=None):
+        # VID-PROBE: one-shot startup capability probe (🎬[PROBE] block).
+        # Guarded + deferred inside the module; costs one bool check per render.
+        video_probe.ensure_probe(window_ref)
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
 
         if not content:
@@ -1046,6 +1059,179 @@ def _resume_if_viewport_paused(video):
         video._offscreen_paused = False
 
 
+# --------------------------------------------------------------- VID-FLX1-NV12
+# Video tier machinery. "cpu" is the historical capped chain (decode ->
+# videoconvert -> videoscale -> sink: every frame copied and color-converted
+# in software). "nv12" is the direct chain for FLX1-class devices: the V4L2
+# stateful decoder outputs NV12 in system memory and gtk4paintablesink
+# uploads it to GL as-is (no videoconvert, no videoscale). "dmabuf"
+# (VID-FLX1-DMABUF) is the zero-copy chain: the decoder exports NV12 as DRM
+# PRIME dmabufs (capture-io-mode=dmabuf) and the GL sink imports them via
+# EGLImage — frames never touch system memory. GNOSTR_VIDEO_TIER forces a
+# tier for on-device A/B measurement; otherwise the video_probe gate
+# decides. A runtime caps-negotiation failure floors auto-selection one
+# tier down (dmabuf -> nv12 -> cpu), so a device that cannot sustain a
+# tier at runtime never rebuilds it.
+
+_TIER_ORDER = ("dmabuf", "nv12", "cpu")
+_tier_floor = None  # set by _downgrade_tier after a runtime negotiation failure
+
+
+def _next_tier_down(tier):
+    """dmabuf -> nv12 -> cpu -> None (cpu is terminal — nothing below it)."""
+    try:
+        i = _TIER_ORDER.index(tier)
+    except ValueError:
+        return None
+    return _TIER_ORDER[i + 1] if i + 1 < len(_TIER_ORDER) else None
+
+
+def _downgrade_tier(tier):
+    """Record a runtime negotiation failure at `tier`: future auto-selection
+    never builds above the tier below the one that just failed. Returns the
+    tier to rebuild at, or None when there is nothing below."""
+    global _tier_floor
+    nxt = _next_tier_down(tier)
+    if nxt is not None:
+        idx = _TIER_ORDER.index(nxt)
+        # The floor only ever moves down the order (toward cpu).
+        if _tier_floor is None or _TIER_ORDER.index(_tier_floor) < idx:
+            _tier_floor = nxt
+    return nxt
+
+
+def _is_negotiation_error(err):
+    """True when a bus error is a caps-negotiation failure. Matched on the
+    stable GStreamer error text ("Failed to negotiate caps" from
+    decodebin3/playbin3, "not-negotiated" from sink negotiation) — the
+    domain/code enum members are inconsistently exposed across PyGObject
+    builds, the message strings are not."""
+    try:
+        text = (err.message or "").lower()
+    except Exception:
+        return False
+    return "negotiat" in text
+
+
+def _select_video_tier():
+    """Which video tier this pipeline uses: "dmabuf" (zero-copy), "nv12"
+    (direct, system memory), or "cpu" (capped videoconvert chain).
+    GNOSTR_VIDEO_TIER=cpu|nv12|dmabuf forces a tier for on-device A/B
+    measurement without a rebuild — the PERF line's tier stays measured from
+    negotiated caps, so the log always reflects what ran. The env override
+    always wins (explicit operator choice); auto-selection respects the
+    runtime floor set by _downgrade_tier."""
+    forced = os.environ.get("GNOSTR_VIDEO_TIER", "").strip().lower()
+    if forced in _TIER_ORDER:
+        return forced
+    if video_probe.dmabuf_tier_available():
+        auto = "dmabuf"
+    elif video_probe.nv12_tier_available():
+        auto = "nv12"
+    else:
+        auto = "cpu"
+    if _tier_floor is not None and _TIER_ORDER.index(auto) < _TIER_ORDER.index(
+        _tier_floor
+    ):
+        return _tier_floor
+    return auto
+
+
+def _build_nv12_sink_bin(sink_el, dmabuf=False):
+    """Direct sink bin: capsfilter -> gtk4paintablesink. Exactly the card
+    chain — no videorate, no videoconvert, no videoscale (GTK scales
+    GPU-side at paint). dmabuf=False: system-memory NV12 (nv12 tier).
+    dmabuf=True: video/x-raw(memory:DMABuf),format=NV12 — the decoder must
+    export dmabufs (capture-io-mode=dmabuf) and the sink must import them;
+    a runtime negotiation failure is caught by the fallback chain. Returns
+    None if the bin cannot be built so the caller falls back to the capped
+    cpu chain."""
+    try:
+        sink_bin = Gst.Bin.new()
+        cap = Gst.ElementFactory.make(
+            "capsfilter", "dmabuf_direct" if dmabuf else "nv12_direct"
+        )
+        if cap is None:
+            return None
+        cap.set_property(
+            "caps",
+            Gst.Caps.from_string(
+                "video/x-raw(memory:DMABuf),format=NV12"
+                if dmabuf
+                else "video/x-raw,format=NV12"
+            ),
+        )
+        chain = [cap, sink_el]
+        for el in chain:
+            sink_bin.add(el)
+        for a, b in zip(chain, chain[1:]):
+            a.link(b)
+        ghost = Gst.GhostPad.new("sink", chain[0].get_static_pad("sink"))
+        if ghost is None or not sink_bin.add_pad(ghost):
+            return None
+        return sink_bin
+    except Exception:
+        return None
+
+
+def _apply_decoder_io_mode(pipeline, nick="mmap"):
+    """Wire capture-io-mode=<nick> onto the hardware decoder as playbin3
+    creates it. playbin3 has NO decoder-props property (verified absent on
+    GStreamer 1.26 — the earlier structure-based version silently no-opped,
+    every FLX1 run logged driver-default); its real configuration hook is
+    the element-setup signal, fired for every internal element at creation
+    time while the element is still configurable. The enum value is READ
+    live from the driver's capture-io-mode nick table (mmap for the nv12
+    tier, dmabuf for the zero-copy tier). Returns the enum value wired, or
+    None when the driver's enum has no readable nick — then the driver
+    default stands, never a guessed number."""
+    io_val = video_probe.capture_io_mode_value(video_probe.NV12_TIER_DECODER, nick)
+    if io_val is None:
+        return None
+
+    def on_element_setup(_playbin, element):
+        try:
+            factory = element.get_factory()
+            if factory is None or factory.get_name() != video_probe.NV12_TIER_DECODER:
+                return
+            element.set_property("capture-io-mode", io_val)
+        except Exception:
+            pass  # property rejected — driver default stands for that element
+
+    try:
+        pipeline.connect("element-setup", on_element_setup)
+    except Exception:
+        return None
+    return io_val
+
+
+_MEDIA_BUILD_MIN_GAP_MS = 200.0
+_media_build_state = {"last": -_MEDIA_BUILD_MIN_GAP_MS}
+
+
+def _schedule_media_build(url, container, spinner, window_ref, original_url=None):
+    """VID-DECODE-UX: stagger playbin3 builds. Each build costs ~100-300 ms
+    of main-thread time on the FLX1; a burst of card renders blocked the GLib
+    loop for 881-1625 ms (main-loop lag probe, 2026-11-13 log) — that block
+    IS the perceived stutter, not decode (fps_dropped=0). A spinner is already
+    up, so a <=200 ms stagger is invisible while the burst stall is not."""
+    def _run():
+        if container.get_parent() is None:
+            return False  # card scrolled away / re-rendered while queued
+        _media_build_state["last"] = GLib.get_monotonic_time() / 1000.0
+        VideoPlayer.load_and_play(
+            url, container, spinner, window_ref, original_url, autoplay=True
+        )
+        return False
+
+    now = GLib.get_monotonic_time() / 1000.0
+    wait = _MEDIA_BUILD_MIN_GAP_MS - (now - _media_build_state["last"])
+    if wait <= 0:
+        _run()
+    else:
+        GLib.timeout_add(int(wait), _run)
+
+
 class VideoLoader:
     @staticmethod
     def load_and_play(url, container, spinner, window_ref=None, autoplay=False):
@@ -1144,8 +1330,51 @@ class VideoPlayer:
         )
 
     @staticmethod
+    def _fallback_rebuild(pipeline, media_url):
+        """Runtime tier fallback (VID-FLX1-DMABUF): a direct tier failed caps
+        negotiation at runtime. Floor the tier (future pipelines skip the
+        broken one), tear this pipeline down, and rebuild the same URL one
+        tier down via force_tier — dmabuf -> nv12 -> cpu, cpu is terminal.
+        Returns True when a rebuild was scheduled."""
+        tier = getattr(pipeline, "_video_tier", "cpu")
+        nxt = _downgrade_tier(tier)
+        print(
+            f"🎬[PERF] tier={tier} negotiation failed — "
+            + (f"rebuilding at tier={nxt}" if nxt else "no tier below, giving up")
+        )
+        if nxt is None:
+            return False
+        try:
+            video_probe.stop_sampler(pipeline, media_url)
+        except Exception:
+            pass
+        try:
+            pipeline.set_state(Gst.State.NULL)
+        except Exception:
+            pass
+        args = getattr(pipeline, "_tier_rebuild", None)
+        if args is None:
+            return False
+        url, callback, original_url, autoplay, cache_key = args
+        GLib.idle_add(
+            VideoPlayer._build_and_deliver,
+            url,
+            callback,
+            original_url,
+            autoplay,
+            cache_key,
+            nxt,
+        )
+        return True
+
+    @staticmethod
     def _build_and_deliver(
-        url, callback, original_url=None, autoplay=False, cache_key=None
+        url,
+        callback,
+        original_url=None,
+        autoplay=False,
+        cache_key=None,
+        force_tier=None,
     ):
         video = None
         try:
@@ -1212,7 +1441,29 @@ class VideoPlayer:
             # converter's RGBA output for the same reason: format adaptation
             # must stay deterministic regardless of autoplug's choices.
             video_sink = sink
-            if _MAX_VIDEO_WIDTH and _MAX_VIDEO_HEIGHT:
+            # VID-FLX1-NV12 / VID-FLX1-DMABUF: tier choice happens once per
+            # pipeline. dmabuf = zero-copy direct chain (hardware decoder
+            # exports dmabufs -> memory:DMABuf NV12 capsfilter -> sink);
+            # nv12 = the system-memory direct chain; cpu = the capped chain
+            # below, unchanged, and the fallback whenever a direct bin cannot
+            # be built. force_tier is set by the runtime fallback rebuild
+            # (caps negotiation failed at a higher tier); otherwise auto.
+            tier = force_tier or _select_video_tier()
+            if tier in ("nv12", "dmabuf"):
+                direct_bin = _build_nv12_sink_bin(sink, dmabuf=(tier == "dmabuf"))
+                if direct_bin is not None:
+                    video_sink = direct_bin
+                    io_nick = "dmabuf" if tier == "dmabuf" else "mmap"
+                    io_val = _apply_decoder_io_mode(pipeline, io_nick)
+                    print(
+                        f"🎬[PERF] tier={tier} selected "
+                        f"decoder={video_probe.NV12_TIER_DECODER} "
+                        f"capture-io-mode={io_nick}="
+                        + (str(io_val) if io_val is not None else "driver-default")
+                    )
+                else:
+                    tier = "cpu"
+            if tier == "cpu" and _MAX_VIDEO_WIDTH and _MAX_VIDEO_HEIGHT:
                 try:
                     capfilter = Gst.ElementFactory.make("capsfilter", "mobile_res_cap")
                     fps_clause = (
@@ -1272,17 +1523,41 @@ class VideoPlayer:
                 except Exception:
                     video_sink = sink  # keep video working
 
+            # VID-FLX1-DMABUF: remember the tier this pipeline was built at
+            # (the PERF tier label stays measured from caps; this is only the
+            # fallback-chain's starting point) plus the build args so the bus
+            # handler can rebuild one tier down on a negotiation failure.
+            pipeline._video_tier = tier
+            pipeline._tier_rebuild = (url, callback, original_url, autoplay, cache_key)
             pipeline.set_property("video-sink", video_sink)
             _vlog("🎬 [Video] gtk4paintablesink created and set as video-sink OK")
 
             # Create a Gtk.Picture and bind the sink's paintable directly — no
-            # manual frame loop, no per-frame texture churn.
-            picture = Gtk.Picture()
-            picture.set_can_shrink(True)
+            # manual frame loop, no per-frame texture churn. On the direct
+            # tiers (nv12, dmabuf) prefer Gtk.GraphicsOffload (GTK 4.20+): it
+            # hosts the paintable on a GL-native surface so NV12 frames never
+            # round-trip through the widget tree's CPU path. Falls back to
+            # Gtk.Picture everywhere else.
+            picture = None
+            if tier in ("nv12", "dmabuf"):
+                offload_cls = getattr(Gtk, "GraphicsOffload", None)
+                if offload_cls is not None:
+                    try:
+                        picture = offload_cls()
+                        picture.set_can_shrink(True)
+                    except Exception:
+                        picture = None
+            if picture is None:
+                picture = Gtk.Picture()
+                picture.set_can_shrink(True)
+            picture._gnostr_video_widget = True
             paintable = sink.get_property("paintable")
             if paintable:
                 picture.set_paintable(paintable)
-            _vlog("🎬 [Video] Gtk.Picture bound to gtk4paintablesink paintable")
+            _vlog(
+                f"🎬 [Video] {type(picture).__name__} bound to "
+                "gtk4paintablesink paintable"
+            )
 
             # Bus for error/EOS handling
             bus = pipeline.get_bus()
@@ -1295,6 +1570,14 @@ class VideoPlayer:
                     try:
                         err, debug = msg.parse_error()
                         _vlog(f"🎬 [Media Codec Error] {media_url}\n  -> {err.message}")
+                        # VID-FLX1-DMABUF: a caps-negotiation failure on a
+                        # direct tier means this runtime cannot feed that
+                        # memory/format combo to the sink — rebuild one tier
+                        # down (dmabuf -> nv12 -> cpu).
+                        if _is_negotiation_error(err) and getattr(
+                            p, "_video_tier", "cpu"
+                        ) in ("dmabuf", "nv12"):
+                            VideoPlayer._fallback_rebuild(p, media_url)
                     except Exception:
                         _vlog(f"🎬 [Media] Bus message: {t}")
                 elif t == Gst.MessageType.EOS:
@@ -1348,6 +1631,19 @@ class VideoPlayer:
                             f"🎬 [Media] State changed: {old} → {new} "
                             f"{_elapsed} {media_url[:40]}"
                         )
+                        # VID-PROBE: CPU measurement window = the pipeline's
+                        # own PLAYING span. start/stop are idempotent; stop
+                        # logs the 🎬[PERF] tier/cpu line. Filtered to the
+                        # pipeline itself so child-element state chatter
+                        # can't open or close windows spuriously.
+                        try:
+                            if msg.src == p:
+                                if new == Gst.State.PLAYING:
+                                    video_probe.start_sampler(p, media_url)
+                                elif old == Gst.State.PLAYING:
+                                    video_probe.stop_sampler(p, media_url)
+                        except Exception:
+                            pass
                         # Task 10: report decoder + negotiated video caps once per
                         # pipeline. Deferred ~600ms after the first PAUSED/PLAYING
                         # so caps have time to negotiate — with lazy-load autoplay
@@ -1436,6 +1732,10 @@ class VideoPlayer:
                     try:
                         p = getattr(old_video, "_pipeline", None)
                         if p:
+                            # VID-PROBE: evicting mid-playback is a playback
+                            # stop — close the CPU window before teardown so
+                            # its 🎬[PERF] line still gets logged.
+                            video_probe.stop_sampler(p, old_url)
                             # Task 10: per-pipeline QOS summary before teardown.
                             # qos_events = dropped-frame reports; qos_dropped = sum of
                             # buffers dropped-late; qos_prop_min = worst 1.0→0 quality
@@ -1575,10 +1875,44 @@ class VideoPlayer:
             f"video_caps={caps_str}"
         )
 
+        if caps_str in ("none", "query-error") and getattr(
+            pipeline, "_video_tier", "cpu"
+        ) in ("dmabuf", "nv12"):
+            # Silent-stall safety net: a direct tier can fail caps
+            # negotiation WITHOUT a bus error (FLX1 dmabuf tier, 2026-11-13:
+            # pad stays caps=None while PLAYING, black rectangle, no error
+            # message — the bus-driven fallback never fires). Re-check after
+            # a preroll grace window; rebuild one tier down if still starved.
+            def _recheck(p=pipeline, u=url):
+                try:
+                    if p.get_state(0)[1] != Gst.State.PLAYING:
+                        return False  # paused (viewport gate) — not a stall
+                    sink = p.get_property("video-sink")
+                    real = (
+                        sink.get_by_name("sink")
+                        if sink is not None and hasattr(sink, "get_by_name")
+                        else sink
+                    )
+                    pad = real.get_static_pad("sink") if real else None
+                    if pad is not None and pad.get_current_caps() is None:
+                        print(
+                            "🎬[PERF] silent stall — PLAYING with no video "
+                            "caps; treating as negotiation failure"
+                        )
+                        VideoPlayer._fallback_rebuild(p, u)
+                except Exception:
+                    pass
+                return False
+
+            GLib.timeout_add(3000, _recheck)
+
     @staticmethod
     def _find_video(video_container):
-        """Find the video widget (Gtk.Picture) in the container."""
+        """Find the video widget (Gtk.Picture, or the nv12 tier's
+        Gtk.GraphicsOffload — tagged at build time) in the container."""
         for child in video_container:
+            if getattr(child, "_gnostr_video_widget", False):
+                return child
             if isinstance(child, Gtk.Picture):
                 return child
         return None
@@ -1823,7 +2157,13 @@ class VideoPlayer:
                 pos_ns = pos_result[1]
                 if dur_ns > 0:
                     pct = pos_ns * 100.0 / dur_ns
-                    position_scale.set_value(pct)
+                    # Quiet update: suppress the value-changed seek handler
+                    # (see _seek_on_drag) and skip no-op writes so the tick
+                    # stays damage-free.
+                    if abs(position_scale.get_value() - pct) >= 0.01:
+                        position_scale._quiet = True
+                        position_scale.set_value(pct)
+                        position_scale._quiet = False
                     position_scale.set_sensitive(True)
                     # Update label
                     pos_sec = pos_ns // 1000000000
@@ -1831,9 +2171,12 @@ class VideoPlayer:
                     pos_min, pos_s = divmod(pos_sec, 60)
                     dur_min, dur_s = divmod(dur_sec, 60)
                     if position_label:
-                        position_label.set_text(
-                            f"{pos_min}:{pos_s:02d} / {dur_min}:{dur_s:02d}"
-                        )
+                        txt = f"{pos_min}:{pos_s:02d} / {dur_min}:{dur_s:02d}"
+                        # gtk_label_set_text queues resize+redraw even for
+                        # identical text — only write on actual change so the
+                        # 500 ms tick is damage-free within the same second.
+                        if position_label.get_text() != txt:
+                            position_label.set_text(txt)
             return True
 
         GLib.timeout_add(500, update)
