@@ -14,6 +14,7 @@ from .database import Database
 from .dialogs import LoginDialog, RelayPreferencesWindow
 from .key_manager import KeyManager, load_key_async
 from .renderer import ContentRenderer, ImageLoader
+from . import media_resolver
 from .ui.feed_view import FeedView
 from .ui.post_widget import PostWidget
 from .ui.sidebar import Sidebar
@@ -49,6 +50,12 @@ class MainWindow(Adw.ApplicationWindow):
         self.client.connect("publish-result", self.on_publish_result)
         self.client.connect("relay-log-updated", self.on_relay_log_updated)
         self.client.connect("dm-unreachable", self.on_dm_unreachable)
+        # NIPW-P1 (NIP-B7/BUD-03): read-side Blossom recovery for dead
+        # content-addressed media. The resolver is fed by the client's
+        # kind-10063 relay traffic and consulted from the media loaders'
+        # worker threads — the UI thread is never blocked by it.
+        media_resolver.configure(self.client.fetch_blossom_servers)
+        self.client.connect("blossom-servers-updated", media_resolver.on_blossom_event)
         # tor-v1-status (spec §A.2): sidebar icon + one-time toasts.
         self.client.connect("tor-state-changed", self.on_tor_state_changed)
         # A.2.1 item 2: any proxy-* GSettings change re-probes immediately.

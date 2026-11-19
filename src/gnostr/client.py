@@ -457,6 +457,10 @@ class NostrClient(GObject.Object):
         "external-identities-updated": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         # badges-updated: (pubkey:str) — NIP-58 kind-10008 profile badges arrived
         "badges-updated": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
+        # blossom-servers-updated: (event_json:str) — NIP-B7 kind-10063
+        # (author's Blossom server list) arrived; media_resolver caches it
+        # for read-side recovery of dead content-addressed media (NIPW-P1).
+        "blossom-servers-updated": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         # dm-conversations-updated: (peer_pk:str) — the DM gateway persisted a
         # rumor (inbound or our outbound self-copy); inbox/thread views refresh.
         "dm-conversations-updated": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
@@ -1743,6 +1747,11 @@ class NostrClient(GObject.Object):
             # NIP-58 badge definition — store for later image resolution
             self.db.save_badge_definition(ev)
 
+        elif kind == 10063:
+            # NIP-B7: author's Blossom server list (NIPW-P1 read-side media
+            # recovery). Forwarded whole; media_resolver parses + caches it.
+            GLib.idle_add(self.emit, "blossom-servers-updated", json.dumps(ev))
+
         elif kind == 3:
             # PULL reconciliation for ANY author: the newest kind-3 is that
             # author's authoritative contact list — save_contacts replaces
@@ -2387,6 +2396,20 @@ class NostrClient(GObject.Object):
             r.request_once(
                 f"badges_{pubkey[:8]}",
                 {"kinds": [10008], "authors": [pubkey], "limit": 1},
+            )
+
+    def fetch_blossom_servers(self, pubkey):
+        """NIP-B7: request an author's kind-10063 Blossom server list
+        (NIPW-P1 read-side media recovery). The answer arrives via the
+        'blossom-servers-updated' signal; media_resolver TTL-caches it per
+        author (1 h) and dedups in-flight requests, so no cache is needed
+        here."""
+        if not pubkey:
+            return
+        for r in self.active_relays.values():
+            r.request_once(
+                f"blossom_{pubkey[:8]}",
+                {"kinds": [10063], "authors": [pubkey], "limit": 1},
             )
 
     def fetch_thread(self, root_id):

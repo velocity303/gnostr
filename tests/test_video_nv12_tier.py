@@ -674,8 +674,9 @@ def test_fallback_rebuild_dmabuf_to_nv12(monkeypatch):
     assert p.states  # old pipeline torn down
     fn, a = scheduled[0]
     assert fn is renderer.VideoPlayer._build_and_deliver
-    # Rebuild carries the original args + force_tier=nv12 (one step down).
-    assert a == ("url", "cb", "orig", True, "key", "nv12")
+    # Rebuild carries the original args + force_tier=nv12 (one step down)
+    # + the NIPW-P1 tail (author_pk, blossom_tried) defaulted for short args.
+    assert a == ("url", "cb", "orig", True, "key", "nv12", None, False)
     assert renderer._tier_floor == "nv12"
 
 
@@ -683,7 +684,7 @@ def test_fallback_rebuild_nv12_to_cpu(monkeypatch):
     scheduled = _capture_idle(monkeypatch)
     p = _RebuildPipeline("nv12", ("u", "c", None, False, None))
     assert renderer.VideoPlayer._fallback_rebuild(p, "u") is True
-    assert scheduled[0][1][-1] == "cpu"
+    assert scheduled[0][1][5] == "cpu"
     assert renderer._tier_floor == "cpu"
 
 
@@ -722,12 +723,11 @@ def test_build_path_wires_tiers():
     # direct tiers prefer GraphicsOffload, fall back to Gtk.Picture.
     assert "GraphicsOffload" in src
     assert 'if tier in ("nv12", "dmabuf")' in src
-    # fallback-chain inputs recorded on the pipeline for the bus handler.
+    # fallback-chain inputs recorded on the pipeline for the bus handler
+    # (NIPW-P1 extended the tuple with author_pk + blossom_tried).
     assert "pipeline._video_tier = tier" in src
-    assert (
-        "pipeline._tier_rebuild = (url, callback, original_url, autoplay, cache_key)"
-        in src
-    )
+    assert "pipeline._tier_rebuild = (" in src
+    assert "url, callback, original_url, autoplay, cache_key, author_pk," in src
     # bus ERROR handler triggers the runtime fallback on negotiation failure.
     assert "_is_negotiation_error(err)" in src
     assert "_fallback_rebuild(p, media_url)" in src
