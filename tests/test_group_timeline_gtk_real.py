@@ -74,6 +74,7 @@ _ui.__path__ = [os.path.join(SRC, "ui")]
 sys.modules["gnostr.ui"] = _ui
 
 import gnostr.groups as groups  # noqa: E402  (real logic layer, GTK-free)
+import gnostr.nostr_utils as nostr_utils  # noqa: E402
 
 
 def _load_groups_page():
@@ -90,11 +91,39 @@ groups_page = _load_groups_page()
 
 # No network in the harness: the resolve worker gets an instant None doc
 # (machine aborts; the timeline path is independent of the preview gate).
-groups.fetch_nip11 = lambda relay_url, opener=None, timeout=10: None
+def _no_nip11(relay_url, opener=None, timeout=10):
+    return None
+
+
+groups.fetch_nip11 = _no_nip11
 
 RELAY = "wss://relay.invalid"
 SELF_PK = "a" * 64
 AUTHOR_PK = "b" * 64
+
+# Real keypairs for the NIPW-P3-FIX-2 checks: the 39000 must really verify
+# against the NIP-11 self pubkey, and the join 9021 must really sign.
+RELAY_PRIV, RELAY_PK = nostr_utils.generate_keypair()
+USER_PRIV, USER_PK = nostr_utils.generate_keypair()
+NIP11_DOC = {"name": "harness relay", "supported_nips": [29], "pubkey": RELAY_PK}
+
+
+def _signed(ev, priv):
+    return nostr_utils.sign_event(dict(ev), priv)
+
+
+def _meta_event():
+    return _signed(
+        {
+            "pubkey": RELAY_PK,
+            "created_at": 1763000000,
+            "kind": groups.KIND_GROUP_METADATA,
+            "tags": [["d", "test-group"], ["name", "Blossom Garden"],
+                     ["about", "growing together"]],
+            "content": "",
+        },
+        RELAY_PRIV,
+    )
 
 
 class FakeClient(GObject.Object):
@@ -113,12 +142,16 @@ class FakeClient(GObject.Object):
     def __init__(self):
         super().__init__()
         self.my_pubkey = SELF_PK
+        self.dispatched = []
 
     def subscribe_on_relay(self, *args, **kwargs):
         return False
 
-    def dispatch_signed_to_relay(self, *args, **kwargs):
-        return False
+    def dispatch_signed_to_relay(self, event, url, label=""):
+        # Signer fake: sign the template the way the real client's internal
+        # _sign does, so tests can assert on the SIGNED event's id.
+        self.dispatched.append(nostr_utils.sign_event(dict(event), USER_PRIV))
+        return True
 
 
 def _pump(seconds=0.3):
@@ -199,12 +232,75 @@ def check_long_subtitle_row_survives():
     print("PASS: long post body renders capped at 500 chars")
 
 
+def check_join_click_publishes_signed_join():
+    """NIPW-P3-FIX-2 Bug 1 (FLX1: KeyError 'id' on every Join click). Real
+    button click on a real preview-gated page: the machine gate must receive
+    the id the SIGNED 9021 carries (OK-ack matches on it) and dispatch must
+    fire exactly once."""
+    groups.fetch_nip11 = lambda relay_url, opener=None, timeout=10: dict(NIP11_DOC)
+    try:
+        client, page = _build_page()
+        assert page.machine.state == "resolving", page.machine.state
+        client.my_pubkey = USER_PK
+        client.emit(
+            "group-event-received", RELAY, json.dumps(_meta_event())
+        )
+        assert page.machine.state == "preview", page.machine.state
+        assert page.join_btn.get_sensitive(), "join button not enabled in preview"
+        page.join_btn.emit("clicked")
+        assert len(client.dispatched) == 1, "dispatch not called on Join click"
+        signed = client.dispatched[0]
+        assert signed["kind"] == groups.KIND_GROUP_JOIN_REQUEST
+        assert signed["pubkey"] == USER_PK and signed.get("sig")
+        assert page.machine.state == "join_sent"
+        assert page.machine.join_event_id == signed["id"], (
+            "machine gate got %r, signed event carries %r"
+            % (page.machine.join_event_id, signed["id"])
+        )
+        # OK-ack for that exact id must be recognized (status flips)
+        client.emit("publish-result", signed["id"], True, "", RELAY, "Group join")
+        assert page.status_lbl.get_text() == "Join requested…"
+        print("PASS: Join click gates on signed 9021 id + dispatch fires")
+    finally:
+        groups.fetch_nip11 = _no_nip11
+
+
+def check_first_search_preview_race():
+    """NIPW-P3-FIX-2 Bug 2 (FLX1: first search half-rendered). kind-1 +
+    kind-39000 snapshot events land BEFORE the NIP-11 idle hand-back; they
+    must be buffered, not dropped, and the preview must fully populate when
+    the pk resolves — no second search."""
+    groups.fetch_nip11 = lambda relay_url, opener=None, timeout=10: dict(NIP11_DOC)
+    try:
+        client = FakeClient()
+        mw = types.SimpleNamespace(client=client, pub_key=SELF_PK, content_nav=None)
+        page = groups_page.GroupDetailPage(mw, RELAY, "test-group", name="Test Group")
+        # No pump yet: the worker's GLib.idle_add hand-back has not run.
+        client.emit("group-event-received", RELAY, json.dumps(_ev("d1", 1)))
+        client.emit("group-event-received", RELAY, json.dumps(_meta_event()))
+        assert page.machine.state == "resolving"
+        assert page.about_lbl.get_text() == "Loading group info…", (
+            "preview populated before NIP-11 resolved (gate leak)"
+        )
+        _pump(0.4)  # NIP-11 hand-back runs -> buffered events replay
+        assert page.machine.state == "preview"
+        assert page.title_lbl.get_text() == "Blossom Garden"
+        assert page.about_lbl.get_text() == "growing together"
+        assert page.join_btn.get_sensitive()
+        assert len(_timeline_rows(page)) == 1, "replay duplicated timeline rows"
+        print("PASS: first-search events buffered + replayed on NIP-11 resolve")
+    finally:
+        groups.fetch_nip11 = _no_nip11
+
+
 def main():
     Adw.init()
     checks = [
         check_timeline_appends_rows,
         check_dedup_and_bad_events_ignored,
         check_long_subtitle_row_survives,
+        check_join_click_publishes_signed_join,
+        check_first_search_preview_race,
     ]
     failed = 0
     for check in checks:

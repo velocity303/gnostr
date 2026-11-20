@@ -21,7 +21,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, GLib, Gtk, Pango
 
-from .. import groups
+from .. import groups, nostr_utils
 
 AdwClamp = Adw.Clamp
 
@@ -213,6 +213,9 @@ class GroupDetailPage(Gtk.Box):
         self._seen_event_ids = set()
         self._sub_ids = []
         self._handlers = []
+        # metadata/admins/members events that arrived before the NIP-11 self
+        # pubkey resolved (first-search race) — replayed by _on_nip11
+        self._pre_nip11_events = []
 
         bar = Gtk.Box(spacing=12, halign=Gtk.Align.START, margin_top=6,
                       margin_bottom=6, margin_start=6)
@@ -325,6 +328,15 @@ class GroupDetailPage(Gtk.Box):
         state = self.machine.on_nip11(doc)
         if state == "aborted":
             self._show_abort()
+            return False
+        # FLX1 first-search race: snapshot metadata/admins/members events can
+        # land BEFORE this NIP-11 fetch resolves; they failed the self-key gate
+        # and were dropped, so the first search half-rendered (timeline only)
+        # while the cached second search worked. Replay the buffered events so
+        # first search == second search.
+        pending, self._pre_nip11_events = self._pre_nip11_events, []
+        for ev in pending:
+            self._process_group_event(ev)
         return False
 
     def _on_group_event(self, _client, relay_url, event_json):
@@ -336,7 +348,26 @@ class GroupDetailPage(Gtk.Box):
             ev = json.loads(event_json)
         except Exception:
             return
+        self._process_group_event(ev)
+
+    def _process_group_event(self, ev):
         kind = ev.get("kind")
+        if (
+            kind
+            in (
+                groups.KIND_GROUP_METADATA,
+                groups.KIND_GROUP_ADMINS,
+                groups.KIND_GROUP_MEMBERS,
+            )
+            and self._nip11_pk() is None
+        ):
+            # NIP-11 has not resolved yet — the self-key gate can verify
+            # nothing, and dropping here is what made the first search
+            # half-render (FLX1 device test). Buffer (bounded) and let
+            # _on_nip11 replay once the relay self pubkey lands.
+            if len(self._pre_nip11_events) < 64:
+                self._pre_nip11_events.append(ev)
+            return
         if kind == groups.KIND_GROUP_METADATA:
             self_pk = self._nip11_pk()
             meta = groups.parse_group_metadata(ev, self_pk, relay=self.relay)
@@ -402,8 +433,15 @@ class GroupDetailPage(Gtk.Box):
         if not pk:
             return
         ev = groups.build_join_event(pk, self.group_id, invite=self.machine.invite)
+        # build_join_event returns an UNSIGNED template (no id) — signing
+        # happens downstream in dispatch_signed_to_relay. The event id is the
+        # SHA-256 of the canonical serialization [0,pubkey,created_at,kind,
+        # tags,content] — sig-independent — so the template's computed id is
+        # byte-identical to the signed event's id the OK-ack will match on.
+        # (FLX1 device test: reading ev["id"] here raised KeyError.)
+        join_id = nostr_utils.compute_event_id(ev)
         # machine gate: only leaves 'preview' — unverified/private never gets here
-        if self.machine.on_join(ev["id"]) == "preview":
+        if self.machine.on_join(join_id) == "preview":
             return
         if not self.client.dispatch_signed_to_relay(
             ev, self.relay, label="Group join"
@@ -416,7 +454,9 @@ class GroupDetailPage(Gtk.Box):
         if not pk:
             return
         ev = groups.build_leave_event(pk, self.group_id)
-        self._leave_event_id = ev["id"]
+        # unsigned template again — record the id the signed event will carry
+        # (publish-result matches on it); see _on_join_clicked.
+        self._leave_event_id = nostr_utils.compute_event_id(ev)
         self.client.dispatch_signed_to_relay(ev, self.relay, label="Group leave")
 
     def _on_publish_result(self, _client, event_id, accepted, message, relay_url, label):
