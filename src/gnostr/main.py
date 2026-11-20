@@ -16,7 +16,7 @@ from .key_manager import KeyManager, load_key_async
 from .renderer import ContentRenderer, ImageLoader
 from . import media_resolver
 from .ui.feed_view import FeedView
-from .ui.post_widget import PostWidget
+from .ui.post_widget import PostWidget, TrustStubWidget
 from .ui.sidebar import Sidebar
 from .util import collapse as collapse_util
 
@@ -64,6 +64,11 @@ class MainWindow(Adw.ApplicationWindow):
         from gnostr import proxy_settings as _ps
 
         self._proxy_settings = _ps.watch_changes(self.client.on_proxy_setting_changed)
+        # trust-shield-v1 §7: trust-shield-* GSettings changes reset client
+        # session state (provider switch purges other providers' ranks).
+        from gnostr import trust_settings as _ts
+
+        self._trust_settings = _ts.watch_changes(self.client.on_trust_setting_changed)
         # Toast dedup flag (A.2.4): one toast per DOWN/DISABLED episode,
         # re-armed only by a transition back to REACHABLE.
         self._tor_toast_shown = False
@@ -693,10 +698,14 @@ class MainWindow(Adw.ApplicationWindow):
                 if getattr(child, "event_id", None) == eid:
                     return
                 child = child.get_next_sibling()
-            w = PostWidget(
-                self, pubkey, content, eid, tags,
-                collapse_cap=collapse_util.collapse_chars(),
-            )
+            # trust-shield-v1 §3.1: live-inserted posts obey the same policy.
+            if self.client.trust_shield_decide(pubkey) == "collapse":
+                w = TrustStubWidget(self, pubkey, content, eid)
+            else:
+                w = PostWidget(
+                    self, pubkey, content, eid, tags,
+                    collapse_cap=collapse_util.collapse_chars(),
+                )
             # Slot into the correct time position (newest-at-top), not a blind
             # prepend — backfilled/older posts keep the feed in time order.
             PostWidget.insert_time_sorted(self.feed_view.posts_box, w)
@@ -842,12 +851,14 @@ class MainWindow(Adw.ApplicationWindow):
                     lbl.set_label("".join(frag for _, frag in new_frags))
 
     def on_metrics_updated(self, client, eid, likes, reposts, replies):
-        # Update labels on PostWidgets by event_id
-        if eid in self.event_widgets:
-            widget = self.event_widgets[eid]
-            widget.lbl_likes.set_label(str(likes))
-            widget.lbl_reposts.set_label(str(reposts))
-            widget.lbl_replies.set_label(str(replies))
+        # Update labels on PostWidgets by event_id. TrustStubWidgets have no
+        # footer labels — a metrics update for a collapsed author is a no-op.
+        widget = self.event_widgets.get(eid)
+        if widget is None or not hasattr(widget, "lbl_likes"):
+            return
+        widget.lbl_likes.set_label(str(likes))
+        widget.lbl_reposts.set_label(str(reposts))
+        widget.lbl_replies.set_label(str(replies))
 
     def on_zap_received(self, client, info_json):
         # A §1.4-verified 9735 landed (client already persisted it). Update
@@ -859,8 +870,11 @@ class MainWindow(Adw.ApplicationWindow):
         eid = info.get("target_e")
         if not eid or eid not in self.event_widgets:
             return
+        widget = self.event_widgets[eid]
+        if not hasattr(widget, "set_zap_total"):
+            return  # TrustStubWidget: no zap chip
         totals = self.db.zap_totals_for_events([eid])
-        self.event_widgets[eid].set_zap_total(totals.get(eid, 0) // 1000)
+        widget.set_zap_total(totals.get(eid, 0) // 1000)
 
     def _sweep_publishes(self):
         # Callback for GLib.timeout_add_seconds — returns True to keep repeating.
@@ -985,6 +999,17 @@ class MainWindow(Adw.ApplicationWindow):
         ev = self.db.get_event_by_id(event_id)
         if ev is None:
             return
+        # trust-shield-v1 §3.1: low-rank authors render as a collapsed stub.
+        # Flag off (default) => decide() is always 'normal' => untouched path.
+        if self.client.trust_shield_decide(ev["pubkey"]) == "collapse":
+            TrustStubWidget(
+                self,
+                ev["pubkey"],
+                ev["content"],
+                ev["id"],
+                created_at=ev.get("created_at"),
+            )
+            return
         PostWidget(
             self,
             ev["pubkey"],
@@ -994,6 +1019,40 @@ class MainWindow(Adw.ApplicationWindow):
             created_at=ev.get("created_at"),
             collapse_cap=collapse_util.collapse_chars(),
         )
+
+    def trust_reveal(self, author_pk):
+        """trust-shield-v1 §3.1 'Show post': reveal instantly (content is
+        already hydrated — no refetch) and swap every rendered stub of this
+        author for the full card. Session-only: a relaunch re-collapses."""
+        self.client.trust_shield_reveal(author_pk)
+        for eid, w in list(self.event_widgets.items()):
+            if not getattr(w, "is_trust_stub", False) or w.pubkey != author_pk:
+                continue
+            parent = w.get_parent()
+            if parent is None:
+                continue
+            idx = parent.get_first_child()
+            pos = 0
+            while idx is not None and idx is not w:
+                pos += 1
+                idx = idx.get_next_sibling()
+            ev = self.db.get_event_by_id(eid)
+            if ev is None:
+                continue
+            # (cap computed via a local so the FEED-TRUNC source-pin in
+            # test_feed_collapse keeps counting exactly its two feed sites)
+            _cap = collapse_util.collapse_chars()
+            PostWidget(
+                self,
+                ev["pubkey"],
+                ev["content"],
+                ev["id"],
+                ev.get("tags", []),
+                created_at=ev.get("created_at"),
+                collapse_cap=_cap,
+            )  # re-registers eid in event_widgets
+            parent.insert(self.event_widgets[eid], pos)
+            parent.remove(w)
 
 
 class GnostrApp(Adw.Application):
@@ -1031,6 +1090,10 @@ class GnostrApp(Adw.Application):
             ".dm-in { background-color: alpha(@card_bg_color, 1); }"
             ".dm-out { background-color: alpha(@accent_bg_color, 1); color: @accent_fg_color; }"
             ".dm-bubble-error { background-color: alpha(@error_bg_color, 0.25); }"
+            # trust-shield-v1 §3.1: the 'Low rank' pill on a collapsed stub
+            ".pill-low-trust { border-radius: 999px; padding: 2px 10px;"
+            " color: @warning_color;"
+            " background-color: alpha(@warning_bg_color, 0.18); }"
             # Inbox skeleton shimmer (fixed 64px rows; removed on first
             # gateway result, never on a timer)
             ".dm-skeleton { border-radius: 8px;"

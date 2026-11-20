@@ -64,6 +64,7 @@ class RelayPreferencesWindow(Adw.PreferencesWindow):
         self._build_wallet_group(self.wallet_page)
         self._build_proxy_group(self.network_page)
         self._build_tor_group(self.network_page)
+        self._build_trust_group(self.network_page)
         self.refresh()
         self.client.connect("relay-list-updated", self.refresh)
         self.client.connect("relay-log-updated", self.on_relay_log_line)
@@ -772,6 +773,86 @@ class RelayPreferencesWindow(Adw.PreferencesWindow):
         save = Adw.ActionRow(title="Save proxy settings")
         btn = Gtk.Button(label="Save", css_classes=["suggested-action"])
         btn.connect("clicked", self.on_save_proxy_settings)
+        save.add_suffix(btn)
+        g.add(save)
+
+    def _build_trust_group(self, page):
+        """trust-shield-v1 §7: experimental Trust Shield controls. The switch
+        and provider entry write GSettings on change/save (same idiom as the
+        proxy group); the client reacts via the settings watch."""
+        from . import trust_settings as ts
+
+        g = Adw.PreferencesGroup(
+            title="Trust Shield (experimental)",
+            description=(
+                "Collapse posts from low-reputation authors using a "
+                "third-party reputation provider (NIP-85). Off by default."
+            ),
+        )
+        page.add(g)
+
+        self.trust_enabled_row = Adw.SwitchRow(
+            title="Enable Trust Shield",
+            subtitle="Low-rank posts collapse to a one-line stub",
+        )
+        self.trust_enabled_row.set_active(ts.trust_get("trust-shield"))
+        # notify:: emits (object, GParamSpec) — the handler must take both
+        # args or trust_set never runs (FLX1 device-test regression).
+        self.trust_enabled_row.connect(
+            "notify::active",
+            lambda r, _ps: ts.trust_set("trust-shield", r.get_active()),
+        )
+        g.add(self.trust_enabled_row)
+
+        self.trust_provider_row = Adw.EntryRow(title="Reputation provider")
+        self.trust_provider_row.set_text(ts.trust_get("trust-shield-provider"))
+        self.trust_provider_row.set_title("Reputation provider")
+        g.add(self.trust_provider_row)
+
+        # §1.2 discovery: REQ kind-10040 for self + follows, fill the entry
+        # with the top-ranked candidate. Manual entry above always wins —
+        # discovery only prefills, the user still presses Save.
+        disc = Adw.ActionRow(
+            title="Discover from follows",
+            subtitle="Scan follows' kind-10040 provider lists",
+        )
+        btn_disc = Gtk.Button(label="Discover")
+
+        def _discover(*_g):
+            btn_disc.set_sensitive(False)
+            btn_disc.set_label("…")
+
+            def _fill(cands):
+                btn_disc.set_sensitive(True)
+                btn_disc.set_label("Discover")
+                if cands:
+                    from gnostr.nostr_utils import hex_to_npub
+
+                    self.trust_provider_row.set_text(
+                        hex_to_npub(cands[0]["provider"])
+                    )
+
+            self.client.trust_shield_discover(_fill)
+
+        btn_disc.connect("clicked", _discover)
+        disc.add_suffix(btn_disc)
+        g.add(disc)
+
+        save = Adw.ActionRow(
+            title="Save provider",
+            subtitle="npub… or wss:// relay URL (manual entry)",
+        )
+        btn = Gtk.Button(label="Save", css_classes=["suggested-action"])
+
+        def _save(*_g):
+            val = self.trust_provider_row.get_text().strip()
+            if val and not ts.provider_hex_or_none(val) and not ts.relay_hint_or_none(val):
+                self.trust_provider_row.add_css_class("error")
+                return
+            self.trust_provider_row.remove_css_class("error")
+            ts.trust_set("trust-shield-provider", val)
+
+        btn.connect("clicked", _save)
         save.add_suffix(btn)
         g.add(save)
 

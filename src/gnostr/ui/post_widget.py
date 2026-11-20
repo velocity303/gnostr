@@ -641,3 +641,75 @@ class PostWidget(Adw.Bin):
             )
         except Exception:
             return ""
+
+
+class TrustStubWidget(Adw.Bin):
+    """trust-shield-v1 §3.1: collapsed card for a low-rank author.
+
+    Identity stays visible (avatar + name — no shadow-banning), content is
+    replaced by the first line only, a 'Low rank' pill explains why, and
+    'Show post' reveals instantly (content is already hydrated). Deliberately
+    NOT a PostWidget: no gestures, no footer, no media — the point is a
+    visually quieter card. Registers in main_window.event_widgets like
+    PostWidget so feed bookkeeping (dedupe, eviction, time-sorted insert)
+    treats both uniformly; the metrics/zap handlers skip it via hasattr.
+    """
+
+    def __init__(self, main_window, pubkey, content, event_id, created_at=None):
+        super().__init__(css_classes=["card"])
+        self.main_window = main_window
+        self.pubkey = pubkey
+        self.event_id = event_id
+        self.is_trust_stub = True
+        if created_at is None:
+            ev = main_window.db.get_event_by_id(event_id)
+            created_at = ev.get("created_at") if ev else None
+        self.created_at = created_at
+        main_window.event_widgets[event_id] = self
+
+        self.main_box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=8,
+            margin_top=12,
+            margin_bottom=12,
+            margin_start=12,
+            margin_end=12,
+        )
+        self.set_child(self.main_box)
+
+        # Identity row: avatar + name + Low-rank pill
+        hb = Gtk.Box(spacing=12)
+        prof = main_window.db.get_profile(pubkey)
+        if not prof:
+            main_window.client.fetch_profile(pubkey)
+        name = (prof or {}).get("display_name") or (prof or {}).get("name") or pubkey[:8]
+        self.avatar = Adw.Avatar(size=40, show_initials=True, text=name)
+        if prof and prof.get("picture"):
+            ImageLoader.load_avatars(
+                prof["picture"], lambda t: self.avatar.set_custom_image(t)
+            )
+        hb.append(self.avatar)
+        nb = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        nb.set_hexpand(True)
+        nb.append(Gtk.Label(label=name, xalign=0, css_classes=["heading"]))
+        hb.append(nb)
+        hb.append(
+            Gtk.Label(label="Low rank", css_classes=["caption", "pill-low-trust"])
+        )
+        self.main_box.append(hb)
+
+        # First line of content only (§3.1), single-line ellipsized.
+        first = (content or "").splitlines()[0] if content else ""
+        first = collapse_util.safe_truncate(first, 120) if first else ""
+        lbl = Gtk.Label(label=first or "[hidden]", xalign=0)
+        lbl.set_ellipsize(Pango.EllipsizeMode.END)
+        lbl.set_max_width_chars(48)
+        lbl.add_css_class("dim-label")
+        self.main_box.append(lbl)
+
+        show = Gtk.Button(label="Show post", css_classes=["flat"])
+        show.set_halign(Gtk.Align.START)
+        show.connect(
+            "clicked", lambda _b: self.main_window.trust_reveal(self.pubkey)
+        )
+        self.main_box.append(show)

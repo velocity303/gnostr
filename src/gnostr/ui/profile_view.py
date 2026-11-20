@@ -3,7 +3,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw, Gdk, GLib, Pango
-from .post_widget import PostWidget
+from .post_widget import PostWidget, TrustStubWidget
 from ..renderer import ContentRenderer, ImageLoader, VideoPlayer
 from ..nostr_utils import hex_to_npub
 from .. import profile_nips
@@ -267,14 +267,25 @@ class ProfileView(Adw.Bin):
         # Load posts from DB
         posts = self.main_window.db.get_feed_for_user(pubkey)
         for ev in posts:
-            w = PostWidget(
-                self.main_window,
-                ev["pubkey"],
-                ev["content"],
-                ev["id"],
-                ev.get("tags", []),
-                is_hero=False,
-            )
+            # trust-shield-v1 §3.2: profile posts collapse per policy (same
+            # ladder as the feed; flag off => always normal).
+            if self.main_window.client.trust_shield_decide(ev["pubkey"]) == "collapse":
+                w = TrustStubWidget(
+                    self.main_window,
+                    ev["pubkey"],
+                    ev["content"],
+                    ev["id"],
+                    created_at=ev.get("created_at"),
+                )
+            else:
+                w = PostWidget(
+                    self.main_window,
+                    ev["pubkey"],
+                    ev["content"],
+                    ev["id"],
+                    ev.get("tags", []),
+                    is_hero=False,
+                )
             self.posts_box.append(w)
 
         # Fetch missing NIP-39/58 data on open

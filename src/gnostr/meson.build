@@ -22,6 +22,8 @@ install_data(
     'nostr_utils.py',
     'relay_entries.py',
     'profile_nips.py',
+    'trust_shield.py',
+    'trust_settings.py',
     'renderer.py',
     'connection_status.py',
     'window.py',

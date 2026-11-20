@@ -13,6 +13,7 @@ import gnostr
 
 from . import proxy_settings
 from .proxy_settings import proxy_get, url_allowed
+from . import trust_settings, trust_shield
 from .util.connection_state import ConnectionState
 from .util.tor_state import (TorState, host_is_onion, onion_inert,
                              probe_socks5_detail)
@@ -481,6 +482,9 @@ class NostrClient(GObject.Object):
         # (or the sweep timed the batch out). Events rode in via event-received
         # and are already in the DB; the feed view re-queries its page.
         "backfill-done": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
+        # trust-ranks-updated: (provider_pk:str) — a trust-shield-v1 rank
+        # batch landed in trust_ranks; the Settings status line refreshes.
+        "trust-ranks-updated": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         # zap-received: (info_json:str) — a kind-9735 receipt that passed ALL
         # spec zaps-payments-v1 §1.4 rules and was persisted to the zaps
         # table. info_json is the verify_9735 result dict. Unverified
@@ -556,6 +560,21 @@ class NostrClient(GObject.Object):
         # the relays already accepted.
         self._dm_initiation_times = collections.deque()
         self.metrics = {}
+        # --- trust-shield-v1 (NIP-85 WoT spam collapse; default OFF) ---
+        # All inert while `trust-shield` is false (flag-off = byte-for-byte
+        # pre-feature behavior). In-memory by design: pending/revealed
+        # describe this session; durable ranks live in the trust_ranks table.
+        self._trust_pending = set()  # rendered authors awaiting a rank REQ
+        self._trust_no_rank = set()  # answered 'no rank' this session: no refetch
+        self._trust_revealed = set()  # 'Show post' session reveals
+        self._trust_batch = None  # in-flight {subjects, fallback} (single flight)
+        self._trust_flush_source = None  # 30 s coalescing timer
+        self._trust_seq = 0
+        self._trust_dead = False  # provider unreachable -> shield inert this session
+        self._trust_zero_rounds = 0  # consecutive #d-empty EOSE answers (Q1)
+        self._trust_fallback_used = False  # limit:500 fallback fires once
+        self._trust_follows = None  # follows cache; contacts-updated invalidates
+        self.connect("contacts-updated", self._on_contacts_for_trust)
         # --- tor-v1-status (spec gnostr-tor-onion-support-v1 §A.2) ---
         # TorState is derived, never stored twice: proxy-enabled decides
         # DISABLED, the probe decides REACHABLE/DOWN. _tor_probe_reason
@@ -2427,3 +2446,303 @@ class NostrClient(GObject.Object):
             pass
         for r in self.active_relays.values():
             r.close()
+
+    # --- trust-shield-v1 (NIP-85 WoT spam collapse; default OFF) -----------
+
+    def _on_contacts_for_trust(self, _client, pk):
+        if pk == self.my_pubkey:
+            self._trust_follows = None  # E2 cache is stale
+
+    def on_trust_setting_changed(self, key=None):
+        """Trust-shield GSettings change (MainWindow holds the watch ref).
+        A provider/relay switch resets all session state and purges other
+        providers' cached ranks (spec §5.2/§7)."""
+        if key == "trust-shield" and trust_settings.trust_get("trust-shield"):
+            self._trust_dead = False
+        if key in ("trust-shield-provider", "trust-shield-relay"):
+            self._trust_dead = False
+            self._trust_zero_rounds = 0
+            self._trust_fallback_used = False
+            self._trust_no_rank.clear()
+            self._trust_pending.clear()
+            provider = trust_settings.trust_get("trust-shield-provider")
+            if provider:
+                self.db.purge_other_trust_ranks(provider)
+
+    def trust_shield_decide(self, author_pk):
+        """Feed-pipeline hook (spec §3.1/§3.3): 'normal' | 'collapse'.
+        Always 'normal' while the flag is off, unset, or the provider relay
+        proved unreachable this session (§1.4). Side effect: a rendered
+        author with no fresh rank row joins the pending fetch set (§2 —
+        lazy, rendered authors only, never a bulk pull)."""
+        if self._trust_dead or not self._trust_active():
+            return trust_shield.NORMAL
+        if author_pk == self.my_pubkey:
+            return trust_shield.NORMAL  # E1
+        follows = self._trust_follows_set()
+        if author_pk in follows:
+            return trust_shield.NORMAL  # E2
+        if author_pk in self._trust_revealed:
+            return trust_shield.NORMAL  # 'Show post' (session)
+        provider = trust_settings.trust_get("trust-shield-provider")
+        rank = None
+        row = self.db.get_trust_rank(provider, author_pk)
+        if row is not None:
+            rank = row["rank"]  # stale rank keeps deciding (no flicker)
+            if trust_shield.is_stale(
+                row["rank_updated"],
+                trust_settings.trust_get("trust-shield-max-age-days"),
+                time.time(),
+            ):
+                self._trust_note_pending(author_pk)
+        else:
+            self._trust_note_pending(author_pk)  # E3: absent != 0
+        return trust_shield.TrustShieldPolicy(
+            trust_settings.trust_get("trust-shield-threshold"),
+            follows,
+            self.my_pubkey,
+        ).decide(author_pk, rank)
+
+    def trust_shield_reveal(self, author_pk):
+        """'Show post': reveal this author for the session (not persisted —
+        a fresh launch re-collapses, spec §3.1)."""
+        self._trust_revealed.add(author_pk)
+
+    def _trust_active(self):
+        return bool(
+            trust_settings.trust_get("trust-shield")
+            and trust_settings.trust_get("trust-shield-provider")
+            and trust_settings.trust_get("trust-shield-relay")
+        )
+
+    def _trust_follows_set(self):
+        if self._trust_follows is None and self.my_pubkey:
+            self._trust_follows = set(self.db.get_following_list(self.my_pubkey))
+        return self._trust_follows or set()
+
+    def _trust_note_pending(self, author_pk):
+        if author_pk in self._trust_no_rank:
+            return  # provider already answered 'no rank' this session
+        self._trust_pending.add(author_pk)
+        if len(self._trust_pending) >= 25:
+            self._trust_flush()  # §4: batch size 25
+        elif self._trust_flush_source is None:
+            self._trust_flush_source = GLib.timeout_add_seconds(
+                30, self._trust_flush_tick
+            )
+
+    def _trust_flush_tick(self):
+        self._trust_flush_source = None
+        self._trust_flush()
+        return False
+
+    def _trust_flush(self):
+        """Fire one batch REQ (max 50 subjects) at the provider relay only
+        (§4). Single flight: while a batch is open, pending just grows."""
+        if self._trust_batch or self._trust_dead or not self._trust_active():
+            return
+        subjects = list(self._trust_pending)[:50]
+        if not subjects:
+            return
+        self._trust_seq += 1
+        self._trust_batch = {"subjects": set(subjects), "fallback": False}
+        self._open_ephemeral(
+            trust_settings.trust_get("trust-shield-relay"),
+            f"trustshield_{self._trust_seq}",
+            trust_shield.rank_req_filters(
+                trust_settings.trust_get("trust-shield-provider"), subjects
+            ),
+            self._trust_batch_done,
+        )
+
+    def _trust_batch_done(self, events, ok):
+        batch = self._trust_batch
+        self._trust_batch = None
+        if batch is None:
+            return
+        provider = trust_settings.trust_get("trust-shield-provider")
+        if not ok:
+            # §1.4: unreachable / no EOSE within 15 s -> shield inert for
+            # this session. Silent by spec; reset on provider/relay change.
+            self._trust_dead = True
+            self._log_relay(
+                "trust-shield: provider relay unreachable; shield off this session"
+            )
+            return
+        saved = 0
+        for ev in events:
+            r = trust_shield.parse_rank_event(ev, provider)
+            if r is None:
+                continue  # malformed: drop the EVENT, never the subject (R7)
+            self.db.upsert_trust_rank(
+                provider, r["subject"], r["rank"], r["created_at"]
+            )
+            saved += 1
+        subjects = batch["subjects"]
+        if saved:
+            self._trust_zero_rounds = 0
+        elif not batch["fallback"] and not self._trust_fallback_used:
+            # Q1 escalation: two consecutive #d-empty EOSE answers from an
+            # answering relay -> retry ONCE with the limit:500 fallback REQ
+            # (client-side d filtering). Partial data is acceptable.
+            self._trust_zero_rounds += 1
+            if self._trust_zero_rounds >= 2:
+                self._trust_fallback_used = True
+                self._trust_zero_rounds = 0
+                self._trust_pending.update(subjects)
+                self._trust_seq += 1
+                self._trust_batch = {"subjects": set(subjects), "fallback": True}
+                self._open_ephemeral(
+                    trust_settings.trust_get("trust-shield-relay"),
+                    f"trustshield_{self._trust_seq}",
+                    {
+                        "authors": [provider],
+                        "kinds": [trust_shield.RANK_KIND],
+                        "limit": 500,
+                    },
+                    self._trust_batch_done,
+                )
+                return
+        for s in subjects:
+            self._trust_pending.discard(s)
+            if self.db.get_trust_rank(provider, s) is None:
+                self._trust_no_rank.add(s)  # answered 'no rank': no refetch
+        if saved:
+            self.emit("trust-ranks-updated", provider)
+        if self._trust_pending:
+            GLib.idle_add(self._trust_flush)  # >50 subjects: next batch
+
+    def _open_ephemeral(self, url, sub_id, filters, on_done, timeout=15):
+        """One-shot query on a dedicated short-lived connection: connect,
+        REQ (snapshot), collect, then on_done(events, ok) on EOSE (ok) or
+        timeout / connect failure / policy refusal (not ok); socket closed
+        either way. Never touches active_relays. Snapshot REQs must wait
+        for CONNECTED (subscribe() drops them while down)."""
+        state = {"events": [], "done": False, "relay": None}
+
+        def finish(ok):
+            if state["done"]:
+                return
+            state["done"] = True
+            r = state["relay"]
+            if r is not None:
+                try:
+                    r.close()
+                except Exception:
+                    pass
+            GLib.idle_add(on_done, state["events"], bool(ok))
+
+        proxy_on = proxy_get("proxy-enabled")
+        if not url_allowed(url, proxy_on) or onion_inert(url, proxy_on, self.tor_state):
+            finish(False)
+            return
+
+        def on_status(_url, status):
+            if state["done"]:
+                return
+            if status == ConnectionState.CONNECTED:
+                state["relay"].subscribe(sub_id, filters, snapshot=True)
+            elif status == ConnectionState.DISCONNECTED:
+                finish(False)  # died before EOSE
+
+        relay = NostrRelay(
+            url,
+            lambda ev: state["events"].append(ev),
+            on_status,
+            on_eose=lambda sid, _url: finish(True) if sid == sub_id else None,
+            on_connect_error=lambda _err: finish(False),
+        )
+        state["relay"] = relay
+        relay.start()
+
+        def on_timeout():
+            finish(False)
+            return False
+
+        GLib.timeout_add_seconds(timeout, on_timeout)
+
+    def trust_shield_discover(self, on_done):
+        """§1.2 provider discovery (Settings dialog only — never automatic).
+        REQ kind-10040 for self + follows across connected relays plus
+        purplepag.es, aggregate the top-5 providers by distinct-subject
+        listing count, enrich with kind-0 profiles, then on_done(candidates)
+        on the main thread. Works while the flag is off (user is configuring).
+        """
+        if not self.my_pubkey:
+            GLib.idle_add(on_done, [])
+            return
+        subjects = list(dict.fromkeys([self.my_pubkey] + list(self._trust_follows_set())))
+        urls = list(self.active_relays.keys())
+        if "wss://purplepag.es" not in urls:
+            urls.append("wss://purplepag.es")
+        chunks = [subjects[i : i + 50] for i in range(0, len(subjects), 50)]
+        found = {}
+        seq = self._trust_seq
+        self._trust_seq += 1
+        pending = {"n": len(chunks) * len(urls)}
+
+        def after_queries():
+            cands = trust_shield.rank_candidates(found)[:5]
+            if not cands:
+                GLib.idle_add(on_done, [])
+                return
+            remaining = {"n": len(cands)}
+
+            def got_profile(events, _ok, cand):
+                for ev in events:
+                    if ev.get("kind") == 0 and ev.get("pubkey") == cand["provider"]:
+                        try:
+                            prof = json.loads(ev.get("content") or "{}")
+                        except Exception:
+                            prof = {}
+                        cand["name"] = (
+                            prof.get("display_name")
+                            or prof.get("name")
+                            or cand["provider"][:8]
+                        )
+                        cand["about"] = prof.get("about") or ""
+                        cand["website"] = prof.get("website") or ""
+                        break
+                else:
+                    cand["name"] = cand["provider"][:8]
+                remaining["n"] -= 1
+                if remaining["n"] == 0:
+                    GLib.idle_add(on_done, cands)
+
+            for cand in cands:
+                cand["listed_by"] = len(cand["listed_by"])
+                url = cand["relay"] or next(
+                    (u for u in self.relay_urls if u.startswith("wss://")),
+                    "wss://purplepag.es",
+                )
+                self._open_ephemeral(
+                    url,
+                    f"tsprof_{seq}_{cand['provider'][:8]}",
+                    {"kinds": [0], "authors": [cand["provider"]], "limit": 1},
+                    lambda events, ok, c=cand: got_profile(events, ok, c),
+                    timeout=10,
+                )
+
+        def got_chunk(events, _ok, chunk_set):
+            for ev in events:
+                if ev.get("kind") != trust_shield.DISCOVERY_KIND:
+                    continue
+                author = ev.get("pubkey")
+                if author not in chunk_set:
+                    continue
+                entries = trust_shield.parse_discovery_entries(ev)
+                if entries:
+                    found.setdefault(author, []).extend(entries)
+            pending["n"] -= 1
+            if pending["n"] <= 0:
+                after_queries()
+
+        for i, chunk in enumerate(chunks):
+            for url in urls:
+                self._open_ephemeral(
+                    url,
+                    f"tsdisc_{seq}_{i}_{abs(hash(url)) % 10**8}",
+                    {"kinds": [trust_shield.DISCOVERY_KIND], "authors": chunk, "limit": 200},
+                    lambda events, ok, ch=frozenset(chunk): got_chunk(events, ok, ch),
+                    timeout=15,
+                )
