@@ -527,9 +527,12 @@ class GroupDetailPage(Gtk.Box):
         else:
             title, body = author, "⚡ zapped"
         row = Adw.ActionRow(title=title, subtitle=body)
-        row.get_subtitle_label().set_wrap(True)
-        row.get_subtitle_label().set_lines(4)
-        row.get_subtitle_label().set_ellipsize(Pango.EllipsizeMode.END)
+        # Adw.ActionRow has NO get_subtitle_label() accessor — the old
+        # subtitle-label calls raised AttributeError per event (FLX1 device
+        # test) BEFORE the append, so the timeline stayed empty.
+        # set_subtitle_lines caps the (wrapping-by-default) subtitle at 4
+        # lines with ellipsis. Guarded by tests/test_group_timeline_gtk_real.py.
+        row.set_subtitle_lines(4)
         self.timeline.append(row)
 
     def _on_back(self, _btn):
