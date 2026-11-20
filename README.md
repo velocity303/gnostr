@@ -123,12 +123,6 @@ flake8 src/ tests/ --max-line-length=120
 See [CONTRIBUTING.md](CONTRIBUTING.md) for build conventions, the test/lint
 gate, and the DOX documentation contract.
 
-## Buy me a beer
-
-If you like this project and would like to support its development:
-
-bc1qkgcg44wxmmjrt5uvnya5g2zqd84pm6mawjp3s
-
 ## License
 
 This project is licensed under the MIT License. See the LICENSE file for details.
