@@ -8,6 +8,7 @@ media-resilience gate. All network I/O is monkeypatched — no sockets.
 
 import hashlib
 import os
+import sys
 import threading
 import time
 import xml.etree.ElementTree as ET
@@ -126,7 +127,7 @@ def _serve(monkeypatch, responses):
 def test_resolve_verified_hit(monkeypatch):
     _serve(monkeypatch, {f"https://b1.test/{SHA}": BLOB})
     media_resolver.configure(
-        lambda pk: media_resolver.on_blossom_event(_ev(["https://b1.test"], pk))
+        lambda pk: media_resolver.on_blossom_event(None, _ev(["https://b1.test"], pk))
     )
     url, data = media_resolver.resolve_blob(DEAD_URL, PK)
     assert url == f"https://b1.test/{SHA}"
@@ -137,7 +138,7 @@ def test_resolve_verified_hit(monkeypatch):
 def test_resolve_rejects_hash_mismatch(monkeypatch):
     _serve(monkeypatch, {f"https://b1.test/{SHA}": b"WRONG BYTES"})
     media_resolver.configure(
-        lambda pk: media_resolver.on_blossom_event(_ev(["https://b1.test"], pk))
+        lambda pk: media_resolver.on_blossom_event(None, _ev(["https://b1.test"], pk))
     )
     url, data = media_resolver.resolve_blob(DEAD_URL, PK)
     assert url is None and data is None
@@ -154,7 +155,7 @@ def test_resolve_tries_servers_in_order(monkeypatch):
     )
     media_resolver.configure(
         lambda pk: media_resolver.on_blossom_event(
-            _ev(["https://b1.test", "https://b2.test", "https://b3.test"], pk)
+            None, _ev(["https://b1.test", "https://b2.test", "https://b3.test"], pk)
         )
     )
     url, data = media_resolver.resolve_blob(DEAD_URL, PK)
@@ -166,7 +167,7 @@ def test_resolve_tries_servers_in_order(monkeypatch):
 def test_resolve_all_fail_keeps_original(monkeypatch):
     _serve(monkeypatch, {f"https://b1.test/{SHA}": Exception("down")})
     media_resolver.configure(
-        lambda pk: media_resolver.on_blossom_event(_ev(["https://b1.test"], pk))
+        lambda pk: media_resolver.on_blossom_event(None, _ev(["https://b1.test"], pk))
     )
     assert media_resolver.resolve(DEAD_URL, PK) is None
 
@@ -174,7 +175,7 @@ def test_resolve_all_fail_keeps_original(monkeypatch):
 def test_resolve_no_author_or_not_content_addressed(monkeypatch):
     calls = _serve(monkeypatch, {})
     media_resolver.configure(
-        lambda pk: media_resolver.on_blossom_event(_ev(["https://b1.test"], pk))
+        lambda pk: media_resolver.on_blossom_event(None, _ev(["https://b1.test"], pk))
     )
     assert media_resolver.resolve_blob(DEAD_URL, None) == (None, None)
     assert media_resolver.resolve_blob("https://x.test/pic.jpg", PK) == (None, None)
@@ -185,7 +186,7 @@ def test_disabled_flag_short_circuits(monkeypatch):
     monkeypatch.setattr(media_resolver, "_settings_get", lambda key, fb: False)
     calls = _serve(monkeypatch, {f"https://b1.test/{SHA}": BLOB})
     media_resolver.configure(
-        lambda pk: media_resolver.on_blossom_event(_ev(["https://b1.test"], pk))
+        lambda pk: media_resolver.on_blossom_event(None, _ev(["https://b1.test"], pk))
     )
     assert media_resolver.resolve_blob(DEAD_URL, PK) == (None, None)
     assert calls == []
@@ -211,7 +212,7 @@ def test_server_list_ttl_cached(monkeypatch):
 
     def req(pk):
         n["req"] += 1
-        media_resolver.on_blossom_event(_ev(["https://b1.test"], pk))
+        media_resolver.on_blossom_event(None, _ev(["https://b1.test"], pk))
 
     media_resolver.configure(req)
     _serve(monkeypatch, {f"https://b1.test/{SHA}": BLOB})
@@ -227,7 +228,7 @@ def test_inflight_dedup_one_req_per_author(monkeypatch):
     def req(pk):
         n["req"] += 1
         gate.wait(2.0)
-        media_resolver.on_blossom_event(_ev(["https://b1.test"], pk))
+        media_resolver.on_blossom_event(None, _ev(["https://b1.test"], pk))
 
     media_resolver.configure(req)
     _serve(monkeypatch, {f"https://b1.test/{SHA}": BLOB})
@@ -249,14 +250,14 @@ def test_inflight_dedup_one_req_per_author(monkeypatch):
 def test_on_blossom_event_accepts_json_string():
     import json as _json
 
-    media_resolver.on_blossom_event(_json.dumps(_ev(["https://b1.test"])))
+    media_resolver.on_blossom_event(None, _json.dumps(_ev(["https://b1.test"])))
     assert media_resolver._servers[PK][0] == ["https://b1.test"]
 
 
 def test_on_blossom_event_ignores_junk():
-    media_resolver.on_blossom_event("not json")
-    media_resolver.on_blossom_event('{"kind": 1}')
-    media_resolver.on_blossom_event(None)
+    media_resolver.on_blossom_event(None, "not json")
+    media_resolver.on_blossom_event(None, '{"kind": 1}')
+    media_resolver.on_blossom_event(None, None)
     assert media_resolver._servers == {}
 
 
@@ -399,3 +400,111 @@ def test_gschema_key_default_on():
             assert (key.findtext("default") or "").strip() == "true"
             return
     pytest.fail("media-resilience key missing from gschema")
+
+
+# --- 6. NIPW-P1-FIX device regressions (FLX1) ----------------------------------
+
+
+def _real_gi_gobject():
+    """Return the REAL gi.repository.GObject even though conftest mocks
+    `gi` in sys.modules (tier-1 harness), or None when python-gi is
+    absent. The mock/real sys.modules swap is fully restored."""
+    saved = {k: v for k, v in sys.modules.items() if k == "gi" or k.startswith("gi.")}
+    for k in saved:
+        del sys.modules[k]
+    try:
+        import gi  # noqa: F401
+        from gi.repository import GObject
+
+        return GObject
+    except Exception:
+        return None
+    finally:
+        for k in [k for k in sys.modules if k == "gi" or k.startswith("gi.")]:
+            del sys.modules[k]
+        sys.modules.update(saved)
+
+
+def test_blossom_signal_emission_populates_cache():
+    """Bug A regression (FLX1 device test): main.py connects
+    on_blossom_event DIRECTLY to the client's GObject signal. PyGObject
+    hands the emitting instance to the handler as the first argument —
+    with a (payload)-only signature every kind-10063 died in a swallowed
+    TypeError, the cache stayed empty and every resolve() timed out.
+    A direct call cannot catch this class of bug: emit through a real
+    GObject instance carrying the same signal spec as client.py."""
+    GObject = _real_gi_gobject()
+    if GObject is None:
+        pytest.skip("real python-gi not available")
+
+    class _FakeClient(GObject.Object):
+        __gsignals__ = {
+            "blossom-servers-updated": (
+                GObject.SignalFlags.RUN_FIRST,
+                None,
+                (str,),
+            ),
+        }
+
+    client = _FakeClient()
+    client.connect("blossom-servers-updated", media_resolver.on_blossom_event)
+    # Same payload shape as client.py: GLib.idle_add(self.emit, ..., json)
+    import json as _json
+
+    client.emit("blossom-servers-updated", _json.dumps(_ev(["https://b1.test"])))
+    assert media_resolver._servers[PK][0] == ["https://b1.test"]
+
+
+def test_image_on_ready_double_fire_replaces_not_stacks(monkeypatch):
+    """Bug B regression (FLX1 device test): with the resolver the image
+    callback can fire TWICE for one container (first fetch fails ->
+    image-missing icon; Blossom recovery re-fires -> Picture).
+    Gtk.Box.append asserts the child has no parent — the blind second
+    append produced the gtk_box_append CRITICAL burst. on_ready must
+    clear the box first: after both firings the container holds exactly
+    ONE child (the recovered Picture replaces the icon)."""
+    from gnostr import renderer
+
+    class _Box:
+        """Minimal Gtk.Box stand-in with real child semantics."""
+
+        def __init__(self):
+            self.children = []
+
+        def get_first_child(self):
+            return self.children[0] if self.children else None
+
+        def append(self, widget):
+            assert widget not in self.children, "append onto a held child"
+            self.children.append(widget)
+
+        def remove(self, widget):
+            self.children.remove(widget)
+
+        def set_size_request(self, w, h):
+            pass
+
+    box = _Box()
+    spinner = Mock()
+    spinner.get_parent.return_value = box
+    box.append(spinner)  # the loader's spinner sits in the box
+
+    captured = {}
+
+    def fake_request(url, callback, size=None, author_pk=None):
+        captured["cb"] = callback
+
+    monkeypatch.setattr(
+        renderer.ImageLoader, "_request_image", staticmethod(fake_request)
+    )
+    renderer.ImageLoader.load_image_into_widget(DEAD_URL, box, spinner)
+    on_ready = captured["cb"]
+
+    on_ready(None)  # first firing: fetch failed -> image-missing icon
+    assert len(box.children) == 1
+
+    texture = Mock()
+    texture.get_width.return_value = 200
+    texture.get_height.return_value = 100
+    on_ready(texture)  # resolver recovery re-fires onto the SAME container
+    assert len(box.children) == 1  # replaced, never stacked

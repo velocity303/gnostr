@@ -131,10 +131,18 @@ def _settings_get(key, fallback):
 
 # --- relay round-trip (worker thread only) -----------------------------------
 
-def on_blossom_event(payload):
+def on_blossom_event(_client, payload):
     """Client signal handler for 'blossom-servers-updated' (kind-10063).
     Caches the author's server list and wakes any worker waiting on it.
-    Accepts the event as a JSON string (signal payload) or dict."""
+    Accepts the event as a JSON string (signal payload) or dict.
+
+    GObject signal convention: PyGObject passes the EMITTING INSTANCE as
+    the first handler argument — main.py connects this function directly
+    to the client signal, so the signature MUST keep the leading _client
+    slot (NIPW-P1-FIX Bug A: a (payload)-only signature raised TypeError
+    on every kind-10063 — PyGObject swallows handler exceptions — so the
+    cache never populated and every resolve() fell through to timeout).
+    Direct callers (tests) pass None for _client."""
     try:
         ev = json.loads(payload) if isinstance(payload, str) else payload
         if not isinstance(ev, dict) or ev.get("kind") != 10063:

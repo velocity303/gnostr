@@ -944,8 +944,18 @@ class ImageLoader:
         url, container, spinner, window_ref=None, max_height=None, author_pk=None
     ):
         def on_ready(texture):
-            if spinner and spinner.get_parent() == container:
-                container.remove(spinner)
+            # NIPW-P1-FIX Bug B: this callback can fire MORE THAN ONCE for
+            # the same container (first fetch fails -> image-missing icon;
+            # Blossom recovery re-fires -> Picture). Gtk.Box.append
+            # asserts the child has no parent, so a blind second append
+            # burst 'gtk_box_append: child == NULL' CRITICALs. Clearing
+            # every existing child (spinner OR previously shown widget)
+            # before appending makes on_ready idempotent — the recovery
+            # replaces the failure icon instead of stacking on it.
+            child = container.get_first_child()
+            while child is not None:
+                container.remove(child)
+                child = container.get_first_child()
 
             if texture:
                 width = texture.get_width()
