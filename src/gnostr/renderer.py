@@ -1295,6 +1295,13 @@ class VideoPlayer:
         url, container, spinner, window_ref=None, original_url=None, autoplay=False,
         author_pk=None
     ):
+        # NIPW-P1-FIX (Bug B twin, video path): _blossom_swap and the tier
+        # retries re-deliver through THIS same on_ready closure. Track what
+        # this closure last appended so a second delivery removes it before
+        # appending — Gtk refuses to parent an already-parented child
+        # (gtk_box_append Gtk-CRITICAL burst in the FLX1 2026-11 log).
+        delivered = []
+
         def on_ready(video):
             # VID-1: a gated player (real video, autoplay tap) keeps the
             # spinner + percent label visible until the buffer threshold is
@@ -1302,6 +1309,11 @@ class VideoPlayer:
             gated = video is not None and getattr(video, "_buffer_gate", False)
             if spinner and not gated and spinner.get_parent() == container:
                 container.remove(spinner)
+
+            prev = delivered[0] if delivered else None
+            if prev is not None and prev.get_parent() == container:
+                container.remove(prev)
+            delivered.clear()
 
             if video:
                 req_w, req_h = container.get_size_request()
@@ -1315,6 +1327,7 @@ class VideoPlayer:
                 if video.get_parent() is not None:
                     video.get_parent().remove(video)
                 container.append(video)
+                delivered.append(video)
                 VideoPlayer._start_position_timer(container, video)
                 if autoplay and hasattr(video, "_pipeline"):
                     if gated:
@@ -1324,7 +1337,9 @@ class VideoPlayer:
                         video._is_playing = True
 
             else:
-                container.append(Gtk.Image.new_from_icon_name("video-symbolic"))
+                icon = Gtk.Image.new_from_icon_name("video-symbolic")
+                container.append(icon)
+                delivered.append(icon)
 
         VideoPlayer._fetch_player(
             url, on_ready, original_url=original_url, autoplay=autoplay,

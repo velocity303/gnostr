@@ -508,3 +508,75 @@ def test_image_on_ready_double_fire_replaces_not_stacks(monkeypatch):
     texture.get_height.return_value = 100
     on_ready(texture)  # resolver recovery re-fires onto the SAME container
     assert len(box.children) == 1  # replaced, never stacked
+
+
+def test_video_on_ready_double_fire_replaces_not_stacks(monkeypatch):
+    """Bug B twin (video path): _blossom_swap and the tier retries
+    re-deliver through THIS same on_ready closure (failed build ->
+    video-symbolic icon, rebuilt player -> video). The closure must remove
+    its own previous child before appending — same gtk_box_append contract
+    as the image path above."""
+    from gnostr import renderer
+
+    class _Box:
+        def __init__(self):
+            self.children = []
+
+        def append(self, widget):
+            assert widget._parent is None, "append onto a parented child"
+            widget._parent = self
+            self.children.append(widget)
+
+        def remove(self, widget):
+            self.children.remove(widget)
+            widget._parent = None
+
+        def get_size_request(self):
+            return -1, -1
+
+    class _W:  # plain object (Mock would auto-create a truthy _buffer_gate
+        _parent = None  # and never track real parent state)
+
+        def get_parent(self):
+            return self._parent
+
+        def set_size_request(self, *a):
+            pass
+
+        def set_halign(self, *a):
+            pass
+
+        def set_valign(self, *a):
+            pass
+
+    box = _Box()
+    spinner = _W()
+    box.append(spinner)
+
+    captured = {}
+
+    def fake_fetch(url, callback, original_url=None, autoplay=False, author_pk=None):
+        captured["cb"] = callback
+
+    monkeypatch.setattr(
+        renderer.VideoPlayer, "_fetch_player", staticmethod(fake_fetch)
+    )
+    monkeypatch.setattr(
+        renderer.VideoPlayer, "_start_position_timer", staticmethod(lambda c, v: None)
+    )
+
+    class _Img:  # placeholder icon must be a parent-tracking widget too
+        @staticmethod
+        def new_from_icon_name(name):
+            return _W()
+
+    monkeypatch.setattr(renderer.Gtk, "Image", _Img)
+    renderer.VideoPlayer.load_and_play("https://dead.example/clip.mp4", box, spinner)
+    on_ready = captured["cb"]
+
+    on_ready(None)  # first firing: build failed -> video-symbolic icon
+    assert len(box.children) == 1
+
+    on_ready(_W())  # second firing: rebuilt player onto the SAME container
+    assert len(box.children) == 1  # replaced, never stacked
+    assert spinner._parent is None
