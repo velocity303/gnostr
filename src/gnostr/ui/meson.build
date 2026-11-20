@@ -12,6 +12,7 @@ install_data(
     'dm_inbox_view.py',
     'dm_recipient_view.py',
     'dm_thread_view.py',
+    'groups_page.py',
     'icons.py',
     'derive_key.py',
     'compose_box.py',

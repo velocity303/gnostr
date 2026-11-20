@@ -40,6 +40,14 @@ class MainWindow(Adw.ApplicationWindow):
 
         self.db = Database()
         self.client = NostrClient(self.db)
+        # NIP-29 groups (spec nipw-communities-v1 §4): persistence behind the
+        # groups-enabled GSettings flag (default TRUE — the feature is
+        # additive; flag-off leaves no groups tables touched).
+        if self._groups_enabled():
+            try:
+                self.client.get_groups_gateway()
+            except Exception:
+                pass
         self.client.connect("event-received", self.on_event_received)
         self.client.connect("quote-event-received", self.on_quote_event_received)
         self.client.connect("status-changed", self.on_status_changed)
@@ -325,7 +333,42 @@ class MainWindow(Adw.ApplicationWindow):
         elif r_id == "messages":
             if self.pub_key:
                 self.show_dm_inbox()
+        elif r_id == "groups":
+            self.show_groups()
         self.split_view.set_show_content(True)
+
+    @staticmethod
+    def _groups_enabled():
+        try:
+            from gi.repository import Gio
+
+            return Gio.Settings.new("tech.livingonlinux.gnostr").get_boolean(
+                "groups-enabled"
+            )
+        except Exception:
+            return True
+
+    def show_groups(self):
+        """Open the Communities page (NIP-29 group registry)."""
+        try:
+            from gnostr.ui.groups_page import GroupsPage
+        except ImportError:
+            from .ui.groups_page import GroupsPage
+
+        view = GroupsPage(self)
+        page = Adw.NavigationPage(title="Communities", child=view)
+        self.content_nav.push(page)
+
+    def show_group_detail(self, relay, group_id, name=None, invite=None):
+        """Open one community (preview-gated join flow lives in the page)."""
+        try:
+            from gnostr.ui.groups_page import GroupDetailPage
+        except ImportError:
+            from .ui.groups_page import GroupDetailPage
+
+        view = GroupDetailPage(self, relay, group_id, name=name, invite=invite)
+        page = Adw.NavigationPage(title=name or group_id, child=view)
+        self.content_nav.push(page)
 
     def sync_follows(self):
         """Push the DB following list to relays (kind-3) — the behavior the

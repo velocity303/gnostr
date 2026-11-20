@@ -14,6 +14,7 @@ import gnostr
 
 from . import proxy_settings
 from .proxy_settings import proxy_get, url_allowed
+from . import groups
 from . import trust_settings, trust_shield
 from .util.connection_state import ConnectionState
 from .util.tor_state import (TorState, host_is_onion, onion_inert,
@@ -394,6 +395,21 @@ class NostrRelay(GObject.Object):
         elif self._idle_closed:
             self.wake()  # queued REQs drain via process_queue in on_open
 
+    def close_sub(self, sub_id):
+        """Explicitly CLOSE a subscription on this relay (group leave /
+        page detach). Removes it from replay state so a flap won't reopen it."""
+        sub_id = nip01_sub_id(sub_id)
+        self.active_sub_ids.discard(sub_id)
+        self.live_subs.pop(sub_id, None)
+        self.snapshot_ids.discard(sub_id)
+        if self.sub_id == sub_id:
+            self.sub_id = None
+        if self.is_connected and self.ws:
+            try:
+                self.ws.send(json.dumps(["CLOSE", sub_id]))
+            except Exception:
+                pass
+
     def request_once(self, sub_id, filters):
         # Register the sub_id for EOSE auto-close (spec Phase B2a): the on_msg
         # EOSE handler CLOSEs anything in snapshot_ids, so one-shot REQs
@@ -469,6 +485,10 @@ class NostrClient(GObject.Object):
         # (fires for ALL kinds, not just kind-1 — addressable events are kind
         # 30000-39999 and never hit event-received).
         "quote-event-received": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
+        # group-event-received: (relay_url, event_json) — NIP-29 group traffic
+        # routed by h-tag/39000-39005 kind BEFORE the general feed path
+        # (spec nipw-communities-v1 §3).
+        "group-event-received": (GObject.SignalFlags.RUN_FIRST, None, (str, str)),
         "profile-updated": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         "contacts-updated": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         "status-changed": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
@@ -954,7 +974,7 @@ class NostrClient(GObject.Object):
             return
         r = NostrRelay(
             url,
-            self._handle_event,
+            lambda ev, u=url: self._handle_event(ev, relay_url=u),
             self._handle_status,
             on_ok=self._handle_ok,
             on_eose=self._handle_eose,
@@ -1703,7 +1723,7 @@ class NostrClient(GObject.Object):
         self.emit(signal_name, *args)
         return False
 
-    def _handle_event(self, ev):
+    def _handle_event(self, ev, relay_url=None):
         try:
             eid = ev.get("id")
             kind = ev["kind"]
@@ -1739,6 +1759,29 @@ class NostrClient(GObject.Object):
         if eid in self.seen_events:
             return
         self.seen_events.add(eid)
+
+        # NIP-29 routing (spec nipw-communities-v1 §3): group traffic is
+        # h-tagged or in the 39000-39005 range and belongs to the GROUP page
+        # only — it must never leak into the general feed signals or the
+        # general events table. Emitted on the main thread like every other
+        # signal (RelayConnection callbacks arrive on the socket thread).
+        if relay_url and groups.is_group_event(ev):
+            _gid, _kind = groups.group_of(ev)
+            GLib.idle_add(
+                self.emit, "group-event-received", relay_url, json.dumps(ev)
+            )
+            # Cache group timeline traffic only. 39000-39005 metadata is NOT
+            # persisted here — the page layer persists it only after the
+            # NIP-11 self-key signature gate (parse_group_metadata) passes.
+            gw = getattr(self, "_groups_gateway", None)
+            if gw is not None and _gid and _kind is not None and not (
+                39000 <= _kind <= 39005
+            ):
+                try:
+                    gw.save_event(relay_url, _gid, ev)
+                except Exception as e:
+                    print(f"❌ groups gateway: {e}")
+            return
 
         target = self.get_ref_id(tags)
         if target:
@@ -2339,6 +2382,68 @@ class NostrClient(GObject.Object):
             f"[d] EVENT {event['id'][:8]} sent to {len(sent)}/{len(urls)} DM relay(s)"
         )
         return sent
+
+    # --- NIP-29 group routing (spec nipw-communities-v1 §3) -----------------
+
+    def subscribe_on_relay(self, url, sub_id, filters, snapshot=False):
+        """Open a subscription on ONE specific relay (group relays are the
+        group's own hint URL — group REQs must never fan out to read-role
+        relays). Connects the relay on demand. Returns True if dispatched."""
+        if url not in self.active_relays:
+            self.add_relay_connection(url)
+        r = self.active_relays.get(url)
+        if r is None:
+            return False
+        r.subscribe(sub_id, filters, snapshot=snapshot)
+        return True
+
+    def close_sub_on_relay(self, url, sub_id):
+        r = self.active_relays.get(url)
+        if r is not None:
+            r.close_sub(sub_id)
+
+    def publish_to_relay(self, url, event, label="Group event"):
+        """Publish to exactly one relay (group 9021/9022/posts stay on the
+        group relay — never general relays). Registers the OK-ack like
+        publish(); `publish-result` resolves as usual, so the join state
+        machine can drive off OK callbacks."""
+        if url not in self.active_relays:
+            self.add_relay_connection(url)
+        sent = self.publish_to_relays(event, {url})
+        self._track_publish(event, label, sent_urls=sent, candidates={url})
+        return bool(sent)
+
+    def dispatch_signed_to_relay(self, event, url, label="Group event"):
+        """Sign an unsigned event through the active backend (local inline,
+        bunker on a worker thread — same split as _dispatch_signed) and
+        publish it to ONE relay only. Group events must never fan out to
+        the write relays."""
+        backend = getattr(self, "signer", None)
+        if backend is not None and not getattr(backend, "is_local", True):
+            def _worker():
+                signed = backend.sign_event(event)
+                if signed:
+                    self.publish_to_relay(url, signed, label)
+
+            threading.Thread(target=_worker, daemon=True).start()
+            return True
+        signed = self._sign(event)
+        if signed:
+            return self.publish_to_relay(url, signed, label)
+        return False
+
+    def get_groups_gateway(self):
+        """Lazy SQLiteGroupsGateway (same pattern as the DM gateway). Tests
+        that never call this keep _groups_gateway None and the client stays
+        filesystem-free."""
+        gw = getattr(self, "_groups_gateway", None)
+        if gw is None:
+            from gnostr.gateway.groups_gateway import SQLiteGroupsGateway
+
+            gw = SQLiteGroupsGateway()
+            gw.init_db()
+            self._groups_gateway = gw
+        return gw
 
     def _role_tag(self, url):
         """Compact role tag for a relay's activity-log lines (spec §A.6):

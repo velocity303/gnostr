@@ -107,5 +107,17 @@
 			<summary>Rank staleness in days</summary>
 			<description>Rank rows older than this trigger a background refetch. The stale rank keeps deciding until fresh data lands.</description>
 		</key>
+		<!-- NIP-29 Communities (spec nipw-communities-v1 §4): additive
+		     feature; groups-enabled defaults TRUE. -->
+		<key name="groups-enabled" type="b">
+			<default>true</default>
+			<summary>Enable Communities (NIP-29 groups)</summary>
+			<description>Shows the Communities sidebar page: group registry (kind-10009), preview-gated join, per-group relay routing. Disable to hide the page entirely.</description>
+		</key>
+		<key name="groups-last-sync" type="i">
+			<default>0</default>
+			<summary>Last group registry sync (unix time)</summary>
+			<description>Timestamp of the last successful kind-10009 registry refresh.</description>
+		</key>
 	</schema>
 </schemalist>
