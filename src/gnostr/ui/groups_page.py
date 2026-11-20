@@ -126,6 +126,14 @@ class GroupsPage(Gtk.Box):
         if ev.get("pubkey") != self.client.my_pubkey:
             return
         refs = groups.parse_10009(ev)
+        try:
+            from gi.repository import Gio
+
+            Gio.Settings.new("tech.livingonlinux.gnostr").set_int(
+                "groups-last-sync", int(ev.get("created_at") or 0)
+            )
+        except Exception:
+            pass
         gw = self._gateway()
         for ref in refs:
             self._refs[(ref.relay, ref.id)] = ref
@@ -422,6 +430,7 @@ class GroupDetailPage(Gtk.Box):
                         pass
                 self.status_lbl.set_text("Left the group")
                 self.leave_btn.set_visible(False)
+                self._sync_registry(add=False)
             return
         if event_id != self.machine.join_event_id:
             return
@@ -433,7 +442,32 @@ class GroupDetailPage(Gtk.Box):
                     gw.set_membership(self.relay, self.group_id, "member")
                 except Exception:
                     pass
+            self._sync_registry(add=True)
         self._render_status()
+
+    def _sync_registry(self, add=True):
+        """Republish the replacement 10009 after a confirmed join/leave:
+        every gateway row whose membership is 'member' (viewed-but-not-joined
+        groups stay out)."""
+        gw = getattr(self.client, "_groups_gateway", None)
+        if gw is None:
+            return
+        try:
+            refs = []
+            for row in gw.list_groups():
+                relay, gid = row["relay"], row["group_id"]
+                if not groups.validate_relay_url(relay):
+                    continue
+                joined = gw.get_membership(relay, gid) == "member"
+                if relay == self.relay and gid == self.group_id:
+                    joined = add
+                if joined:
+                    refs.append(
+                        groups.GroupRef(gid, relay, row.get("name") or None)
+                    )
+        except Exception:
+            return
+        self.client.publish_groups_list(refs)
 
     # -- rendering ---------------------------------------------------------------
 

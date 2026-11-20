@@ -2432,6 +2432,28 @@ class NostrClient(GObject.Object):
             return self.publish_to_relay(url, signed, label)
         return False
 
+    def publish_groups_list(self, refs):
+        """Replacement kind-10009 write (spec §1.5). Write target: all general
+        relays via publish(), mirroring how 10002 is handled — spec open
+        question Q3, answered in the PR."""
+        pk = self.my_pubkey
+        if not pk:
+            return False
+        ev = gnostr.nostr_utils.build_event(
+            pk, groups.KIND_GROUPS_LIST, "", groups.group_tags_from_refs(refs)
+        )
+        backend = getattr(self, "signer", None)
+        if backend is not None and not getattr(backend, "is_local", True):
+            def _worker():
+                signed = backend.sign_event(ev)
+                if signed:
+                    self.publish(signed)
+
+            threading.Thread(target=_worker, daemon=True).start()
+            return True
+        signed = self._sign(ev)
+        return bool(signed) and self.publish(signed)
+
     def get_groups_gateway(self):
         """Lazy SQLiteGroupsGateway (same pattern as the DM gateway). Tests
         that never call this keep _groups_gateway None and the client stays
