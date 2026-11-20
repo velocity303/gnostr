@@ -130,6 +130,13 @@ if xvfb_run.found() and gtk_python.found()
   test('test_blossom_wiring_gtk_real', xvfb_run,
     args: ['-a', gtk_python, meson.project_source_root() / 'tests/test_blossom_wiring_gtk_real.py'],
     timeout: 120)
+  # Real-GTK Trust Shield wiring harness (NIPW-P2-FIX): a real
+  # notify::active emission on an Adw.SwitchRow built by the real
+  # _build_trust_group must reach trust_set (the FLX1 1-arg-lambda bug
+  # made the toggle never persist).
+  test('test_trust_shield_wiring_gtk_real', xvfb_run,
+    args: ['-a', gtk_python, meson.project_source_root() / 'tests/test_trust_shield_wiring_gtk_real.py'],
+    timeout: 120)
   # Real-GTK recipient-picker smoke (Phase A2): construct + filter +
   # paste-pin + activate against real Gtk/Adw.
   test('test_dm_recipient_gtk_real', xvfb_run,

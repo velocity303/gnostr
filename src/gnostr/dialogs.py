@@ -796,9 +796,11 @@ class RelayPreferencesWindow(Adw.PreferencesWindow):
             subtitle="Low-rank posts collapse to a one-line stub",
         )
         self.trust_enabled_row.set_active(ts.trust_get("trust-shield"))
+        # notify:: emits (object, GParamSpec) — the handler must take both
+        # args or trust_set never runs (FLX1 device-test regression).
         self.trust_enabled_row.connect(
             "notify::active",
-            lambda r: ts.trust_set("trust-shield", r.get_active()),
+            lambda r, _ps: ts.trust_set("trust-shield", r.get_active()),
         )
         g.add(self.trust_enabled_row)
 

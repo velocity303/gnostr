@@ -279,3 +279,55 @@ def test_fixture_ranks_into_db_then_policy(tmp_path, monkeypatch):
         rank = trust_shield.select_rank([row]) if row else None
         assert policy.decide(pk, rank) == pf["expected_decisions"][name], name
     assert db.trust_rank_count(provider) == 6  # malformed event never stored
+
+
+def test_notify_handlers_accept_gparamspec():
+    """FLX1 regression (NIPW-P2-FIX): GObject notify:: emits
+    (object, GParamSpec). A 1-parameter lambda dies inside the signal
+    machinery — PyGObject swallows the TypeError to stderr — so the Trust
+    Shield toggle NEVER persisted while every mock-based test stayed green.
+    Static guard: every notify:: handler in dialogs.py must accept the
+    pspec argument (lambda: >= 2 params; bound method: >= 3 incl. self,
+    plus one per connect user_data arg; *args always passes)."""
+    import ast
+
+    path = os.path.join(os.path.dirname(__file__), "..", "src", "gnostr", "dialogs.py")
+    with open(path) as f:
+        tree = ast.parse(f.read())
+    methods = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+    checked = 0
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "connect"
+            and len(node.args) >= 2
+            and isinstance(node.args[0], ast.Constant)
+            and str(node.args[0].value).startswith("notify::")
+        ):
+            continue
+        handler = node.args[1]
+        user_data = len(node.args) - 2
+        if isinstance(handler, ast.Lambda):
+            a = handler.args
+            ok = bool(a.vararg) or len(a.args) >= 2 + user_data
+            desc = "lambda at line %d" % handler.lineno
+        else:
+            name = (
+                handler.attr
+                if isinstance(handler, ast.Attribute)
+                else getattr(handler, "id", None)
+            )
+            fn = methods.get(name)
+            if fn is None:
+                continue  # handler defined outside this file
+            a = fn.args
+            ok = bool(a.vararg) or len(a.args) >= 3 + user_data
+            desc = "%s at line %d" % (name, fn.lineno)
+        assert ok, "notify:: handler %s cannot accept (object, GParamSpec)" % desc
+        checked += 1
+    # trust switch + relay enabled/role switches + visible-page: guard the
+    # whole file, and fail loudly if the scan itself ever stops matching.
+    assert checked >= 4, (
+        "expected >=4 notify:: connections in dialogs.py, got %d" % checked
+    )
