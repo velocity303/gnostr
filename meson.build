@@ -71,6 +71,8 @@ if pytest_prog.found()
   test('test_dm_recipient_view', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_dm_recipient_view.py'], env: test_env, timeout: 120)
   test('test_dm_gtk422_api', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_dm_gtk422_api.py'], env: test_env, timeout: 120)
   test('test_relay_log_wrap', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_relay_log_wrap.py'], env: test_env, timeout: 120)
+  # HYGIENE t_1c40a299: NIP-01 sub_id <64-char clamp (REQ/CLOSE parity).
+  test('test_subid_nip01', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_subid_nip01.py'], env: test_env, timeout: 120)
   # RELSET-2 (spec relays-and-settings-v1 §A): relay_entries pure data model
   # + client wiring (legacy migration, role routing, NIP-65 10002 markers,
   # parking, reorder persistence, import merge, activity-log role tags).
