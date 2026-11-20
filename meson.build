@@ -59,6 +59,7 @@ if pytest_prog.found()
   test('test_zap_flood_pipeline', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_zap_flood_pipeline.py'], env: test_env, timeout: 120)
   test('test_markup', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_markup.py'], env: test_env, timeout: 120)
   test('test_feed_collapse', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_feed_collapse.py'], env: test_env, timeout: 120)
+  test('test_trust_shield', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_trust_shield.py'], env: test_env, timeout: 120)
   test('test_uploader', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_uploader.py'], env: test_env, timeout: 120)
   # VID-1: mobile video buffering — prefill props, threshold-gated play,
   # BUFFERING UX transitions + mid-playback pause-and-resume (mocked bus).

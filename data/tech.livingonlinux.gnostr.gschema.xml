@@ -77,5 +77,35 @@
 			<summary>Monthly zap budget in sats</summary>
 			<description>Client soft cap: the app blocks zap confirmations once the calendar month's recorded spend plus the next zap exceeds this. The wallet service enforces its own hard cap at connection mint time; keep this at or below it.</description>
 		</key>
+		<!-- Trust Shield (spec trust-shield-v1 §7): WoT spam collapse.
+		     trust-shield defaults FALSE — flag-off is byte-for-byte the
+		     pre-feature app (every consumer checks this first). -->
+		<key name="trust-shield" type="b">
+			<default>false</default>
+			<summary>Enable Trust Shield (NIP-85 reputation collapse)</summary>
+			<description>When true, posts from authors a reputation provider ranks below the threshold collapse to a one-line stub in feeds and threads. Off by default.</description>
+		</key>
+		<key name="trust-shield-provider" type="s">
+			<default>''</default>
+			<summary>Reputation provider pubkey (npub or hex)</summary>
+			<description>Manual provider override. Empty = auto-discover providers from follows' kind-10040 lists.</description>
+		</key>
+		<key name="trust-shield-relay" type="s">
+			<default>''</default>
+			<summary>Provider rank relay hint</summary>
+			<description>Optional relay URL to fetch rank events from instead of the configured relays. Empty = use configured relays.</description>
+		</key>
+		<key name="trust-shield-threshold" type="i">
+			<default>25</default>
+			<range min="0" max="100"/>
+			<summary>Collapse threshold (0-100)</summary>
+			<description>Authors ranked strictly below this value collapse to a stub. Authors you follow and authors with no rank are never collapsed.</description>
+		</key>
+		<key name="trust-shield-max-age-days" type="i">
+			<default>7</default>
+			<range min="1" max="90"/>
+			<summary>Rank staleness in days</summary>
+			<description>Rank rows older than this trigger a background refetch. The stale rank keeps deciding until fresh data lands.</description>
+		</key>
 	</schema>
 </schemalist>

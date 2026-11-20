@@ -160,6 +160,22 @@ class Database:
                 "ON zaps(bolt11)"
             )
 
+            # trust-shield-v1 §5.2: NIP-85 kind-30382 provider ranks.
+            # rank_updated = the rank event's created_at (provider's clock,
+            # R6 selection key); fetched_at = our wall clock (staleness).
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS trust_ranks (
+                    provider TEXT NOT NULL,
+                    subject TEXT NOT NULL,
+                    rank INTEGER NOT NULL CHECK (rank BETWEEN 0 AND 100),
+                    rank_updated INTEGER NOT NULL,
+                    fetched_at INTEGER NOT NULL,
+                    PRIMARY KEY (provider, subject)
+                )
+                """
+            )
+
             # Indexes for feed queries (JOIN on pubkey + ORDER BY created_at).
             # Without these, feed loads full-table-scan on a growing DB.
             cursor.execute(
@@ -916,3 +932,74 @@ class Database:
             )
             row = cursor.fetchone()
             return row[0] if row else None
+
+    # -- trust-shield-v1 (NIP-85 ranks) ------------------------------------
+
+    def upsert_trust_rank(self, provider, subject, rank, rank_updated):
+        """Store/replace one provider rank for one subject (spec §5.2)."""
+        if not self.conn:
+            return False
+        with self.lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "INSERT INTO trust_ranks "
+                "(provider, subject, rank, rank_updated, fetched_at) "
+                "VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(provider, subject) DO UPDATE SET "
+                "rank = excluded.rank, rank_updated = excluded.rank_updated, "
+                "fetched_at = excluded.fetched_at",
+                (provider, subject, int(rank), int(rank_updated), int(time.time())),
+            )
+            self.conn.commit()
+            return True
+
+    def get_trust_rank(self, provider, subject):
+        """The stored rank row for (provider, subject) as a dict, or None.
+        Freshness/staleness is the caller's decision (trust_shield.is_stale)."""
+        if not self.conn:
+            return None
+        with self.lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "SELECT rank, rank_updated, fetched_at FROM trust_ranks "
+                "WHERE provider = ? AND subject = ?",
+                (provider, subject),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return {"rank": row[0], "rank_updated": row[1], "fetched_at": row[2]}
+
+    def trust_rank_count(self, provider):
+        """Number of cached ranks for a provider (settings status line)."""
+        if not self.conn:
+            return 0
+        with self.lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "SELECT COUNT(*) FROM trust_ranks WHERE provider = ?", (provider,)
+            )
+            return cursor.fetchone()[0]
+
+    def trust_last_fetch(self, provider):
+        """Latest fetched_at across a provider's rows (epoch seconds) or None."""
+        if not self.conn or not provider:
+            return None
+        with self.lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "SELECT MAX(fetched_at) FROM trust_ranks WHERE provider = ?",
+                (provider,),
+            )
+            row = cursor.fetchone()
+            return row[0] if row and row[0] is not None else None
+
+    def purge_other_trust_ranks(self, provider):
+        """Provider switch: drop every other provider's rows (spec §5.2 —
+        the read set stays bounded to the active provider)."""
+        if not self.conn or not provider:
+            return
+        with self.lock:
+            cursor = self.conn.cursor()
+            cursor.execute("DELETE FROM trust_ranks WHERE provider != ?", (provider,))
+            self.conn.commit()

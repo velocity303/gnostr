@@ -1,0 +1,197 @@
+{
+  "note": "Fixture-only keys/scalars. NEVER use on mainnet.",
+  "provider_pubkey": "a763950369e5a0ad588d4f98b2599597caefb1a2d58eaf0b9242d98ae0c8c59d",
+  "self_sk_hex_fixture_only": "9432fa694dfe61f01772589e242d226f079c43d9b91c0bd36fa6ce927ffe84e8",
+  "self_pubkey": "261455a8d89e71d6e0cf9f910a6c669a350adc49053bf622b204fb84573cab4d",
+  "targets": {
+    "target1": "289cbc52c617b86109741c1e9c0472d75c9cf18c2ef9fb051914a908d89074a4",
+    "target2": "adea7ad9e8f0c0930400884066d4313faa7565e4c3767225a013930b7fe8abc5",
+    "target3": "b424a5270e6c99498bb56565593f3e4061cbadc58aa8e6a8ab711d11a38f8608",
+    "target4": "8e20d3481945044b2ce6b09d4c7564351fe7ca49857ee6380a09c3ec18087c00",
+    "target5": "35603ba1baad19f294a31f701d6b34c131b7cd987bcf8e3653257b63f3131955",
+    "target6": "861d611523ca584781ccf4ce02ff0f1d602f95a59774810d25d827b70769ee62",
+    "target7": "70a4de38e715946375b8a7efc67dfb7aa9e274d51a77e67ce4f26d47c2646181"
+  },
+  "target_sk_hex_fixture_only": {
+    "1": "cb93d813aa8bc7e2fe11b0970ff8fe8d872cf4570b86f5e62a7f87d66d49f872",
+    "2": "5639c1516e55e02ae4b5591aa101e33ee0f279a44e0d469a746fe980b89044fd",
+    "3": "077e578bc49d0e0d824ebae5bcfccc47cb0eda20318e136a511008e5312bf47a",
+    "4": "2d6b337d0fa801a9f022dae73866714139f6538d06d4591823ea8be45765f903",
+    "5": "8090ed197fbd0edffcfa556fc188ead9e3fbb20e3e07625fed59449e8e7e251d",
+    "6": "dc8141e8674c61b22e94655dac84cf5dd21b6663b8fe29d2247145c9dfdfc3d6",
+    "7": "d5cbaf9fb263e6275c0e4c3b0e9340069804948f3258446a806de8166a332c43"
+  },
+  "provider_profile_event": {
+    "pubkey": "a763950369e5a0ad588d4f98b2599597caefb1a2d58eaf0b9242d98ae0c8c59d",
+    "created_at": 1763500000,
+    "kind": 0,
+    "tags": [],
+    "content": "{\"name\":\"Trust Shield Fixture Provider\",\"about\":\"Deterministic NIP-85 test provider. Do not use in production.\",\"website\":\"http://127.0.0.1:8080\"}",
+    "id": "bee80253a6985eb41549590f1c0a7a9b70a1ebbbb5127cf1ca035816fa8541b6",
+    "sig": "25513905054e8a08b08b2b67ba17de18884d9ee83a139245b3148720b36d1423d50919fab3a80b9a74037531d64217368c85b100fd7f871f749453d23c11a71b"
+  },
+  "rank_events": [
+    {
+      "pubkey": "a763950369e5a0ad588d4f98b2599597caefb1a2d58eaf0b9242d98ae0c8c59d",
+      "created_at": 1763500001,
+      "kind": 30382,
+      "tags": [
+        [
+          "d",
+          "289cbc52c617b86109741c1e9c0472d75c9cf18c2ef9fb051914a908d89074a4"
+        ],
+        [
+          "rank",
+          "90"
+        ]
+      ],
+      "content": "",
+      "id": "89bbfdc2b4d8d9b533f77df9ed5afc08d92e7134fa27884b4c689a33bbd632e4",
+      "sig": "feb7d6d39ecd556f62b1178be05b32bedf9735fc5026e4b92be849df5aaa33a45cb14c733cf747cc7f96292d9bfc1d4d8ea59d1d1a9001ded9ffff73971dd678"
+    },
+    {
+      "pubkey": "a763950369e5a0ad588d4f98b2599597caefb1a2d58eaf0b9242d98ae0c8c59d",
+      "created_at": 1763500001,
+      "kind": 30382,
+      "tags": [
+        [
+          "d",
+          "adea7ad9e8f0c0930400884066d4313faa7565e4c3767225a013930b7fe8abc5"
+        ],
+        [
+          "rank",
+          "75"
+        ]
+      ],
+      "content": "",
+      "id": "172488663c679fa612f257441385062c520471c335db8f3b69cabe96f694d44b",
+      "sig": "5c4e320140800649b0b165cd986825b75ef0ea3583a224a7a6c57332798beac09795f4b646831b966312ffef9c263d34952b0e2887625af3a87d6dd37353045c"
+    },
+    {
+      "pubkey": "a763950369e5a0ad588d4f98b2599597caefb1a2d58eaf0b9242d98ae0c8c59d",
+      "created_at": 1763500001,
+      "kind": 30382,
+      "tags": [
+        [
+          "d",
+          "b424a5270e6c99498bb56565593f3e4061cbadc58aa8e6a8ab711d11a38f8608"
+        ],
+        [
+          "rank",
+          "25"
+        ]
+      ],
+      "content": "",
+      "id": "6b0359a5faa4545525cd06a7b896e092a7b68515a9afced242071c3543eb629f",
+      "sig": "315449eec942c47318124f481941310c12ef018475b06f4f1659d02c937f06b02f561f8478d7d53d682ba83742859e34349b90dc1377e2397d0ccc258cfd2090"
+    },
+    {
+      "pubkey": "a763950369e5a0ad588d4f98b2599597caefb1a2d58eaf0b9242d98ae0c8c59d",
+      "created_at": 1763500001,
+      "kind": 30382,
+      "tags": [
+        [
+          "d",
+          "8e20d3481945044b2ce6b09d4c7564351fe7ca49857ee6380a09c3ec18087c00"
+        ],
+        [
+          "rank",
+          "24"
+        ]
+      ],
+      "content": "",
+      "id": "855ecb737b087d91ff9890327fa0b54442267238d28e09b9444587c24d1b461b",
+      "sig": "bfae0beb187c1204b9ab6f9865201de63f2139a2b274247b0aaf24bf837b3d8b21f48bb49154bfcd09b13f040b09e5d73cccb9aa758a34c44b6be38a2f2d9101"
+    },
+    {
+      "pubkey": "a763950369e5a0ad588d4f98b2599597caefb1a2d58eaf0b9242d98ae0c8c59d",
+      "created_at": 1763500001,
+      "kind": 30382,
+      "tags": [
+        [
+          "d",
+          "35603ba1baad19f294a31f701d6b34c131b7cd987bcf8e3653257b63f3131955"
+        ],
+        [
+          "rank",
+          "10"
+        ]
+      ],
+      "content": "",
+      "id": "6e5859d0f2b6564cab115c069248c72de6dbea059d2ac901c6ad08f9b7dda780",
+      "sig": "1d4a7adec2453dfd5e4587fc4a6dee8fe90169f9a97816dc172fcf1837096450784aecee75c464f75283cf8c43834acaf24d414562a9ea41ee726c729a07206e"
+    },
+    {
+      "pubkey": "a763950369e5a0ad588d4f98b2599597caefb1a2d58eaf0b9242d98ae0c8c59d",
+      "created_at": 1763500001,
+      "kind": 30382,
+      "tags": [
+        [
+          "d",
+          "70a4de38e715946375b8a7efc67dfb7aa9e274d51a77e67ce4f26d47c2646181"
+        ],
+        [
+          "rank",
+          "10"
+        ]
+      ],
+      "content": "",
+      "id": "be7652c2e18f7a7e3569b410206a5c68040e3bf06048252abc4a2f995041a2c3",
+      "sig": "4511cd0f7342ac5877498335341a8ccf1b97c68efff928b91304f943f4784819c02f3ad8e9ab84a87b7435b87dfeb8c9f6152cb9b6d1bec41fb79640ec4dd939"
+    },
+    {
+      "pubkey": "a763950369e5a0ad588d4f98b2599597caefb1a2d58eaf0b9242d98ae0c8c59d",
+      "created_at": 1763500002,
+      "kind": 30382,
+      "tags": [
+        [
+          "d",
+          "861d611523ca584781ccf4ce02ff0f1d602f95a59774810d25d827b70769ee62"
+        ],
+        [
+          "rank",
+          "400"
+        ]
+      ],
+      "content": "",
+      "id": "d7138db7b032f37e01d03be909815dae48e037a582a882b693d95ebc46781fdc",
+      "sig": "69b818fb617ab684a89074abffb155481a64fa707ab1dd6b2a2a9c2c95cb999def09941b970cab56af6dfd999f8da0629a474b9f174a4c2739e0eb5ca2d74d23"
+    }
+  ],
+  "policy_fixture": {
+    "threshold": 25,
+    "follows": [
+      "70a4de38e715946375b8a7efc67dfb7aa9e274d51a77e67ce4f26d47c2646181"
+    ],
+    "self": "261455a8d89e71d6e0cf9f910a6c669a350adc49053bf622b204fb84573cab4d",
+    "expected_decisions": {
+      "target1": "normal",
+      "target2": "normal",
+      "target3": "normal",
+      "target4": "collapse",
+      "target5": "collapse",
+      "target6": "normal",
+      "target7": "normal"
+    }
+  },
+  "expected_rank_fetch_req_example": [
+    "trustshield_1",
+    {
+      "authors": [
+        "a763950369e5a0ad588d4f98b2599597caefb1a2d58eaf0b9242d98ae0c8c59d"
+      ],
+      "kinds": [
+        30382
+      ],
+      "#d": [
+        "289cbc52c617b86109741c1e9c0472d75c9cf18c2ef9fb051914a908d89074a4",
+        "adea7ad9e8f0c0930400884066d4313faa7565e4c3767225a013930b7fe8abc5",
+        "b424a5270e6c99498bb56565593f3e4061cbadc58aa8e6a8ab711d11a38f8608",
+        "8e20d3481945044b2ce6b09d4c7564351fe7ca49857ee6380a09c3ec18087c00",
+        "35603ba1baad19f294a31f701d6b34c131b7cd987bcf8e3653257b63f3131955",
+        "861d611523ca584781ccf4ce02ff0f1d602f95a59774810d25d827b70769ee62",
+        "70a4de38e715946375b8a7efc67dfb7aa9e274d51a77e67ce4f26d47c2646181"
+      ]
+    }
+  ]
+}

@@ -3,7 +3,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw
-from gnostr.ui.post_widget import PostWidget
+from gnostr.ui.post_widget import PostWidget, TrustStubWidget
 
 from ..util import collapse as collapse_util
 
@@ -115,16 +115,27 @@ class ThreadView(Adw.Bin):
         # We'll rely on the DB having the replies indexed
         replies = self.main_window.db.get_replies(event_id)
         for ev in replies:
-            w = PostWidget(
-                self.main_window,
-                ev["pubkey"],
-                ev["content"],
-                ev["id"],
-                ev.get("tags", []),
-                created_at=ev.get("created_at"),
-                root_id=event_id,
-                root_pk=pubkey,
-            )
+            # trust-shield-v1 §3.2: replies collapse per policy; the thread
+            # hero and context-chain ancestors never collapse.
+            if self.main_window.client.trust_shield_decide(ev["pubkey"]) == "collapse":
+                w = TrustStubWidget(
+                    self.main_window,
+                    ev["pubkey"],
+                    ev["content"],
+                    ev["id"],
+                    created_at=ev.get("created_at"),
+                )
+            else:
+                w = PostWidget(
+                    self.main_window,
+                    ev["pubkey"],
+                    ev["content"],
+                    ev["id"],
+                    ev.get("tags", []),
+                    created_at=ev.get("created_at"),
+                    root_id=event_id,
+                    root_pk=pubkey,
+                )
             # get_replies is newest-first (ORDER BY created_at DESC); append
             # builds newest→oldest top-to-bottom.
             self.replies_box.append(w)
@@ -304,14 +315,24 @@ class ThreadView(Adw.Bin):
 
     def _append_replies_dfs(self, parent_id, children, depth):
         for ev in children.get(parent_id, []):
-            w = PostWidget(
-                self.main_window,
-                ev["pubkey"],
-                ev["content"],
-                ev["id"],
-                ev.get("tags", []),
-                created_at=ev.get("created_at"),
-            )
+            # trust-shield-v1 §3.2: nested replies collapse per policy.
+            if self.main_window.client.trust_shield_decide(ev["pubkey"]) == "collapse":
+                w = TrustStubWidget(
+                    self.main_window,
+                    ev["pubkey"],
+                    ev["content"],
+                    ev["id"],
+                    created_at=ev.get("created_at"),
+                )
+            else:
+                w = PostWidget(
+                    self.main_window,
+                    ev["pubkey"],
+                    ev["content"],
+                    ev["id"],
+                    ev.get("tags", []),
+                    created_at=ev.get("created_at"),
+                )
             if depth:
                 # Indent nested replies so the parent-child structure reads.
                 w.set_margin_start(depth * 24)
