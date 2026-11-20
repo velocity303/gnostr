@@ -1,4 +1,5 @@
 import collections
+import hashlib
 import json
 import os
 import queue
@@ -68,6 +69,33 @@ DM_INITIATION_HARD_STOP_PER_HOUR = 30
 REQ_RATE_LIMIT = 18  # REQ messages per relay per second (18/s < 200/10s cap)
 REQ_BURST = 5  # burst allowance for a legitimate simultaneous fan-out
 REQ_DEDUP_WINDOW = 2.0  # s; same sub_id enqueued twice inside this window = 1 REQ
+# NIP-01 hygiene: a subscription id MUST be less than 64 characters. Relays
+# accept an over-long REQ id but reject the matching CLOSE ("bad close:
+# invalid subscription id length" NOTICEs from relay.primal.net, nostr.mom,
+# nostr.bitcoiner.social, nos.lol), leaking the subscription until the
+# socket drops. Every sub_id passes through nip01_sub_id() at the client and
+# relay entry points, so REQ and CLOSE always carry the same legal id.
+SUB_ID_MAX_LEN = 63  # NIP-01 "<64" bound
+
+
+def nip01_sub_id(sub_id):
+    """Clamp a subscription id to the NIP-01 <64-char limit.
+
+    Deterministic and idempotent: an id that already fits is returned
+    unchanged (clamp(clamp(x)) == clamp(x), and client-level maps keyed by
+    the id see the same string the relay echoes back in EOSE/CLOSED). An
+    over-long id keeps its leading ``prefix_`` label — prefix matching such
+    as startswith("thread_") keeps working — and replaces the body with a
+    sha256 slice of the whole id (56 hex chars for a 7-char prefix).
+    """
+    if len(sub_id) < 64:
+        return sub_id
+    cut = sub_id.find("_")
+    prefix = sub_id[: cut + 1] if cut >= 0 else ""
+    budget = SUB_ID_MAX_LEN - len(prefix)
+    return prefix + hashlib.sha256(sub_id.encode("utf-8")).hexdigest()[:budget]
+
+
 RECONNECT_BACKOFF_START = 2.0  # s; randomized exponential, capped below
 RECONNECT_BACKOFF_MAX = 60.0
 IDLE_RELAY_TIMEOUT = 300.0  # s of zero relay traffic before idle disconnect
@@ -297,6 +325,9 @@ class NostrRelay(GObject.Object):
         return True
 
     def subscribe(self, sub_id, filters, snapshot=False):
+        # NIP-01: clamp before anything keys on the id (previous-CLOSE,
+        # snapshot/live sets, REQ) so CLOSE always matches what was REQ'd.
+        sub_id = nip01_sub_id(sub_id)
         # Close the previous subscription before opening a new one, but only if
         # it's actually open on THIS relay. The old code used a single shared
         # self.sub_id and sent CLOSE for IDs the relay didn't recognize, which
@@ -344,6 +375,7 @@ class NostrRelay(GObject.Object):
         opened twice while scrolling, or a widget remount storm) is one REQ,
         not two. The window is short so a deliberate later re-fetch (TTL
         expiry) still goes out."""
+        sub_id = nip01_sub_id(sub_id)  # NIP-01: legal id on REQ and EOSE-close
         now = time.monotonic()
         if sub_id in self.queued_sub_ids:
             return
@@ -1057,6 +1089,11 @@ class NostrClient(GObject.Object):
             r.request_once(sub_id, filter)
 
     def request_once(self, sub_id, filters):
+        # NIP-01: clamp at the client level too, so client-side maps keyed
+        # by sub_id (backfill fan-in, dm-status probes) see the same id the
+        # relay echoes back in EOSE/CLOSED. Idempotent — relay-side clamp
+        # is a no-op on the already-legal id.
+        sub_id = nip01_sub_id(sub_id)
         # Role routing (spec §A): one-shot REQs are reads — read-role relays.
         for r in self._read_relays().values():
             r.request_once(sub_id, filters)
@@ -1198,6 +1235,9 @@ class NostrClient(GObject.Object):
             GLib.idle_add(self.emit, "backfill-done", sub_id)
 
     def subscribe(self, sub_id, filters, snapshot=False):
+        # NIP-01: clamp at the client level (see request_once) so every
+        # relay receives — and later CLOSEs — the identical legal id.
+        sub_id = nip01_sub_id(sub_id)
         # Role routing (spec §A): feed/REQ subscriptions go to read-role
         # relays only. Fallback to every connected relay when the entry
         # model is absent (legacy fakes) or no relay carries `read` — a
@@ -2416,7 +2456,10 @@ class NostrClient(GObject.Object):
         f1 = {"ids": [root_id]}
         f2 = {"kinds": [1], "#e": [root_id], "limit": 50}
         f3 = {"kinds": [6, 7], "#e": [root_id], "limit": 100}
-        self.subscribe(f"thread_{root_id}", [f1, f2, f3])
+        # NIP-01: f"thread_{root_id}" is 71 chars — relays REQ it but reject
+        # its CLOSE ("bad close: invalid subscription id length"), leaking the
+        # sub. The clamp keeps the thread_ prefix and hashes the id body.
+        self.subscribe(nip01_sub_id(f"thread_{root_id}"), [f1, f2, f3])
 
     def close(self):
         # gnostr-startup-2: a batch below the size threshold may still be in

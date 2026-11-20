@@ -60,11 +60,25 @@ def _extract(path, target, method_name, extra_ns=None):
     ns = {
         "json": json,
         "time": time,
+        "hashlib": __import__("hashlib"),
         "gnostr": __import__("gnostr"),
         "GLib": types.SimpleNamespace(idle_add=lambda fn, *a: fn(*a)),
     }
     if extra_ns:
         ns.update(extra_ns)
+    # Auto-bind module-level helpers/constants the method references (e.g.
+    # nip01_sub_id) so extracted methods stay honest when client.py grows
+    # new helpers. Names already supplied (extra_ns) are never overridden.
+    needed = {n.id for n in ast.walk(fn) if isinstance(n, ast.Name)}
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name in needed and node.name not in ns:
+            exec(compile(ast.Module(body=[node], type_ignores=[]), path, "exec"), ns)
+        elif isinstance(node, ast.Assign):
+            if any(
+                isinstance(t, ast.Name) and t.id in needed and t.id not in ns
+                for t in node.targets
+            ):
+                exec(compile(ast.Module(body=[node], type_ignores=[]), path, "exec"), ns)
     exec(compile(ast.Module(body=[fn], type_ignores=[]), path, "exec"), ns)
     return ns[method_name]
 
