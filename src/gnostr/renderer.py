@@ -24,6 +24,7 @@ from gi.repository import Gtk, Adw, GLib, Gdk, GdkPixbuf, Pango, Gst, GstApp, Gi
 
 from . import nostr_utils
 from . import proxy_opener
+from . import media_resolver
 from . import video_probe
 from .markup import emphasis_to_pango
 
@@ -186,7 +187,7 @@ class ContentRenderer:
             return False
 
     @staticmethod
-    def _add_video(box, url, window_ref, original_url=None):
+    def _add_video(box, url, window_ref, original_url=None, author_pk=None):
         video_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         video_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         video_area.set_halign(Gtk.Align.FILL)
@@ -206,7 +207,9 @@ class ContentRenderer:
             spinner.set_valign(Gtk.Align.CENTER)
             spinner.set_vexpand(True)
             video_area.append(spinner)
-            _schedule_media_build(url, video_area, spinner, window_ref, original_url)
+            _schedule_media_build(
+                url, video_area, spinner, window_ref, original_url, author_pk
+            )
         else:
             # Real videos: lazy-load. Don't build a playbin3 pipeline (and pull
             # the stream) until the user actually taps play — prerolling every
@@ -249,7 +252,7 @@ class ContentRenderer:
         click_ctrl.connect(
             "released",
             lambda c, n, x, y: ContentRenderer._start_playback(
-                video_area, url, window_ref, original_url, is_gif
+                video_area, url, window_ref, original_url, is_gif, author_pk
             ),
         )
         video_area.add_controller(click_ctrl)
@@ -315,7 +318,8 @@ class ContentRenderer:
         box.append(video_box)
 
     @staticmethod
-    def _start_playback(video_area, url, window_ref, original_url, is_gif=False):
+    def _start_playback(video_area, url, window_ref, original_url, is_gif=False,
+                        author_pk=None):
         """Lazy playback bootstrap. If the pipeline is already built, just
         toggle; otherwise remove the placeholder, show a spinner, and build the
         pipeline with autoplay. Keeps preroll cost to videos the user actually
@@ -353,7 +357,9 @@ class ContentRenderer:
         spinner.set_valign(Gtk.Align.CENTER)
         spinner.set_vexpand(True)
         video_area.append(spinner)
-        _schedule_media_build(url, video_area, spinner, window_ref, original_url)
+        _schedule_media_build(
+            url, video_area, spinner, window_ref, original_url, author_pk
+        )
 
     @staticmethod
     def _activation_gated(window_ref):
@@ -381,6 +387,10 @@ class ContentRenderer:
         # Guarded + deferred inside the module; costs one bool check per render.
         video_probe.ensure_probe(window_ref)
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        # NIPW-P1: media in this post was authored by the post's author —
+        # threaded to the loaders so dead content-addressed links can be
+        # recovered from THAT author's Blossom servers (NIP-B7).
+        author_pk = getattr(post_widget_ref, "pubkey", None) if post_widget_ref else None
 
         if not content:
             error_label = Gtk.Label(label="[No content to display]", xalign=0)
@@ -504,9 +514,13 @@ class ContentRenderer:
                     # http(s) link / media -> block widget
                     flush_text()
                     if ContentRenderer.is_image_url(clean_part):
-                        ContentRenderer._add_image(box, clean_part, window_ref)
+                        ContentRenderer._add_image(
+                            box, clean_part, window_ref, author_pk
+                        )
                     elif ContentRenderer.is_video_url(clean_part):
-                        ContentRenderer._add_video(box, clean_part, window_ref)
+                        ContentRenderer._add_video(
+                            box, clean_part, window_ref, author_pk=author_pk
+                        )
                     elif _is_youtube(clean_part):
                         # Defer everything to play time: rendering a feed must
                         # never block on yt-dlp (the old get_youtube_stream call
@@ -598,7 +612,7 @@ class ContentRenderer:
         box.append(lbl)
 
     @staticmethod
-    def _add_image(box, url, window_ref):
+    def _add_image(box, url, window_ref, author_pk=None):
         img_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         img_box.set_halign(Gtk.Align.FILL)
         img_box.set_hexpand(True)
@@ -612,7 +626,9 @@ class ContentRenderer:
         img_box.append(spinner)
         box.append(img_box)
 
-        ImageLoader.load_image_into_widget(url, img_box, spinner, window_ref)
+        ImageLoader.load_image_into_widget(
+            url, img_box, spinner, window_ref, author_pk=author_pk
+        )
 
     @staticmethod
     def _add_nostr_card(box, url, window, post_widget_ref=None):
@@ -925,11 +941,21 @@ class ImageLoader:
 
     @staticmethod
     def load_image_into_widget(
-        url, container, spinner, window_ref=None, max_height=None
+        url, container, spinner, window_ref=None, max_height=None, author_pk=None
     ):
         def on_ready(texture):
-            if spinner and spinner.get_parent() == container:
-                container.remove(spinner)
+            # NIPW-P1-FIX Bug B: this callback can fire MORE THAN ONCE for
+            # the same container (first fetch fails -> image-missing icon;
+            # Blossom recovery re-fires -> Picture). Gtk.Box.append
+            # asserts the child has no parent, so a blind second append
+            # burst 'gtk_box_append: child == NULL' CRITICALs. Clearing
+            # every existing child (spinner OR previously shown widget)
+            # before appending makes on_ready idempotent — the recovery
+            # replaces the failure icon instead of stacking on it.
+            child = container.get_first_child()
+            while child is not None:
+                container.remove(child)
+                child = container.get_first_child()
 
             if texture:
                 width = texture.get_width()
@@ -962,10 +988,10 @@ class ImageLoader:
             else:
                 container.append(Gtk.Image.new_from_icon_name("image-missing-symbolic"))
 
-        ImageLoader._request_image(url, on_ready, size=None)
+        ImageLoader._request_image(url, on_ready, size=None, author_pk=author_pk)
 
     @staticmethod
-    def _request_image(url, callback, size=None):
+    def _request_image(url, callback, size=None, author_pk=None):
         if not url:
             callback(None)
             return
@@ -982,11 +1008,14 @@ class ImageLoader:
             else:
                 ImageLoader._ongoing[url] = [(callback, size)]
 
-        ImageLoader._executor.submit(ImageLoader._worker_fetch, url, size)
+        ImageLoader._executor.submit(
+            ImageLoader._worker_fetch, url, size, author_pk
+        )
 
     @staticmethod
-    def _worker_fetch(url, size=None):
+    def _worker_fetch(url, size=None, author_pk=None):
         texture = None
+        data = None
         try:
             if url.startswith("http"):
                 req = urllib.request.Request(url, headers={"User-Agent": "Gnostr/1.0"})
@@ -997,6 +1026,17 @@ class ImageLoader:
                 opener = proxy_opener.proxy_opener()
                 with opener.open(req, timeout=15) as r:
                     data = r.read()
+        except Exception:
+            data = None
+        if not data and author_pk:
+            # NIPW-P1: dead content-addressed link -> try the author's
+            # Blossom servers (NIP-B7/BUD-03). resolve_blob verifies the
+            # blob's sha256 against the hash in the URL before returning
+            # it, so wrong bytes can never be decoded here. Runs on this
+            # worker thread only — the GLib main loop is never blocked.
+            _alt, data = media_resolver.resolve_blob(url, author_pk)
+        if data:
+            try:
                 loader = GdkPixbuf.PixbufLoader()
                 loader.write(data)
                 loader.close()
@@ -1008,8 +1048,8 @@ class ImageLoader:
                     if nw < pix.get_width() or nh < pix.get_height():
                         pix = pix.scale_simple(nw, nh, GdkPixbuf.InterpType.BILINEAR)
                     texture = Gdk.Texture.new_for_pixbuf(pix)
-        except Exception:
-            pass
+            except Exception:
+                texture = None
         GLib.idle_add(ImageLoader._notify_main_thread, url, texture)
 
     @staticmethod
@@ -1209,7 +1249,8 @@ _MEDIA_BUILD_MIN_GAP_MS = 200.0
 _media_build_state = {"last": -_MEDIA_BUILD_MIN_GAP_MS}
 
 
-def _schedule_media_build(url, container, spinner, window_ref, original_url=None):
+def _schedule_media_build(url, container, spinner, window_ref, original_url=None,
+                          author_pk=None):
     """VID-DECODE-UX: stagger playbin3 builds. Each build costs ~100-300 ms
     of main-thread time on the FLX1; a burst of card renders blocked the GLib
     loop for 881-1625 ms (main-loop lag probe, 2026-11-13 log) — that block
@@ -1220,7 +1261,8 @@ def _schedule_media_build(url, container, spinner, window_ref, original_url=None
             return False  # card scrolled away / re-rendered while queued
         _media_build_state["last"] = GLib.get_monotonic_time() / 1000.0
         VideoPlayer.load_and_play(
-            url, container, spinner, window_ref, original_url, autoplay=True
+            url, container, spinner, window_ref, original_url,
+            autoplay=True, author_pk=author_pk,
         )
         return False
 
@@ -1234,9 +1276,11 @@ def _schedule_media_build(url, container, spinner, window_ref, original_url=None
 
 class VideoLoader:
     @staticmethod
-    def load_and_play(url, container, spinner, window_ref=None, autoplay=False):
+    def load_and_play(url, container, spinner, window_ref=None, autoplay=False,
+                      author_pk=None):
         VideoPlayer.load_and_play(
-            url, container, spinner, window_ref, autoplay=autoplay
+            url, container, spinner, window_ref, autoplay=autoplay,
+            author_pk=author_pk,
         )
 
 
@@ -1248,8 +1292,16 @@ class VideoPlayer:
 
     @staticmethod
     def load_and_play(
-        url, container, spinner, window_ref=None, original_url=None, autoplay=False
+        url, container, spinner, window_ref=None, original_url=None, autoplay=False,
+        author_pk=None
     ):
+        # NIPW-P1-FIX (Bug B twin, video path): _blossom_swap and the tier
+        # retries re-deliver through THIS same on_ready closure. Track what
+        # this closure last appended so a second delivery removes it before
+        # appending — Gtk refuses to parent an already-parented child
+        # (gtk_box_append Gtk-CRITICAL burst in the FLX1 2026-11 log).
+        delivered = []
+
         def on_ready(video):
             # VID-1: a gated player (real video, autoplay tap) keeps the
             # spinner + percent label visible until the buffer threshold is
@@ -1257,6 +1309,11 @@ class VideoPlayer:
             gated = video is not None and getattr(video, "_buffer_gate", False)
             if spinner and not gated and spinner.get_parent() == container:
                 container.remove(spinner)
+
+            prev = delivered[0] if delivered else None
+            if prev is not None and prev.get_parent() == container:
+                container.remove(prev)
+            delivered.clear()
 
             if video:
                 req_w, req_h = container.get_size_request()
@@ -1270,6 +1327,7 @@ class VideoPlayer:
                 if video.get_parent() is not None:
                     video.get_parent().remove(video)
                 container.append(video)
+                delivered.append(video)
                 VideoPlayer._start_position_timer(container, video)
                 if autoplay and hasattr(video, "_pipeline"):
                     if gated:
@@ -1279,14 +1337,18 @@ class VideoPlayer:
                         video._is_playing = True
 
             else:
-                container.append(Gtk.Image.new_from_icon_name("video-symbolic"))
+                icon = Gtk.Image.new_from_icon_name("video-symbolic")
+                container.append(icon)
+                delivered.append(icon)
 
         VideoPlayer._fetch_player(
-            url, on_ready, original_url=original_url, autoplay=autoplay
+            url, on_ready, original_url=original_url, autoplay=autoplay,
+            author_pk=author_pk,
         )
 
     @staticmethod
-    def _fetch_player(url, callback, original_url=None, autoplay=False):
+    def _fetch_player(url, callback, original_url=None, autoplay=False,
+                      author_pk=None):
         with VideoPlayer._lock:
             if url in VideoPlayer._cache:
                 cached_video = VideoPlayer._cache[url]
@@ -1311,7 +1373,9 @@ class VideoPlayer:
                 VideoPlayer._prepare_youtube, url, callback, original_url, autoplay
             )
             return
-        VideoPlayer._build_and_deliver(url, callback, original_url, autoplay=autoplay)
+        VideoPlayer._build_and_deliver(
+            url, callback, original_url, autoplay, None, None, author_pk
+        )
 
     @staticmethod
     def _prepare_youtube(url, callback, original_url, autoplay):
@@ -1355,7 +1419,9 @@ class VideoPlayer:
         args = getattr(pipeline, "_tier_rebuild", None)
         if args is None:
             return False
-        url, callback, original_url, autoplay, cache_key = args
+        url, callback, original_url, autoplay, cache_key = args[:5]
+        author_pk = args[5] if len(args) > 5 else None
+        blossom_tried = args[6] if len(args) > 6 else False
         GLib.idle_add(
             VideoPlayer._build_and_deliver,
             url,
@@ -1364,8 +1430,63 @@ class VideoPlayer:
             autoplay,
             cache_key,
             nxt,
+            author_pk,
+            blossom_tried,
         )
         return True
+
+    @staticmethod
+    def _blossom_eligible(media_url, author_pk, blossom_tried):
+        """Cheap main-thread pre-check for the NIPW-P1 recovery path: only
+        content-addressed URLs with a known author, feature ON, and no
+        recovery already attempted for this load."""
+        return bool(
+            not blossom_tried
+            and author_pk
+            and media_resolver.content_hash(media_url)
+            and media_resolver.enabled()
+        )
+
+    @staticmethod
+    def _blossom_recovery(pipeline, url, callback, original_url, autoplay,
+                          cache_key, author_pk):
+        """Worker thread (NIPW-P1): resolve a dead content-addressed URL
+        via the author's Blossom servers (NIP-B7/BUD-03). On a hash-verified
+        hit, rebuild the pipeline on the main loop with the recovered URL;
+        on any failure keep the existing broken-media UX (never wrong
+        bytes). blossom_tried=True on the rebuild so a second failure does
+        not loop."""
+        alt = media_resolver.resolve(url, author_pk)
+        if not alt:
+            return
+        GLib.idle_add(
+            VideoPlayer._blossom_swap,
+            pipeline, alt, callback, original_url or url, autoplay,
+            cache_key, author_pk,
+        )
+
+    @staticmethod
+    def _blossom_swap(pipeline, alt_url, callback, original_url, autoplay,
+                      cache_key, author_pk):
+        """Main-thread half of the recovery: tear the dead pipeline down and
+        build a fresh one at the verified Blossom URL (cached under the
+        original URL so later loads skip the dead host entirely)."""
+        try:
+            video_probe.stop_sampler(pipeline, original_url)
+        except Exception:
+            pass
+        try:
+            pipeline.set_state(Gst.State.NULL)
+        except Exception:
+            pass
+        old = getattr(pipeline, "_video", None)
+        if old is not None and old.get_parent() is not None:
+            old.get_parent().remove(old)
+        VideoPlayer._build_and_deliver(
+            alt_url, callback, original_url, autoplay,
+            cache_key or original_url, None, author_pk, True,
+        )
+        return False
 
     @staticmethod
     def _build_and_deliver(
@@ -1375,6 +1496,8 @@ class VideoPlayer:
         autoplay=False,
         cache_key=None,
         force_tier=None,
+        author_pk=None,
+        blossom_tried=False,
     ):
         video = None
         try:
@@ -1528,7 +1651,10 @@ class VideoPlayer:
             # fallback-chain's starting point) plus the build args so the bus
             # handler can rebuild one tier down on a negotiation failure.
             pipeline._video_tier = tier
-            pipeline._tier_rebuild = (url, callback, original_url, autoplay, cache_key)
+            pipeline._tier_rebuild = (
+                url, callback, original_url, autoplay, cache_key, author_pk,
+                blossom_tried,
+            )
             pipeline.set_property("video-sink", video_sink)
             _vlog("🎬 [Video] gtk4paintablesink created and set as video-sink OK")
 
@@ -1574,10 +1700,23 @@ class VideoPlayer:
                         # direct tier means this runtime cannot feed that
                         # memory/format combo to the sink — rebuild one tier
                         # down (dmabuf -> nv12 -> cpu).
+                        handled = False
                         if _is_negotiation_error(err) and getattr(
                             p, "_video_tier", "cpu"
                         ) in ("dmabuf", "nv12"):
-                            VideoPlayer._fallback_rebuild(p, media_url)
+                            handled = VideoPlayer._fallback_rebuild(p, media_url)
+                        if not handled and VideoPlayer._blossom_eligible(
+                            media_url, author_pk, blossom_tried
+                        ):
+                            # NIPW-P1: dead content-addressed link — try the
+                            # author's Blossom servers (NIP-B7/BUD-03) off
+                            # the main thread; on a verified hit the pipeline
+                            # is rebuilt with the recovered URL.
+                            VideoPlayer._executor.submit(
+                                VideoPlayer._blossom_recovery,
+                                p, media_url, callback, original_url,
+                                autoplay, cache_key, author_pk,
+                            )
                     except Exception:
                         _vlog(f"🎬 [Media] Bus message: {t}")
                 elif t == Gst.MessageType.EOS:

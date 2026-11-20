@@ -14,6 +14,7 @@ install_data(
     'uploader.py',
     'proxy_settings.py',
     'proxy_opener.py',
+    'media_resolver.py',
     'video_probe.py',
     'debug_resize.py',
     'key_manager.py',

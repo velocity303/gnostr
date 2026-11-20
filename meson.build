@@ -53,6 +53,7 @@ if pytest_prog.found()
   test('test_main_init_order', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_main_init_order.py'], env: test_env, timeout: 120)
   test('test_startup_keyring_async', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_startup_keyring_async.py'], env: test_env, timeout: 120)
   test('test_video_probe', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_video_probe.py'], env: test_env, timeout: 120)
+  test('test_media_resolver', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_media_resolver.py'], env: test_env, timeout: 120)
   test('test_video_nv12_tier', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_video_nv12_tier.py'], env: test_env, timeout: 120)
   test('test_settings_no_sync_secrets', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_settings_no_sync_secrets.py'], env: test_env, timeout: 120)
   test('test_zap_flood_pipeline', pytest_prog, args: ['--verbose', meson.project_source_root() / 'tests/test_zap_flood_pipeline.py'], env: test_env, timeout: 120)
@@ -121,6 +122,12 @@ if xvfb_run.found() and gtk_python.found()
   # real Gdk clipboard -> read_text_async read-back.
   test('test_clipboard_gtk_real', xvfb_run,
     args: ['-a', gtk_python, meson.project_source_root() / 'tests/test_clipboard_gtk_real.py'],
+    timeout: 120)
+  # Real-GTK Blossom-wiring harness (NIPW-P1-FIX): real GObject emit of
+  # 'blossom-servers-updated' must reach the resolver; double media
+  # delivery must leave exactly one child on a real Gtk.Box.
+  test('test_blossom_wiring_gtk_real', xvfb_run,
+    args: ['-a', gtk_python, meson.project_source_root() / 'tests/test_blossom_wiring_gtk_real.py'],
     timeout: 120)
   # Real-GTK recipient-picker smoke (Phase A2): construct + filter +
   # paste-pin + activate against real Gtk/Adw.

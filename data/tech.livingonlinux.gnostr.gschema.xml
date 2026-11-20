@@ -45,6 +45,15 @@
 			<summary>Resolve hostnames through the proxy (SOCKS5h)</summary>
 			<description>Must stay true whenever .onion endpoints are used: the hostname is sent to the proxy verbatim and never touches a local DNS resolver.</description>
 		</key>
+		<!-- Unbreakable Media (NIPW-P1, NIP-B7/BUD-03): when a media link
+		     whose URL ends in a 64-hex sha256 is dead, re-fetch the blob
+		     from the author's kind-10063 Blossom servers and verify the
+		     hash before swapping. Read-side only — never publishes. -->
+		<key name="media-resilience" type="b">
+			<default>true</default>
+			<summary>Recover dead content-addressed media via the author's Blossom servers</summary>
+			<description>When a media URL ending in a 64-character sha256 fails to load, gnostr asks the media author's Blossom server list (kind 10063) for the blob and only displays it after the downloaded bytes hash to the URL's sha256. Disable to keep broken links broken.</description>
+		</key>
 		<!-- Feed collapse (FEED-TRUNC): feed cards cut long posts at this
 		     character boundary (word/URL/mention-safe cut, shared helper in
 		     util/collapse.py) behind a 'Show more' row. 0 = never collapse.
