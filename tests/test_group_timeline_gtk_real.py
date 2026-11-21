@@ -137,21 +137,35 @@ class FakeClient(GObject.Object):
             None,
             (str, bool, str, str, str),
         ),
+        "relay-connected": (GObject.SignalFlags.RUN_LAST, None, (str,)),
     }
 
     def __init__(self):
         super().__init__()
         self.my_pubkey = SELF_PK
         self.dispatched = []
+        self.subs_opened = []
+        self.sub_open_ok = False  # flip to True to simulate a live relay
 
-    def subscribe_on_relay(self, *args, **kwargs):
-        return False
+    def subscribe_on_relay(self, url, sub_id, filters, snapshot=False):
+        self.subs_opened.append((sub_id, snapshot))
+        return self.sub_open_ok
 
     def dispatch_signed_to_relay(self, event, url, label=""):
         # Signer fake: sign the template the way the real client's internal
         # _sign does, so tests can assert on the SIGNED event's id.
         self.dispatched.append(nostr_utils.sign_event(dict(event), USER_PRIV))
         return True
+
+
+def _mw(client):
+    return types.SimpleNamespace(
+        client=client,
+        pub_key=SELF_PK,
+        content_nav=None,
+        toasts=[],
+        add_toast=lambda t: None,
+    )
 
 
 def _pump(seconds=0.3):
@@ -166,8 +180,7 @@ def _pump(seconds=0.3):
 
 def _build_page():
     client = FakeClient()
-    mw = types.SimpleNamespace(client=client, pub_key=SELF_PK, content_nav=None)
-    page = groups_page.GroupDetailPage(mw, RELAY, "test-group", name="Test Group")
+    page = groups_page.GroupDetailPage(_mw(client), RELAY, "test-group", name="Test Group")
     _pump()
     return client, page
 
@@ -273,8 +286,9 @@ def check_first_search_preview_race():
     groups.fetch_nip11 = lambda relay_url, opener=None, timeout=10: dict(NIP11_DOC)
     try:
         client = FakeClient()
-        mw = types.SimpleNamespace(client=client, pub_key=SELF_PK, content_nav=None)
-        page = groups_page.GroupDetailPage(mw, RELAY, "test-group", name="Test Group")
+        page = groups_page.GroupDetailPage(
+            _mw(client), RELAY, "test-group", name="Test Group"
+        )
         # No pump yet: the worker's GLib.idle_add hand-back has not run.
         client.emit("group-event-received", RELAY, json.dumps(_ev("d1", 1)))
         client.emit("group-event-received", RELAY, json.dumps(_meta_event()))
@@ -293,6 +307,81 @@ def check_first_search_preview_race():
         groups.fetch_nip11 = _no_nip11
 
 
+def check_resolve_failure_shows_retry_state():
+    """NIPW-P3-HARDEN (FLX1: description sometimes never loaded, page stuck
+    at 'resolving'): a failed NIP-11 fetch must end in an explicit
+    resolve_failed state with a visible Retry button — never a silent stall,
+    and never the wrong terminal 'relay does not support groups'."""
+    client, page = _build_page()  # _no_nip11 -> None
+    assert page.machine.state == "resolve_failed", page.machine.state
+    assert page.retry_btn.get_visible(), "Retry button not shown on failure"
+    assert "NIP-11" in page.status_lbl.get_text(), page.status_lbl.get_text()
+    assert not page.join_btn.get_sensitive()
+    print("PASS: NIP-11 failure -> resolve_failed + Retry (no silent stall)")
+
+
+def check_retry_recovers_preview():
+    """Retry after a transient failure re-resolves and reaches preview once
+    the metadata event lands."""
+    client, page = _build_page()
+    assert page.machine.state == "resolve_failed"
+    groups.fetch_nip11 = lambda relay_url, opener=None, timeout=10: dict(NIP11_DOC)
+    try:
+        page.retry_btn.emit("clicked")
+        _pump(0.4)
+        assert page.machine.state == "resolving", page.machine.state
+        client.my_pubkey = USER_PK
+        client.emit("group-event-received", RELAY, json.dumps(_meta_event()))
+        assert page.machine.state == "preview", page.machine.state
+        assert not page.retry_btn.get_visible()
+        print("PASS: Retry recovers: resolve_failed -> resolving -> preview")
+    finally:
+        groups.fetch_nip11 = _no_nip11
+
+
+def check_join_timeout_reverts_ui():
+    """Join with no OK/39002 inside the confirm window must revert to
+    preview with the Join button live again — never stuck on
+    'Join requested…' forever (FLX1: join sometimes never activated)."""
+    groups.fetch_nip11 = lambda relay_url, opener=None, timeout=10: dict(NIP11_DOC)
+    try:
+        client = FakeClient()
+        mw = _mw(client)
+        toasts = []
+        mw.add_toast = lambda t: toasts.append(t)
+        page = groups_page.GroupDetailPage(
+            mw, RELAY, "test-group", name="Test Group"
+        )
+        _pump()
+        client.my_pubkey = USER_PK
+        client.emit("group-event-received", RELAY, json.dumps(_meta_event()))
+        assert page.machine.state == "preview"
+        page.join_btn.emit("clicked")
+        assert page.machine.state == "join_sent"
+        assert page.status_lbl.get_text() == "Join requested…"
+        # Fire the confirm deadline directly (no 10s wait in a test).
+        assert page._on_join_timeout() is False
+        assert page.machine.state == "preview"
+        assert page.join_btn.get_sensitive(), "Join not re-enabled after timeout"
+        assert toasts, "no failure toast on join timeout"
+        print("PASS: join timeout reverts to preview + toast")
+    finally:
+        groups.fetch_nip11 = _no_nip11
+
+
+def check_subs_queued_and_flushed_on_relay_up():
+    """Sub opens that fail while the relay is down queue and flush the moment
+    relay-connected fires — the FLX1 cold-open silently lost the 39000 REQ
+    when the page opened before the relay finished connecting."""
+    client, page = _build_page()
+    assert client.subs_opened, "subs were not even attempted"
+    assert page._pending_subs, "failed subs were silently dropped"
+    client.sub_open_ok = True
+    client.emit("relay-connected", RELAY)
+    assert page._pending_subs == [], "relay-connected did not flush the queue"
+    print("PASS: failed subs queued and flushed on relay-connected")
+
+
 def main():
     Adw.init()
     checks = [
@@ -301,6 +390,10 @@ def main():
         check_long_subtitle_row_survives,
         check_join_click_publishes_signed_join,
         check_first_search_preview_race,
+        check_resolve_failure_shows_retry_state,
+        check_retry_recovers_preview,
+        check_join_timeout_reverts_ui,
+        check_subs_queued_and_flushed_on_relay_up,
     ]
     failed = 0
     for check in checks:

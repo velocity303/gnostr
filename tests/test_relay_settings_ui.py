@@ -358,13 +358,19 @@ def test_handle_status_without_dicts_keeps_old_behaviour():
         def _role_tag(self, url):
             return ""
 
+        def __init__(self):
+            self.emitted = []
+
         def emit(self, *a):
-            self.emitted = a
+            self.emitted.append(a)
 
     legacy = Legacy()
     st = _NS["ConnectionState"]
     _unbound_client("_handle_status").__get__(legacy)("wss://a.example", st.CONNECTED)
-    assert legacy.emitted == ("status-changed", "CONNECTED")
+    # NIPW-P3-HARDEN: status-changed still fires (old contract); the new
+    # per-relay relay-connected edge rides along on CONNECTED.
+    assert ("status-changed", "CONNECTED") in legacy.emitted
+    assert ("relay-connected", "wss://a.example") in legacy.emitted
 
 
 def test_handle_ok_records_last_publish():

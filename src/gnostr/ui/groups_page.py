@@ -15,6 +15,8 @@ Mobile-first: single column, AdwClamp, pushed onto the shared
 Adw.NavigationView like every other page (back contract on Phosh).
 """
 
+import time
+
 import gi
 
 gi.require_version("Gtk", "4.0")
@@ -24,6 +26,27 @@ from gi.repository import Adw, GLib, Gtk, Pango
 from .. import groups, nostr_utils
 
 AdwClamp = Adw.Clamp
+
+# NIPW-P3-HARDEN: every async step gets a deadline — no silent stalls.
+JOIN_CONFIRM_TIMEOUT_MS = 10_000  # OK/39002 confirmation window after publish
+RESOLVE_META_TIMEOUT_MS = 6_000  # 39000 metadata window after NIP-11 ok
+
+
+def _diag(step, result, relay="", ms=None):
+    """Structured one-line diagnostic (device-log contract):
+    [GROUP] step=<name> relay=<url> result=ok|fail [ms=<n>]
+    so a stall on FLX1 pinpoints the exact step without a debugger."""
+    ms_txt = f" ms={int(ms)}" if ms is not None else ""
+    print(f"[GROUP] step={step} relay={relay} result={result}{ms_txt}", flush=True)
+
+
+# sub_id prefix -> diagnostic step name (groups.sub_id_for prefixes)
+_SUB_STEPS = {
+    "gmeta": "sub_meta",
+    "gmemset": "sub_members",
+    "gtl": "sub_timeline",
+    "gmem": "sub_membership",
+}
 
 
 def _short_pk(pk):
@@ -216,6 +239,13 @@ class GroupDetailPage(Gtk.Box):
         # metadata/admins/members events that arrived before the NIP-11 self
         # pubkey resolved (first-search race) — replayed by _on_nip11
         self._pre_nip11_events = []
+        # NIPW-P3-HARDEN reliability state
+        self._step_t0 = {}        # diag step -> monotonic open time (ms calc)
+        self._step_logged = set()  # diag steps already reported ok
+        self._pending_subs = []   # (sub_id, filt, snap) queued for relay-up
+        self._resolve_deadline_id = None
+        self._join_timeout_id = None
+        self._leave_timeout_id = None
 
         bar = Gtk.Box(spacing=12, halign=Gtk.Align.START, margin_top=6,
                       margin_bottom=6, margin_start=6)
@@ -274,6 +304,13 @@ class GroupDetailPage(Gtk.Box):
         self.status_lbl.add_css_class("dim-label")
         action_row.append(self.status_lbl)
         self.card.append(action_row)
+        # NIPW-P3-HARDEN: explicit error state gets a Retry button — a failed
+        # resolve must never leave the page silently at 'resolving'.
+        self.retry_btn = Gtk.Button(label="Retry")
+        self.retry_btn.set_visible(False)
+        self.retry_btn.set_halign(Gtk.Align.START)
+        self.retry_btn.connect("clicked", self._on_retry_clicked)
+        self.card.append(self.retry_btn)
         outer.append(self.card)
 
         # --- timeline ---
@@ -287,6 +324,9 @@ class GroupDetailPage(Gtk.Box):
         self._handlers.append(
             self.client.connect("publish-result", self._on_publish_result)
         )
+        self._handlers.append(
+            self.client.connect("relay-connected", self._on_relay_connected)
+        )
         self.connect("unrealize", self._on_unrealize)
 
         self._start_resolve()
@@ -299,8 +339,12 @@ class GroupDetailPage(Gtk.Box):
         import threading
 
         def _worker():
+            # fetch_nip11 now retries internally (timeout + 2 retries) and
+            # serves the per-relay TTL cache — re-entry is instant.
+            t0 = time.monotonic()
             doc = groups.fetch_nip11(self.relay)
-            GLib.idle_add(self._on_nip11, doc)
+            ms = int((time.monotonic() - t0) * 1000)
+            GLib.idle_add(self._on_nip11, doc, ms)
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -311,24 +355,55 @@ class GroupDetailPage(Gtk.Box):
         # relay ONLY (spec §3: never general relays).
         subs = [
             (groups.sub_id_for("gmeta", gid), groups.metadata_filter(gid), True),
-            (groups.sub_id_for("gmemset", gid), groups.members_filter(gid), True),
+            # 39002/9000/9001 must stay LIVE subs: the relay pushes updated
+            # 39002s on the open sub, and that push is the join/leave
+            # confirmation. As snapshots they closed at EOSE and the
+            # confirmation silently never arrived (FLX1 inconsistency).
+            (groups.sub_id_for("gmemset", gid), groups.members_filter(gid), False),
             (groups.sub_id_for("gtl", gid), groups.timeline_filter(gid), False),
         ]
         pk = client_pk(self.main_window)
         if pk:
             subs.append(
-                (groups.sub_id_for("gmem", gid), groups.membership_filter(gid, pk), True)
+                (groups.sub_id_for("gmem", gid), groups.membership_filter(gid, pk), False)
             )
         for sub_id, filt, snap in subs:
-            if c.subscribe_on_relay(self.relay, sub_id, filt, snapshot=snap):
-                self._sub_ids.append(sub_id)
+            self._open_sub(sub_id, filt, snap)
 
-    def _on_nip11(self, doc):
+    def _open_sub(self, sub_id, filt, snap):
+        step = _SUB_STEPS.get(sub_id.split("_", 1)[0], "sub")
+        if self.client.subscribe_on_relay(self.relay, sub_id, filt, snapshot=snap):
+            if sub_id not in self._sub_ids:
+                self._sub_ids.append(sub_id)
+            self._step_t0[step] = time.monotonic()
+        else:
+            # relay object could not be created (bad scheme / onion inert):
+            # queue and retry on relay-connected — never silently skip.
+            if (sub_id, filt, snap) not in self._pending_subs:
+                self._pending_subs.append((sub_id, filt, snap))
+            _diag(step, "fail", self.relay)
+
+    def _on_relay_connected(self, _client, url):
+        if url != self.relay or not self._pending_subs:
+            return
+        pending, self._pending_subs = self._pending_subs, []
+        for sub_id, filt, snap in pending:
+            self._open_sub(sub_id, filt, snap)
+
+    def _on_nip11(self, doc, ms=None):
+        _diag("nip11", "ok" if doc is not None else "fail", self.relay, ms)
         self._self_pk = groups.nip11_self_pk(doc)
         state = self.machine.on_nip11(doc)
         if state == "aborted":
             self._show_abort()
             return False
+        if state == "resolve_failed":
+            self._show_resolve_failed()
+            return False
+        # NIP-11 answered but the 39000 snapshot may still never arrive (sub
+        # refused, slow relay): arm a deadline so 'resolving' always ends in
+        # either preview or an explicit retryable error.
+        self._arm_resolve_deadline()
         # FLX1 first-search race: snapshot metadata/admins/members events can
         # land BEFORE this NIP-11 fetch resolves; they failed the self-key gate
         # and were dropped, so the first search half-rendered (timeline only)
@@ -338,6 +413,38 @@ class GroupDetailPage(Gtk.Box):
         for ev in pending:
             self._process_group_event(ev)
         return False
+
+    def _arm_resolve_deadline(self):
+        if self._resolve_deadline_id is not None:
+            return
+        self._resolve_deadline_id = GLib.timeout_add(
+            RESOLVE_META_TIMEOUT_MS, self._on_resolve_deadline
+        )
+
+    def _on_resolve_deadline(self):
+        self._resolve_deadline_id = None
+        if self.machine.state == "resolving":
+            self.machine.on_resolve_failed("group metadata not found on relay")
+            _diag("sub_meta", "fail", self.relay)
+            self._show_resolve_failed()
+        return False
+
+    def _show_resolve_failed(self):
+        reason = getattr(self.machine, "resolve_reason", None) or "Group unavailable"
+        self.about_lbl.set_text(f"{reason} — tap Retry.")
+        self.join_btn.set_sensitive(False)
+        self.retry_btn.set_visible(True)
+        self._render_status()
+
+    def _on_retry_clicked(self, _btn):
+        self.retry_btn.set_visible(False)
+        self.about_lbl.set_text("Loading group info…")
+        # resolve_failed -> resolving (begin() alone only leaves 'idle'), then
+        # re-open every sub and re-fetch NIP-11 (relay-layer dedup absorbs
+        # no-op repeats; the NIP-11 TTL cache makes the refetch instant when
+        # it already worked).
+        self.machine.retry_resolve()
+        self._start_resolve()
 
     def _on_group_event(self, _client, relay_url, event_json):
         import json
@@ -373,6 +480,7 @@ class GroupDetailPage(Gtk.Box):
             meta = groups.parse_group_metadata(ev, self_pk, relay=self.relay)
             if meta is None:
                 return  # failed the self-key gate: never rendered
+            self._mark_step_ok("sub_meta")
             self._meta = meta
             state = self.machine.on_metadata(meta)
             self._render_preview()
@@ -391,11 +499,13 @@ class GroupDetailPage(Gtk.Box):
         elif kind == groups.KIND_GROUP_ADMINS:
             admins = groups.parse_group_admins(ev, self._nip11_pk())
             if admins and self._meta is not None:
+                self._mark_step_ok("sub_members")
                 self._meta.admins = admins
                 self._render_preview()
         elif kind == groups.KIND_GROUP_MEMBERS:
             n = groups.count_members(ev)
             if self._meta is not None and n:
+                self._mark_step_ok("sub_members")
                 self._meta.member_count = n
                 self._render_preview()
             # 39002 set is the authoritative membership answer on khatru
@@ -405,14 +515,17 @@ class GroupDetailPage(Gtk.Box):
             pk = client_pk(self.main_window)
             is_in = groups.is_member_in_members_event(ev, pk) if pk else None
             if is_in is not None:
+                self._cancel_join_timeout()
                 self.machine.on_membership("member" if is_in else "removed")
                 self._render_status()
         elif kind in groups.GROUP_TIMELINE_KINDS:
+            self._mark_step_ok("sub_timeline")
             self._append_timeline_event(ev)
         elif kind in (groups.KIND_GROUP_ADD_USER, groups.KIND_GROUP_REMOVE_USER):
             pk = client_pk(self.main_window)
             state = groups.latest_membership([ev], pk) if pk else "unknown"
             if state != "unknown":
+                self._cancel_join_timeout()
                 self.machine.on_membership(state)
                 self._render_status()
 
@@ -420,6 +533,50 @@ class GroupDetailPage(Gtk.Box):
         # None until NIP-11 resolved — parse_group_metadata then returns None
         # and nothing unverified is ever rendered (preview gate).
         return self._self_pk
+
+    # -- structured diagnostics + confirm timers ---------------------------------
+
+    def _mark_step_ok(self, step):
+        """First-event arrival for a sub: log step=ok with latency once. The
+        ms figure is REQ-open -> first event, the number that distinguishes
+        'relay is slow' from 'relay is dead' in device logs."""
+        if step in self._step_logged:
+            return
+        self._step_logged.add(step)
+        t0 = self._step_t0.get(step)
+        ms = int((time.monotonic() - t0) * 1000) if t0 else None
+        _diag(step, "ok", self.relay, ms)
+        if step == "sub_meta" and self._resolve_deadline_id is not None:
+            GLib.source_remove(self._resolve_deadline_id)
+            self._resolve_deadline_id = None
+
+    def _arm_join_timeout(self):
+        self._cancel_join_timeout()
+        self._join_timeout_id = GLib.timeout_add(
+            JOIN_CONFIRM_TIMEOUT_MS, self._on_join_timeout
+        )
+
+    def _cancel_join_timeout(self):
+        if self._join_timeout_id is not None:
+            GLib.source_remove(self._join_timeout_id)
+            self._join_timeout_id = None
+
+    def _cancel_leave_timeout(self):
+        if getattr(self, "_leave_timeout_id", None) is not None:
+            GLib.source_remove(self._leave_timeout_id)
+            self._leave_timeout_id = None
+
+    def _on_join_timeout(self):
+        self._join_timeout_id = None
+        if self.machine.state != "join_sent":
+            return False  # membership event or OK already settled it
+        self.machine.on_join_timeout()
+        _diag("join_ok", "fail", self.relay)
+        self._render_status()
+        self.main_window.add_toast(
+            Adw.Toast(title="Join not confirmed by relay — try again")
+        )
+        return False
 
     # -- join / leave -----------------------------------------------------------
 
@@ -448,6 +605,11 @@ class GroupDetailPage(Gtk.Box):
         ):
             self.machine.rejection_reason = "signer unavailable"
             self._render_status()
+            _diag("join_pub", "fail", self.relay)
+            return
+        _diag("join_pub", "ok", self.relay)
+        self._render_status()  # immediate feedback: 'Join requested…'
+        self._arm_join_timeout()
 
     def _on_leave_clicked(self, _btn):
         pk = client_pk(self.main_window)
@@ -457,11 +619,38 @@ class GroupDetailPage(Gtk.Box):
         # unsigned template again — record the id the signed event will carry
         # (publish-result matches on it); see _on_join_clicked.
         self._leave_event_id = nostr_utils.compute_event_id(ev)
-        self.client.dispatch_signed_to_relay(ev, self.relay, label="Group leave")
+        if not self.client.dispatch_signed_to_relay(
+            ev, self.relay, label="Group leave"
+        ):
+            self._leave_event_id = None
+            self.main_window.add_toast(Adw.Toast(title="Could not send leave (signer)"))
+            _diag("leave_pub", "fail", self.relay)
+            return
+        _diag("leave_pub", "ok", self.relay)
+        # NIPW-P3-HARDEN: a leave with no OK ack must fail loudly, not sit
+        # showing 'Left' optimistically while the relay ignored us.
+        self._cancel_leave_timeout()
+        self._leave_timeout_id = GLib.timeout_add(
+            JOIN_CONFIRM_TIMEOUT_MS, self._on_leave_timeout
+        )
+
+    def _on_leave_timeout(self):
+        self._leave_timeout_id = None
+        if getattr(self, "_leave_event_id", None) is None:
+            return False  # already confirmed by publish-result
+        self._leave_event_id = None
+        _diag("leave_ok", "fail", self.relay)
+        self.main_window.add_toast(
+            Adw.Toast(title="Leave not confirmed by relay — try again")
+        )
+        return False
 
     def _on_publish_result(self, _client, event_id, accepted, message, relay_url, label):
         if event_id == getattr(self, "_leave_event_id", None):
+            self._leave_event_id = None
+            self._cancel_leave_timeout()
             if accepted:
+                _diag("leave_ok", "ok", self.relay)
                 gw = getattr(self.client, "_groups_gateway", None)
                 if gw is not None:
                     try:
@@ -471,10 +660,23 @@ class GroupDetailPage(Gtk.Box):
                 self.status_lbl.set_text("Left the group")
                 self.leave_btn.set_visible(False)
                 self._sync_registry(add=False)
+            else:
+                # relay refused the leave: say so — never silently keep the
+                # member UI while the relay still lists us.
+                _diag("leave_ok", "fail", self.relay)
+                self.main_window.add_toast(
+                    Adw.Toast(title=f"Leave rejected: {message or 'relay refused'}")
+                )
             return
         if event_id != self.machine.join_event_id:
             return
+        self._cancel_join_timeout()
         state = self.machine.on_join_ok(bool(accepted), message or "")
+        _diag("join_ok", "ok" if accepted else "fail", self.relay)
+        if state == "rejected":
+            self.main_window.add_toast(
+                Adw.Toast(title=f"Join rejected: {self.machine.rejection_reason}")
+            )
         if state in ("member", "already_member"):
             gw = getattr(self.client, "_groups_gateway", None)
             if gw is not None:
@@ -533,6 +735,7 @@ class GroupDetailPage(Gtk.Box):
         reasons = {
             "aborted": self.machine.abort_reason,
             "rejected": self.machine.rejection_reason,
+            "resolve_failed": getattr(self.machine, "resolve_reason", None),
         }
         text = {
             "idle": "", "resolving": "Checking relay…",
@@ -541,12 +744,16 @@ class GroupDetailPage(Gtk.Box):
             "already_member": "✓ Already a member",
             "rejected": f"Join rejected: {reasons.get('rejected') or ''}",
             "aborted": reasons.get("aborted") or "",
+            "resolve_failed": reasons.get("resolve_failed") or "Group unavailable",
         }.get(s, "")
         self.status_lbl.set_text(text)
         joined = s in ("member", "already_member")
         self.join_btn.set_visible(not joined)
         self.leave_btn.set_visible(joined)
         self.join_btn.set_sensitive(s == "preview" and not self.machine.closed_without_invite())
+        # NIPW-P3-HARDEN: the Retry button belongs to the retryable failure
+        # state only — hidden in every other state.
+        self.retry_btn.set_visible(s == "resolve_failed")
 
     def _show_abort(self):
         self.about_lbl.set_text(self.machine.abort_reason or "Group unavailable")
@@ -579,6 +786,11 @@ class GroupDetailPage(Gtk.Box):
         self.main_window.content_nav.pop()
 
     def _on_unrealize(self, *_):
+        for timer in ("_resolve_deadline_id", "_join_timeout_id", "_leave_timeout_id"):
+            tid = getattr(self, timer, None)
+            if tid is not None:
+                GLib.source_remove(tid)
+                setattr(self, timer, None)
         for h in self._handlers:
             try:
                 self.client.disconnect(h)

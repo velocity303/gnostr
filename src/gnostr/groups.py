@@ -506,25 +506,56 @@ def nip11_url(relay_url):
     return scheme + "://" + relay_url.split("://", 1)[1]
 
 
-def fetch_nip11(relay_url, opener=None, timeout=10):
+# NIP-11 per-relay success cache (NIPW-P3-HARDEN): a cold group search does
+# NIP-11 -> 39000 -> preview; one slow/hung fetch stalled the page at
+# 'resolving'. Retries absorb transient failure; the TTL cache makes re-entry
+# instant (second search of the same relay never re-fetches within the hour).
+NIP11_TTL_S = 3600.0
+_nip11_cache = {}  # relay_url -> (doc, time.time() ts) — successes only
+
+
+def nip11_cache_clear():
+    """Test hook: drop all cached NIP-11 docs."""
+    _nip11_cache.clear()
+
+
+def fetch_nip11(relay_url, opener=None, timeout=4, attempts=3, force=False,
+                sleep=None):
     """GET the NIP-11 doc (Accept: application/nostr+json). `opener` is an
     injected urllib opener (proxy_opener in production; None = direct).
     Returns the parsed dict or None on any failure — callers treat None as
-    'relay does not support groups' only after checking the doc lacks 29."""
+    'relay could not be reached' (NOT 'does not support groups' — that verdict
+    needs a doc that lacks 29). Up to `attempts` tries with linear backoff;
+    successes are cached per relay for NIP11_TTL_S (failures never cached,
+    so Retry always hits the network)."""
     import urllib.request
 
+    if sleep is None:
+        sleep = time.sleep
     url = nip11_url(relay_url)
     if not url:
         return None
-    try:
-        req = urllib.request.Request(
-            url, headers={"Accept": "application/nostr+json"}
-        )
-        ctx = opener or urllib.request.build_opener()
-        with ctx.open(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except Exception:
-        return None
+    if not force:
+        hit = _nip11_cache.get(relay_url)
+        if hit is not None and (time.time() - hit[1]) < NIP11_TTL_S:
+            return hit[0]
+    for i in range(max(1, attempts)):
+        doc = None
+        try:
+            req = urllib.request.Request(
+                url, headers={"Accept": "application/nostr+json"}
+            )
+            ctx = opener or urllib.request.build_opener()
+            with ctx.open(req, timeout=timeout) as resp:
+                doc = json.loads(resp.read().decode("utf-8"))
+        except Exception:
+            doc = None
+        if isinstance(doc, dict):
+            _nip11_cache[relay_url] = (doc, time.time())
+            return doc
+        if i + 1 < attempts:
+            sleep(0.4 * (i + 1))
+    return None
 
 
 def nip11_self_pk(doc):
@@ -551,6 +582,7 @@ JOIN_STATES = (
     "rejected",
     "already_member",
     "aborted",
+    "resolve_failed",
 )
 
 
@@ -572,6 +604,7 @@ class GroupJoinMachine:
         self.state = "idle"
         self.abort_reason = None
         self.rejection_reason = None
+        self.resolve_reason = None
         self.meta = None
         self.join_event_id = None
 
@@ -586,14 +619,37 @@ class GroupJoinMachine:
     def on_nip11(self, doc):
         if self.state != "resolving":
             return self.state
+        if doc is None:
+            # Fetch failure (timeout/unreachable) is NOT "does not support
+            # groups" — it is retryable. NIPW-P3-HARDEN: the old abort here
+            # showed a wrong, terminal-looking reason for a dead network.
+            return self.on_resolve_failed("could not reach relay (NIP-11 failed)")
         if not nip11_supports_groups(doc):
             return self._abort("relay does not support groups")
+        return self.state
+
+    def on_resolve_failed(self, reason):
+        """Recoverable resolve failure (NIP-11 unreachable, or NIP-11 fine
+        but the 39000 metadata never arrived). Distinct from 'aborted': the
+        UI shows an explicit error + Retry instead of stalling at resolving."""
+        if self.state in ("idle", "aborted", "member", "already_member"):
+            return self.state
+        self.resolve_reason = reason
+        self.state = "resolve_failed"
+        return self.state
+
+    def retry_resolve(self):
+        """Retry button: resolve_failed -> resolving (caller re-runs resolve)."""
+        if self.state != "resolve_failed":
+            return self.state
+        self.resolve_reason = None
+        self.state = "resolving"
         return self.state
 
     def on_metadata(self, meta):
         """meta: verified GroupMeta (already signer-gated by the caller) or
         None when the relay returned nothing / verification failed."""
-        if self.state != "resolving":
+        if self.state not in ("resolving", "resolve_failed"):
             return self.state
         if meta is None:
             return self._abort("group not found on relay")
@@ -633,6 +689,16 @@ class GroupJoinMachine:
         else:
             self.rejection_reason = message or "rejected"
             self.state = "rejected"
+        return self.state
+
+    def on_join_timeout(self):
+        """No OK/39002 confirmation within the confirm window: revert to
+        'preview' so the user can retry — never sit in join_sent silently."""
+        if self.state != "join_sent":
+            return self.state
+        self.rejection_reason = "no confirmation from relay (timeout)"
+        self.join_event_id = None
+        self.state = "preview"
         return self.state
 
     def on_membership(self, state):

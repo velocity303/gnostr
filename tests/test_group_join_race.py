@@ -61,6 +61,15 @@ _METHODS = (
     "_show_abort",
     "_append_timeline_event",
     "_nip11_pk",
+    "_mark_step_ok",
+    "_arm_join_timeout",
+    "_cancel_join_timeout",
+    "_cancel_leave_timeout",
+    "_on_join_timeout",
+    "_on_leave_timeout",
+    "_arm_resolve_deadline",
+    "_on_resolve_deadline",
+    "_show_resolve_failed",
 )
 
 
@@ -85,8 +94,19 @@ def _extract(name, is_method=True):
     ns = {
         "Adw": MagicMock(),
         "Gtk": MagicMock(),
+        "GLib": MagicMock(),
         "groups": groups,
         "nostr_utils": nostr_utils,
+        "time": __import__("time"),
+        "_diag": lambda *a, **k: None,
+        "_SUB_STEPS": {
+            "gmeta": "sub_meta",
+            "gmemset": "sub_members",
+            "gtl": "sub_timeline",
+            "gmem": "sub_membership",
+        },
+        "JOIN_CONFIRM_TIMEOUT_MS": 10_000,
+        "RESOLVE_META_TIMEOUT_MS": 6_000,
     }
     if is_method:
         ns["client_pk"] = _extract("client_pk", is_method=False)
@@ -156,12 +176,19 @@ def _make_page(self_pk=None, machine=None):
     fake._handlers = []
     fake._pre_nip11_events = []
     fake._leave_event_id = None
+    fake._step_t0 = {}
+    fake._step_logged = set()
+    fake._pending_subs = []
+    fake._resolve_deadline_id = None
+    fake._join_timeout_id = None
+    fake._leave_timeout_id = None
     fake.title_lbl = _Rec("Test Group")
     fake.about_lbl = _Rec("Loading group info…")
     fake.flags_lbl = _Rec("")
     fake.status_lbl = _Rec("")
     fake.join_btn = _Rec()
     fake.leave_btn = _Rec()
+    fake.retry_btn = _Rec()
     fake.timeline = _FakeBox()
     for name in _METHODS:
         setattr(fake, name, types.MethodType(_extract(name), fake))

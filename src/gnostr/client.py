@@ -98,6 +98,28 @@ def nip01_sub_id(sub_id):
     return prefix + hashlib.sha256(sub_id.encode("utf-8")).hexdigest()[:budget]
 
 
+# NIPW-P3-HARDEN: group sub_ids carry a fixed prefix (groups.sub_id_for:
+# gmeta_/gmemset_/gtl_/gmem_/glist_). The relay layer uses this only to tag
+# structured [GROUP] diagnostics — group workflow stalls must be pinpointable
+# from device logs alone.
+def is_group_sub_id(sub_id):
+    """True for the group-page sub ids (gmeta_/gmemset_/gtl_/gmem_/glist_).
+    Prefix tuple is inline on purpose: AST-extraction test harnesses bind
+    this function alone — a module-level constant would NameError there."""
+    prefixes = ("gmeta_", "gmemset_", "gtl_", "gmem_", "glist_")
+    return isinstance(sub_id, str) and sub_id.startswith(prefixes)
+
+
+def sub_closed_reopenable(reason):
+    """True when a relay's CLOSED reason is an idle/timeout sweep (khatru and
+    semisol relays send 'closed: timeout') rather than a policy refusal.
+    Idle-closed LIVE subs are re-REQ'd with the same filter (the main feed's
+    fresh_* poll pattern); rate-limited/auth/payment refusals stay closed so
+    the client never feeds a banning relay (issue #26 rule)."""
+    r = (reason or "").lower()
+    return "timeout" in r or "idle" in r or "closed" in r
+
+
 RECONNECT_BACKOFF_START = 2.0  # s; randomized exponential, capped below
 RECONNECT_BACKOFF_MAX = 60.0
 IDLE_RELAY_TIMEOUT = 300.0  # s of zero relay traffic before idle disconnect
@@ -172,6 +194,9 @@ class NostrRelay(GObject.Object):
         self._last_traffic = time.monotonic()  # any inbound message
         self._closed_notified = False  # rate-limit NOTICE surfaced once
         self._idle_closed = False  # parked by the idle sweep (issue #26)
+        # NIPW-P3-HARDEN: bounded re-REQ counter per sub (idle-close sweeps
+        # must not loop unbounded against a relay that keeps closing us).
+        self._reopen_counts = {}
 
     def _refill_tokens(self):
         now = time.monotonic()
@@ -213,23 +238,15 @@ class NostrRelay(GObject.Object):
                         self.on_eose(sub_id, self.url)
                 elif d[0] == "CLOSED":
                     # NIP-01: ["CLOSED", <sub_id>, <message>]. The relay
-                    # refused the subscription (rate limit, full). Heavy
-                    # clients in issue #26 all ignore this and keep re-firing
-                    # the same REQ — the ban spiral. Here: drop the sub so it
-                    # is not replayed, and surface rate-limit closures once
-                    # per connection so the user sees WHY a feed is stale.
+                    # refused the subscription (rate limit, full) or swept
+                    # it idle. Heavy clients in issue #26 all ignore this and
+                    # keep re-firing the same REQ — the ban spiral. Here:
+                    # drop the sub, surface rate-limit closures once per
+                    # connection, and re-REQ idle/timeout sweeps (see
+                    # handle_sub_closed).
                     sub_id = d[1] if len(d) > 1 else ""
                     reason = d[2] if len(d) > 2 else ""
-                    self.active_sub_ids.discard(sub_id)
-                    self.snapshot_ids.discard(sub_id)
-                    self.live_subs.pop(sub_id, None)  # refused: never replayed
-                    self.request_queue = [
-                        (sid, f) for (sid, f) in self.request_queue if sid != sub_id
-                    ]
-                    self.queued_sub_ids.discard(sub_id)
-                    if "rate-limited" in reason and not self._closed_notified:
-                        self._closed_notified = True
-                        print(f"⚠️ [{self.url}] rate-limited: {reason}")
+                    self.handle_sub_closed(sub_id, reason)
                 elif d[0] == "NOTICE":
                     print(f"NOTICE [{self.url}]: {d[1]}")
             except Exception:
@@ -356,6 +373,12 @@ class NostrRelay(GObject.Object):
             # Record the live sub even while down (issue #26): on_open replays
             # live_subs after a flap, so a startup or post-flap subscribe is
             # no longer silently dropped until the next manual feed switch.
+            # Snapshots are NOT replayed by on_open — queue them through the
+            # rate-limited worker instead (NIPW-P3-HARDEN: a group page opened
+            # before its relay finished connecting lost its 39000/39001
+            # snapshot REQ entirely — the description never loaded).
+            if snapshot:
+                self._enqueue(sub_id, filters)
             if self._idle_closed:
                 self.wake()  # explicit activity: park ends, on_open replays
             return
@@ -409,6 +432,43 @@ class NostrRelay(GObject.Object):
                 self.ws.send(json.dumps(["CLOSE", sub_id]))
             except Exception:
                 pass
+
+    def handle_sub_closed(self, sub_id, reason):
+        """Relay sent CLOSED for sub_id. Policy refusals (rate-limit, auth,
+        payment) stay closed — re-REQ'ing into a banning relay is the issue
+        #26 ban spiral. Idle/timeout sweeps ('closed: timeout' on khatru /
+        semisol) on a LIVE sub are re-REQ'd with the same filter, bounded per
+        sub: without this a group timeline that the relay swept stayed dead
+        until page re-entry (FLX1: feed sometimes stopped loading)."""
+        sub_id = nip01_sub_id(sub_id)
+        dropped_live = self.live_subs.pop(sub_id, None)
+        self.active_sub_ids.discard(sub_id)
+        self.snapshot_ids.discard(sub_id)
+        self.request_queue = [
+            (sid, f) for (sid, f) in self.request_queue if sid != sub_id
+        ]
+        self.queued_sub_ids.discard(sub_id)
+        if "rate-limited" in reason and not self._closed_notified:
+            self._closed_notified = True
+            print(f"⚠️ [{self.url}] rate-limited: {reason}")
+        if is_group_sub_id(sub_id):
+            print(
+                f"[GROUP] step=sub_close relay={self.url} sub={sub_id} "
+                f"result=fail reason={reason or 'unspecified'}"
+            )
+        if dropped_live is not None and sub_closed_reopenable(reason):
+            n = self._reopen_counts.get(sub_id, 0)
+            if n >= 5:
+                return False  # relay keeps sweeping this sub: stop hammering
+            self._reopen_counts[sub_id] = n + 1
+            self._enqueue(sub_id, dropped_live)
+            if is_group_sub_id(sub_id):
+                print(
+                    f"[GROUP] step=sub_reopen relay={self.url} sub={sub_id} "
+                    f"result=ok attempt={n + 1}"
+                )
+            return True
+        return False
 
     def request_once(self, sub_id, filters):
         # Register the sub_id for EOSE auto-close (spec Phase B2a): the on_msg
@@ -492,6 +552,10 @@ class NostrClient(GObject.Object):
         "profile-updated": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         "contacts-updated": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         "status-changed": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
+        # relay-connected: (url:str) — one relay reached CONNECTED (main
+        # thread). NIPW-P3-HARDEN: pages that queued subs for a not-yet-up
+        # relay (group detail) retry them the moment it connects.
+        "relay-connected": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         # tor-state-changed: (state:str) — TorState value ("disabled"|
         # "reachable"|"down"); dispatched on the main thread via GLib.idle_add
         # (spec gnostr-tor-onion-support-v1 §A.2.1).
@@ -2388,14 +2452,21 @@ class NostrClient(GObject.Object):
     def subscribe_on_relay(self, url, sub_id, filters, snapshot=False):
         """Open a subscription on ONE specific relay (group relays are the
         group's own hint URL — group REQs must never fan out to read-role
-        relays). Connects the relay on demand. Returns True if dispatched."""
+        relays). Connects the relay on demand. Returns True if dispatched
+        (the relay object exists; the REQ itself queues until the socket is
+        up — see NostrRelay.subscribe/_enqueue)."""
         if url not in self.active_relays:
             self.add_relay_connection(url)
         r = self.active_relays.get(url)
-        if r is None:
-            return False
-        r.subscribe(sub_id, filters, snapshot=snapshot)
-        return True
+        ok = r is not None
+        if ok:
+            r.subscribe(sub_id, filters, snapshot=snapshot)
+        if is_group_sub_id(sub_id):
+            print(
+                f"[GROUP] step=sub_open relay={url} sub={sub_id} "
+                f"result={'ok' if ok else 'fail'}"
+            )
+        return ok
 
     def close_sub_on_relay(self, url, sub_id):
         r = self.active_relays.get(url)
@@ -2525,6 +2596,10 @@ class NostrClient(GObject.Object):
             elif status.status in ("ERROR", "WARNING"):
                 getattr(self, "relay_last_error", {})[url] = status.details
         self.emit("status-changed", status.status)
+        # NIPW-P3-HARDEN: per-relay connected edge (main thread — callers
+        # reach _handle_status via GLib.idle_add from the socket thread).
+        if status.status == "CONNECTED":
+            self.emit("relay-connected", url)
 
     def fetch_contacts(self):
         if self.my_pubkey:
