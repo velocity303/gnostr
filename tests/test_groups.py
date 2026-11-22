@@ -9,6 +9,7 @@ helpers, never a socket.
 import copy
 import json
 import os
+import time
 
 import pytest
 
@@ -458,6 +459,28 @@ def test_gateway_membership_and_leave(gw):
     gw.remove_group("wss://r.example", "g1")
     assert gw.get_membership("wss://r.example", "g1") is None
     assert gw.list_groups() == []
+
+
+def test_gateway_purge_left_events(gw):
+    """Spec §4 retention: left-group events purge only past the window.
+
+    The DELETE once shipped 'created_at < ?' with the cutoff never bound —
+    sqlite raised on every call and the purge silently did nothing. Pinned
+    here: joined groups untouched; after leave, only events older than the
+    retention window go.
+    """
+    now = int(time.time())
+    old = {"id": "cc" * 32, "kind": 1, "pubkey": "bb" * 32,
+           "created_at": now - 40 * 86400, "content": "x", "tags": [["h", "g1"]]}
+    recent = {"id": "dd" * 32, "kind": 1, "pubkey": "bb" * 32,
+              "created_at": now - 5 * 86400, "content": "y", "tags": [["h", "g1"]]}
+    gw.upsert_group("wss://r.example", "g1")
+    gw.save_event("wss://r.example", "g1", old)
+    gw.save_event("wss://r.example", "g1", recent)
+    assert gw.purge_left_events(older_than_days=30) == 0  # still in registry
+    gw.remove_group("wss://r.example", "g1")
+    assert gw.purge_left_events(older_than_days=30) == 1  # only the 40d event
+    assert [e["id"] for e in gw.get_events("wss://r.example", "g1")] == ["dd" * 32]
 
 
 # --- NIPW-P3-FIX-4: relay-key hygiene (membership regression on revisit) ----

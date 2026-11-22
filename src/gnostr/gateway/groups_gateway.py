@@ -38,7 +38,8 @@ from gi.repository import GLib
 try:
     from gnostr.trust_shield import normalize_relay_hint as _norm_hint
 except Exception:  # pragma: no cover - import fallback
-    _norm_hint = lambda s: (s or "").strip().rstrip("/") or None
+    def _norm_hint(hint):
+        return (hint or "").strip().rstrip("/") or None
 
 
 def _norm_relay(relay):
@@ -351,7 +352,8 @@ class SQLiteGroupsGateway:
                 cur = self.conn.execute(
                     "DELETE FROM group_events WHERE created_at < ? AND"
                     " NOT EXISTS (SELECT 1 FROM groups g WHERE g.relay ="
-                    " group_events.relay AND g.group_id = group_events.group_id)"
+                    " group_events.relay AND g.group_id = group_events.group_id)",
+                    (cutoff,),
                 )
                 self.conn.commit()
                 return cur.rowcount

@@ -107,7 +107,11 @@ USER_PRIV, USER_PK = nostr_utils.generate_keypair()
 OTHER_PK = "d" * 64
 NIP11_DOC = {"name": "harness relay", "supported_nips": [29], "pubkey": RELAY_PK}
 
-_good_nip11 = lambda relay_url, opener=None, timeout=10: dict(NIP11_DOC)
+
+def _good_nip11(relay_url, opener=None, timeout=10):
+    return dict(NIP11_DOC)
+
+
 groups.fetch_nip11 = _good_nip11  # most checks resolve NIP-11 successfully
 
 
@@ -329,13 +333,13 @@ def check_fresh_empty_eose_fails_once_with_retry():
     assert page.machine.state == "resolve_failed", page.machine.state
     assert page.retry_btn.get_visible()
     fails = _diags(buf, "sub_meta")
-    assert len([l for l in fails if "result=fail" in l]) == 1, fails
+    assert len([ln for ln in fails if "result=fail" in ln]) == 1, fails
     assert not _diags(buf, "re.req") and "re-open" not in buf.getvalue()
     # the resolve deadline was CANCELLED by classification: pumping well past
     # 8s must not produce a second failure line
     with ctx():
         _pump(0.4)
-    assert len([l for l in _diags(buf, "sub_meta") if "result=fail" in l]) == 1
+    assert len([ln for ln in _diags(buf, "sub_meta") if "result=fail" in ln]) == 1
     print("PASS: empty snapshot without cache = one explicit retryable "
           "failure, deadline cancelled, no re-REQ loop")
 

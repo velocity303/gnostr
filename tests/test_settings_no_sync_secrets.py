@@ -201,4 +201,3 @@ def test_run_off_main_delivers_result_and_errors(monkeypatch):
     )
     t2.join(5)
     assert got_err == [None], "exceptions must collapse to None"
-

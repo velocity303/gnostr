@@ -27,8 +27,8 @@ def test_badge_and_identity_rows_wrap():
 def test_pango_imported():
     src = SRC.read_text()
     assert any(
-        l.startswith("from gi.repository") and "Pango" in l
-        for l in src.splitlines()
+        line.startswith("from gi.repository") and "Pango" in line
+        for line in src.splitlines()
     )
 
 
