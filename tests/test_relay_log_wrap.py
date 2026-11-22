@@ -153,7 +153,7 @@ def test_long_relay_line_appends_intact():
     fake._log_lines = collections.deque(maxlen=200)
     ns = _log_fns()
     # bind both real methods: on_relay_log_line calls self._render_log()
-    fake.on_relay_log_line = lambda c, l: ns["on_relay_log_line"](fake, c, l)
+    fake.on_relay_log_line = lambda c, ln: ns["on_relay_log_line"](fake, c, ln)
     fake._render_log = lambda: ns["_render_log"](fake)
     fake.on_relay_log_line(None, line)
     text = label.set_text.call_args[0][0]

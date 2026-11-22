@@ -44,6 +44,7 @@ class Sidebar(Gtk.Box):
             ("search", "Search User", "system-search"),
             ("followers", "Follows", "network-transmit-receive"),
             ("messages", "Messages", "mail-unread"),
+            ("groups", "Communities", "network-workgroup"),
         ]
 
         for r_id, title, icon in items:

@@ -139,6 +139,21 @@ if xvfb_run.found() and gtk_python.found()
   test('test_trust_shield_wiring_gtk_real', xvfb_run,
     args: ['-a', gtk_python, meson.project_source_root() / 'tests/test_trust_shield_wiring_gtk_real.py'],
     timeout: 120)
+  # Real-GTK group timeline harness (NIPW-P3-FIX): real 'group-event-received'
+  # emission on a real GroupDetailPage must append kind-1/7/9 rows (the FLX1
+  # get_subtitle_label AttributeError killed every row before the append).
+  test('test_group_timeline_gtk_real', xvfb_run,
+    args: ['-a', gtk_python, meson.project_source_root() / 'tests/test_group_timeline_gtk_real.py'],
+    timeout: 120)
+  # Real-GTK revisit harness (NIPW-P3-FIX-3 + FIX-4): a pre-populated gateway
+  # row must render the group description at construction (no sub_meta wait);
+  # EOSE-without-events classifies once as empty/fail-with-Retry, never a
+  # re-REQ loop; join OK-ack shows 'requested' until a 39002 confirms;
+  # membership (member + pending) survives an app restart and renders before
+  # any relay event, across relay-string forms (NIPW-P3-FIX-4).
+  test('test_group_revisit_gtk_real', xvfb_run,
+    args: ['-a', gtk_python, meson.project_source_root() / 'tests/test_group_revisit_gtk_real.py'],
+    timeout: 120)
   # Real-GTK recipient-picker smoke (Phase A2): construct + filter +
   # paste-pin + activate against real Gtk/Adw.
   test('test_dm_recipient_gtk_real', xvfb_run,

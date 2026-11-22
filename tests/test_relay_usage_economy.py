@@ -54,6 +54,7 @@ _METHODS = (
     "process_queue",
     "_refill_tokens",
     "_next_send_wait",
+    "handle_sub_closed",
 )
 
 
@@ -176,6 +177,7 @@ def _fake_relay(url="wss://relay.test", tokens=None, connected=True):
         _last_traffic=time.monotonic(),
         _closed_notified=False,
         _idle_closed=False,
+        _reopen_counts={},
     )
     ws_mod = types.SimpleNamespace(WebSocketApp=_FakeWS)
     conn_state = __import__(

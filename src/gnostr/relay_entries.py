@@ -13,6 +13,14 @@ are unit-testable without GObject/GTK (same contract as proxy_settings.py).
 RELAY_ROLES = ("read", "write", "dm")
 DEFAULT_ROLES = ["read", "write"]
 
+# NIPW-P3-FIX-3 (Bug B): relays documented to demand NIP-42 AUTH for REQs
+# while gnostr v1 never completes AUTH. Read-role routing pre-skips them so
+# the communities glist snapshot never bounces (FLX1 round 3 logged
+# 'sub_close relay=wss://aggr.nostr.land sub=glist_self result=fail
+# reason=auth-required' on every visit). Write role is untouched: joins
+# and publishes must still reach these relays.
+KNOWN_AUTH_REQUIRED_READ = frozenset({"wss://aggr.nostr.land"})
+
 
 def normalize_roles(roles):
     """Canonical-order role list (read, write, dm); unknown entries dropped,

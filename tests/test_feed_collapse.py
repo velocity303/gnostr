@@ -178,7 +178,8 @@ def test_postwidget_collapse_contract_in_source():
     assert "set_halign(Gtk.Align.START)" in src
     # full content survives for copy + open-thread
     assert "self._full_content" in src
-    assert "show_thread(\n            event_id, pubkey, self._full_content, tags\n        )" in src or "self._full_content, tags" in src
+    assert ("show_thread(\n            event_id, pubkey, self._full_content, "
+            "tags\n        )" in src or "self._full_content, tags" in src)
     assert "Gdk.ContentProvider.new_for_value(self._full_content)" in src
     # the toggle row is excluded from the open-thread gesture walk
     assert '_collapse_toggle", None' in src

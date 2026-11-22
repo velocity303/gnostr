@@ -21,6 +21,7 @@ install_data(
     'nip49.py',
     'nostr_utils.py',
     'relay_entries.py',
+    'groups.py',
     'profile_nips.py',
     'trust_shield.py',
     'trust_settings.py',
