@@ -270,9 +270,14 @@ def check_join_click_publishes_signed_join():
             "machine gate got %r, signed event carries %r"
             % (page.machine.join_event_id, signed["id"])
         )
-        # OK-ack for that exact id must be recognized (status flips)
+        # OK-ack for that exact id must be recognized. NIPW-P3-FIX-3 (Bug C):
+        # accepted != member — the status must say REQUESTED, awaiting the
+        # 39002 confirmation, never a silent member/pending ambiguity.
         client.emit("publish-result", signed["id"], True, "", RELAY, "Group join")
-        assert page.status_lbl.get_text() == "Join requested…"
+        assert page.machine.state == "pending", page.machine.state
+        assert page.status_lbl.get_text() == "Join requested — awaiting approval", (
+            page.status_lbl.get_text()
+        )
         print("PASS: Join click gates on signed 9021 id + dispatch fires")
     finally:
         groups.fetch_nip11 = _no_nip11

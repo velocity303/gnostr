@@ -21,7 +21,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, GLib, Gtk, Pango
+from gi.repository import Adw, GLib, Gtk, GObject, Pango
 
 from .. import groups, nostr_utils
 
@@ -246,6 +246,10 @@ class GroupDetailPage(Gtk.Box):
         self._resolve_deadline_id = None
         self._join_timeout_id = None
         self._leave_timeout_id = None
+        # gmeta EOSE arrived while NIP-11 was still in flight — classify it
+        # right after the NIP-11 replay instead of waiting for the deadline
+        # (NIPW-P3-FIX-3, Bug A).
+        self._meta_eose_seen = False
 
         bar = Gtk.Box(spacing=12, halign=Gtk.Align.START, margin_top=6,
                       margin_bottom=6, margin_start=6)
@@ -327,6 +331,15 @@ class GroupDetailPage(Gtk.Box):
         self._handlers.append(
             self.client.connect("relay-connected", self._on_relay_connected)
         )
+        # NIPW-P3-FIX-3 (Bug A): 'no events before EOSE' on the metadata
+        # snapshot is a terminal, classifiable fact — the page must learn it
+        # from the signal, not from the dead-sub deadline (which used to end
+        # in resolve_failed + re-REQ loops on revisits). signal_query guard:
+        # test stubs may not declare the signal.
+        if GObject.signal_query("sub-eose", type(self.client)):
+            self._handlers.append(
+                self.client.connect("sub-eose", self._on_sub_eose)
+            )
         self.connect("unrealize", self._on_unrealize)
 
         self._start_resolve()
@@ -335,6 +348,9 @@ class GroupDetailPage(Gtk.Box):
 
     def _start_resolve(self):
         self.machine.begin()
+        self._seed_cached_meta()  # NIPW-P3-FIX-3 (Bug A): render the cached
+        # row immediately; the live 39000 REQ continues as a background
+        # refresh and can only improve what's already shown.
         self._open_subs()
         import threading
 
@@ -390,6 +406,97 @@ class GroupDetailPage(Gtk.Box):
         for sub_id, filt, snap in pending:
             self._open_sub(sub_id, filt, snap)
 
+    # -- revisit cache + EOSE classification (NIPW-P3-FIX-3, Bug A) -----------
+
+    def _gw(self):
+        """Gateway accessor: real clients set _groups_gateway (via
+        get_groups_gateway()); test doubles set the attribute directly."""
+        return getattr(self.client, "_groups_gateway", None)
+
+    def _persist_membership(self, state):
+        gw = self._gw()
+        if gw is None:
+            return
+        try:
+            gw.set_membership(self.relay, self.group_id, state)
+        except Exception:
+            pass
+
+    def _seed_cached_meta(self):
+        """Revisit must NEVER wait on the live 39000 snapshot: the gateway
+        row was upserted from VERIFIED metadata on an earlier visit, so
+        render it on entry. The live sub_meta REQ continues as a background
+        refresh — its result (event, empty EOSE, or deadline) can update the
+        row but never stalls the page. Membership seeds too: 'member' stays
+        member, a persisted join-request stays 'requested', never preview."""
+        gw = self._gw()
+        if gw is None:
+            return
+        try:
+            row = gw.get_group(self.relay, self.group_id)
+            mem = gw.get_membership(self.relay, self.group_id)
+        except Exception:
+            return
+        if row and (row.get("name") or row.get("about") or row.get("picture")):
+            meta = groups.GroupMeta(
+                self.relay,
+                self.group_id,
+                name=row.get("name"),
+                picture=row.get("picture"),
+                banner=row.get("banner"),
+                about=row.get("about"),
+                flags=row.get("flags") or [],
+                supported_kinds=row.get("supported_kinds"),
+                admins=row.get("admins") or [],
+                member_count=row.get("member_count"),
+                fetched_at=row.get("fetched_at"),
+            )
+            if self.machine.state == "resolving":
+                if self.machine.on_metadata(meta) == "aborted":
+                    self._show_abort()  # cached private group: gate still applies
+                    return
+            else:
+                self.machine.meta = meta  # keeps the closed/invite gate honest
+            self._meta = meta
+            self._render_preview()
+            _diag("cached_meta", "ok", self.relay)
+        if mem == "member":
+            self.machine.on_membership("member")
+            self._render_status()
+        elif mem == "pending":
+            self.machine.on_membership("pending")  # requested stays requested
+            self._render_status()
+
+    def _on_sub_eose(self, _client, sub_id, relay_url):
+        if relay_url != self.relay or sub_id not in self._sub_ids:
+            return
+        if sub_id != groups.sub_id_for("gmeta", self.group_id):
+            return
+        if "sub_meta" in self._step_logged:
+            return  # metadata landed before EOSE: nothing to settle
+        if self._self_pk is None:
+            # NIP-11 still in flight (replay hasn't run): classify after it does.
+            self._meta_eose_seen = True
+            return
+        self._classify_meta_eose()
+
+    def _classify_meta_eose(self):
+        """EOSE with no 39000 is 'empty but fine' from the relay's side, not
+        a dead sub: settle it ONCE. Cached render → background refresh simply
+        found nothing (no failure shown, never any re-REQ — snapshot subs are
+        excluded from the CLOSED sweep in handle_sub_closed). No cache → one
+        explicit retryable failure behind the Retry button."""
+        self._meta_eose_seen = False
+        if self._resolve_deadline_id is not None:
+            GLib.source_remove(self._resolve_deadline_id)
+            self._resolve_deadline_id = None
+        if self._meta is not None or self.machine.state != "resolving":
+            _diag("sub_meta", "empty", self.relay)
+            return
+        self.machine.on_resolve_failed("relay returned no group metadata")
+        _diag("sub_meta", "fail", self.relay)
+        self._show_resolve_failed()
+
     def _on_nip11(self, doc, ms=None):
         _diag("nip11", "ok" if doc is not None else "fail", self.relay, ms)
         self._self_pk = groups.nip11_self_pk(doc)
@@ -412,6 +519,10 @@ class GroupDetailPage(Gtk.Box):
         pending, self._pre_nip11_events = self._pre_nip11_events, []
         for ev in pending:
             self._process_group_event(ev)
+        if getattr(self, "_meta_eose_seen", False) and self._self_pk is not None:
+            # gmeta EOSE arrived while NIP-11 was in flight; the replay above
+            # just ran — classify the (still) empty snapshot now.
+            self._classify_meta_eose()
         return False
 
     def _arm_resolve_deadline(self):
@@ -516,7 +627,23 @@ class GroupDetailPage(Gtk.Box):
             is_in = groups.is_member_in_members_event(ev, pk) if pk else None
             if is_in is not None:
                 self._cancel_join_timeout()
-                self.machine.on_membership("member" if is_in else "removed")
+                old = self.machine.state
+                if is_in:
+                    state = self.machine.on_membership("member")
+                    _diag("member_confirm", "ok", self.relay)
+                    if state != old and state == "member":
+                        self._persist_membership("member")
+                        self._sync_registry(add=True)
+                else:
+                    # NIPW-P3-FIX-3 (Bug C): absence from the 39002 set is
+                    # NOT 'removed'. On an approval-gated group it IS the
+                    # honest 'requested — awaiting approval' state (FLX1:
+                    # blossom join_ok ok but status stayed ambiguous). Only
+                    # the 9000/9001 audit branch below reports removal.
+                    self.machine.on_membership("unknown")
+                    if self.machine.state in ("join_sent", "pending"):
+                        _diag("member_pending", "ok", self.relay)
+                        self._persist_membership("pending")
                 self._render_status()
         elif kind in groups.GROUP_TIMELINE_KINDS:
             self._mark_step_ok("sub_timeline")
@@ -526,7 +653,20 @@ class GroupDetailPage(Gtk.Box):
             state = groups.latest_membership([ev], pk) if pk else "unknown"
             if state != "unknown":
                 self._cancel_join_timeout()
-                self.machine.on_membership(state)
+                old = self.machine.state
+                new = self.machine.on_membership(state)
+                if state == "member":
+                    _diag("member_confirm", "ok", self.relay)
+                    if new == "member" and new != old:
+                        self._persist_membership("member")
+                        self._sync_registry(add=True)
+                else:
+                    # 9000 audit naming us: a real removal (the only path
+                    # that says 'removed' — see the 39002 branch above).
+                    _diag("member_confirm", "fail", self.relay)
+                    if old in ("member", "join_sent", "pending"):
+                        self._persist_membership("left")
+                        self._sync_registry(add=False)
                 self._render_status()
 
     def _nip11_pk(self):
@@ -673,6 +813,13 @@ class GroupDetailPage(Gtk.Box):
         self._cancel_join_timeout()
         state = self.machine.on_join_ok(bool(accepted), message or "")
         _diag("join_ok", "ok" if accepted else "fail", self.relay)
+        if state == "pending":
+            # NIPW-P3-FIX-3 (Bug C): relay ACCEPTED the 9021 — membership is
+            # still an open question (blossom waits on an admin). Say so in
+            # the log AND persist it, so a revisit shows 'requested' rather
+            # than falling back to preview.
+            _diag("member_pending", "ok", self.relay)
+            self._persist_membership("pending")
         if state == "rejected":
             self.main_window.add_toast(
                 Adw.Toast(title=f"Join rejected: {self.machine.rejection_reason}")
@@ -740,7 +887,10 @@ class GroupDetailPage(Gtk.Box):
         text = {
             "idle": "", "resolving": "Checking relay…",
             "preview": "", "join_sent": "Join requested…",
-            "member": "✓ Member", "pending": "Join pending approval",
+            "member": "✓ Member",
+            # NIPW-P3-FIX-3 (Bug C): accepted != confirmed. The pending text
+            # must say REQUESTED, not pretend membership exists.
+            "pending": "Join requested — awaiting approval",
             "already_member": "✓ Already a member",
             "rejected": f"Join rejected: {reasons.get('rejected') or ''}",
             "aborted": reasons.get("aborted") or "",

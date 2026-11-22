@@ -308,7 +308,9 @@ def test_machine_happy_path():
     assert m.on_nip11({"supported_nips": [29]}) == "resolving"
     assert m.on_metadata(_meta()) == "preview"
     assert m.on_join("evt123") == "join_sent"
-    assert m.on_join_ok(True) == "join_sent"
+    # NIPW-P3-FIX-3 (Bug C): an OK ack means ACCEPTED, not member — an
+    # approval-gated group (blossom) sits at 'pending' until 39002 confirms.
+    assert m.on_join_ok(True) == "pending"
     assert m.on_membership("member") == "member"
 
 

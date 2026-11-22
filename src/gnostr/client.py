@@ -197,6 +197,11 @@ class NostrRelay(GObject.Object):
         # NIPW-P3-HARDEN: bounded re-REQ counter per sub (idle-close sweeps
         # must not loop unbounded against a relay that keeps closing us).
         self._reopen_counts = {}
+        # NIPW-P3-FIX-3 (Bug B): True once this relay has CLOSED a REQ with
+        # an auth-required reason (NIP-42). gnostr never sends AUTH, so
+        # read-role fan-out skips this relay for the session instead of
+        # re-failing on every communities visit.
+        self._auth_required = False
 
     def _refill_tokens(self):
         now = time.monotonic()
@@ -343,7 +348,7 @@ class NostrRelay(GObject.Object):
             self.ws.close()
         return True
 
-    def subscribe(self, sub_id, filters, snapshot=False):
+    def subscribe(self, sub_id, filters, snapshot=False, exclusive=True):
         # NIP-01: clamp before anything keys on the id (previous-CLOSE,
         # snapshot/live sets, REQ) so CLOSE always matches what was REQ'd.
         sub_id = nip01_sub_id(sub_id)
@@ -352,7 +357,19 @@ class NostrRelay(GObject.Object):
         # self.sub_id and sent CLOSE for IDs the relay didn't recognize, which
         # produced "bad close: invalid subscription id length" NOTICEs and
         # "too many concurrent REQs" — degrading relay communication.
-        if self.is_connected and self.sub_id and self.sub_id != sub_id:
+        # NIPW-P3-FIX-3 (Bug A): the single-sub slot exists to serialize the
+        # FEED's rotating queries (profile/feed/relay-list swap one REQ per
+        # view). Group detail opens FOUR concurrent subs (gmeta/gmemset/gtl/
+        # gmem) via subscribe_on_relay — with the swap active, each later REQ
+        # CLOSEd the earlier group sub (gmemset closed gmeta, gtl closed
+        # gmemset...), and khatru answered the abandoned REQs with CLOSED.
+        # Page-level group subs are concurrent by design: exclusive=False.
+        if (
+            exclusive
+            and self.is_connected
+            and self.sub_id
+            and self.sub_id != sub_id
+        ):
             try:
                 self.ws.send(json.dumps(["CLOSE", self.sub_id]))
             except Exception:
@@ -367,7 +384,8 @@ class NostrRelay(GObject.Object):
             self.live_subs[sub_id] = filters
             self.snapshot_ids.discard(sub_id)
 
-        self.sub_id = sub_id
+        if exclusive:
+            self.sub_id = sub_id
 
         if not self.is_connected:
             # Record the live sub even while down (issue #26): on_open replays
@@ -456,6 +474,19 @@ class NostrRelay(GObject.Object):
                 f"[GROUP] step=sub_close relay={self.url} sub={sub_id} "
                 f"result=fail reason={reason or 'unspecified'}"
             )
+        if "auth" in (reason or "").lower():
+            # NIPW-P3-FIX-3 (Bug B): a CLOSED 'auth-required' (NIP-42) is a
+            # policy refusal gnostr cannot satisfy (v1 never sends AUTH), and
+            # re-REQ'ing just re-bounces forever (FLX1: glist_self failing on
+            # aggr.nostr.land every communities visit). Remember it — the
+            # client's read-role routing skips this relay for the session.
+            if not self._auth_required:
+                self._auth_required = True
+                print(
+                    f"[relay] {self.url} demands NIP-42 AUTH: read REQs "
+                    f"skipped for this session"
+                )
+            return False
         if dropped_live is not None and sub_closed_reopenable(reason):
             n = self._reopen_counts.get(sub_id, 0)
             if n >= 5:
@@ -556,6 +587,12 @@ class NostrClient(GObject.Object):
         # thread). NIPW-P3-HARDEN: pages that queued subs for a not-yet-up
         # relay (group detail) retry them the moment it connects.
         "relay-connected": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
+        # sub-eose: (sub_id:str, relay_url:str) — a subscription on a
+        # persistent relay hit EOSE (main thread). Group detail uses this to
+        # classify 'no events before EOSE' on the metadata snapshot as
+        # empty-but-fine instead of waiting for the dead-sub deadline and
+        # re-REQ sweeping (NIPW-P3-FIX-3, Bug A).
+        "sub-eose": (GObject.SignalFlags.RUN_FIRST, None, (str, str)),
         # tor-state-changed: (state:str) — TorState value ("disabled"|
         # "reachable"|"down"); dispatched on the main thread via GLib.idle_add
         # (spec gnostr-tor-onion-support-v1 §A.2.1).
@@ -1356,9 +1393,24 @@ class NostrClient(GObject.Object):
         active = self.active_relays
         entries = getattr(self, "relay_entries", None)
         if not entries:
-            return dict(active)
-        urls = set(gnostr.relay_entries.urls_for_role(entries, role))
-        return {u: r for u, r in active.items() if u in urls}
+            out = dict(active)
+        else:
+            urls = set(gnostr.relay_entries.urls_for_role(entries, role))
+            out = {u: r for u, r in active.items() if u in urls}
+        if role == "read":
+            # NIPW-P3-FIX-3 (Bug B): drop relays proven NIP-42 this session
+            # (they CLOSED a REQ with auth-required) AND the known
+            # auth-required set (pre-skipped so the FIRST communities visit
+            # no longer logs an auth failure either). Publish (write role)
+            # still targets them — blossom joins must reach blossom relays;
+            # only the read fan-out skips them.
+            known_auth = gnostr.relay_entries.KNOWN_AUTH_REQUIRED_READ
+            out = {
+                u: r
+                for u, r in out.items()
+                if not getattr(r, "_auth_required", False) and u not in known_auth
+            }
+        return out
 
     def _read_relays(self):
         return self._routed_relays("read")
@@ -2350,6 +2402,15 @@ class NostrClient(GObject.Object):
         """EOSE fan-in for P4 batch probes: a chunk settles once every relay
         that was connected at REQ time has answered. Other sub_ids are not
         tracked here and are ignored."""
+        # NIPW-P3-FIX-3 (Bug A): every persistent-relay EOSE also reaches the
+        # pages on the main thread ('sub-eose'). Group detail classifies an
+        # empty 39000 snapshot from this signal instead of waiting for the
+        # dead-sub deadline, which used to trigger the CLOSED/re-REQ sweep
+        # loop on revisits.
+        # The id arriving here is the same clamped id the relay got in REQ
+        # (nip01_sub_id is applied at every client entry point), so pages can
+        # match it against their stored sub ids directly.
+        GLib.idle_add(self.emit, "sub-eose", sub_id, relay_url)
         bf = getattr(self, "_backfill_pending", {}).get(sub_id)
         if bf is not None:
             # Infinite-scroll phase 2: same fan-in shape as the P4 probes —
@@ -2460,7 +2521,9 @@ class NostrClient(GObject.Object):
         r = self.active_relays.get(url)
         ok = r is not None
         if ok:
-            r.subscribe(sub_id, filters, snapshot=snapshot)
+            # exclusive=False (NIPW-P3-FIX-3): group subs coexist with the
+            # relay's feed sub and with each other — no CLOSE cascade.
+            r.subscribe(sub_id, filters, snapshot=snapshot, exclusive=False)
         if is_group_sub_id(sub_id):
             print(
                 f"[GROUP] step=sub_open relay={url} sub={sub_id} "

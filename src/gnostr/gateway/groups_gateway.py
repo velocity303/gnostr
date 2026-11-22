@@ -146,25 +146,45 @@ class SQLiteGroupsGateway:
                 )
                 out = []
                 for row in cur.fetchall():
-                    out.append(
-                        {
-                            "relay": row[0],
-                            "group_id": row[1],
-                            "name": row[2],
-                            "picture": row[3],
-                            "about": row[4],
-                            "banner": row[5],
-                            "flags": json.loads(row[6]) if row[6] else [],
-                            "supported_kinds": json.loads(row[7]) if row[7] else None,
-                            "admins": json.loads(row[8]) if row[8] else [],
-                            "member_count": row[9],
-                            "fetched_at": row[10],
-                        }
-                    )
+                    out.append(self._row_to_group(row))
                 return out
         except Exception:
             traceback.print_exc()
             return []
+
+    @staticmethod
+    def _row_to_group(row):
+        return {
+            "relay": row[0],
+            "group_id": row[1],
+            "name": row[2],
+            "picture": row[3],
+            "about": row[4],
+            "banner": row[5],
+            "flags": json.loads(row[6]) if row[6] else [],
+            "supported_kinds": json.loads(row[7]) if row[7] else None,
+            "admins": json.loads(row[8]) if row[8] else [],
+            "member_count": row[9],
+            "fetched_at": row[10],
+        }
+
+    def get_group(self, relay, group_id):
+        """Registry row for ONE group (same shape as list_groups rows), or
+        None. NIPW-P3-FIX-3 (Bug A): GroupDetailPage reads this on entry so
+        a revisit renders verified metadata immediately instead of waiting
+        on a fresh 39000 snapshot that khatru sometimes never replays."""
+        try:
+            with self.lock:
+                row = self.conn.execute(
+                    "SELECT relay, group_id, name, picture, about, banner, flags,"
+                    " supported_kinds, admins, member_count, fetched_at"
+                    " FROM groups WHERE relay=? AND group_id=?",
+                    (relay, group_id),
+                ).fetchone()
+                return self._row_to_group(row) if row else None
+        except Exception:
+            traceback.print_exc()
+            return None
 
     def remove_group(self, relay, group_id):
         """Leave: drop registry + membership rows. Cached group_events are

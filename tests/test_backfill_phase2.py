@@ -132,11 +132,21 @@ def test_request_backfill_eose_fanin_settles_once():
     c._dm_status_by_sub = {}
     c.request_backfill("bf_1", {})
     c._handle_eose("bf_1", "wss://a")
-    assert c.emitted == []  # one relay left
+    settled = [e for e in c.emitted if e[0] != "sub-eose"]
+    assert settled == []  # one relay left
     c._handle_eose("bf_1", "wss://b")
-    assert c.emitted == [("backfill-done", ("bf_1",))]
+    settled = [e for e in c.emitted if e[0] != "sub-eose"]
+    assert settled == [("backfill-done", ("bf_1",))]
     c._handle_eose("bf_1", "wss://b")  # late duplicate EOSE: no re-fire
-    assert len(c.emitted) == 1
+    settled = [e for e in c.emitted if e[0] != "sub-eose"]
+    assert len(settled) == 1
+    # NIPW-P3-FIX-3 (Bug A): the per-relay 'sub-eose' bridge fires on EVERY
+    # EOSE (fan-in aggregation above is backfill-local; pages need each EOSE).
+    assert [e for e in c.emitted if e[0] == "sub-eose"] == [
+        ("sub-eose", ("bf_1", "wss://a")),
+        ("sub-eose", ("bf_1", "wss://b")),
+        ("sub-eose", ("bf_1", "wss://b")),
+    ]
 
 
 def test_request_backfill_stale_batch_settles_on_next_call():

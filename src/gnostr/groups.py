@@ -682,7 +682,14 @@ class GroupJoinMachine:
         if self.state != "join_sent":
             return self.state
         if accepted:
-            return self.state  # membership probe settles member/pending
+            # NIPW-P3-FIX-3 (Bug C): an OK ack means the relay ACCEPTED the
+            # 9021 — NOT that membership exists. Approval-gated groups
+            # (blossom) answer OK and stay silent until an admin approves
+            # (FLX1: blossom join_ok ok but status stayed ambiguous).
+            # 'pending' is the honest resting state; a 39002 push carrying
+            # us settles it to member.
+            self.state = "pending"
+            return self.state
         msg = (message or "").lower()
         if msg.startswith("duplicate"):
             self.state = "already_member"
@@ -718,6 +725,14 @@ class GroupJoinMachine:
                 self.state = "preview"
         elif self.state in ("join_sent", "pending"):
             self.state = "pending"
+        elif state == "pending":
+            # cached-membership seed (page re-entry with a persisted
+            # join-requested state): preview/join_sent/resolving -> pending,
+            # never past member. resolving is legal because the seed reads
+            # the gateway BEFORE the live probe starts; a later 39002 push
+            # still settles member/rejected.
+            if self.state in ("preview", "join_sent", "resolving"):
+                self.state = "pending"
         return self.state
 
     def _abort(self, reason):
