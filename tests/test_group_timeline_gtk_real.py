@@ -430,6 +430,49 @@ def check_subs_queued_and_flushed_on_relay_up():
     print("PASS: failed subs queued and flushed on relay-connected")
 
 
+def check_composer_member_flow():
+    """NIPW-P3-IMPL-B (real GTK, real widgets): the composer is hidden for
+    every non-member state and shown for members; a Post click on a member
+    page dispatches a SIGNED kind-1 carrying h + first-8-hex previous refs
+    (others-only, gateway-ordered) and clears the entry."""
+    groups.fetch_nip11 = lambda relay_url, opener=None, timeout=10: dict(NIP11_DOC)
+    try:
+        client, page = _build_page()
+        client.my_pubkey = USER_PK
+        client.emit("group-event-received", RELAY, json.dumps(_meta_event()))
+        assert page.machine.state == "preview", page.machine.state
+        assert not page.post_row.get_visible(), "composer shown to a non-member"
+        page.join_btn.emit("clicked")
+        signed_join = client.dispatched[0]
+        client.emit("publish-result", signed_join["id"], True, "", RELAY, "Group join")
+        page.machine.on_membership("member")
+        page._render_status()
+        assert page.machine.state == "member", page.machine.state
+        assert page.post_row.get_visible(), "composer hidden from a member"
+        stored = [
+            {"id": "a1" * 32, "pubkey": "bb" * 32, "kind": 1},
+            {"id": "b2" * 32, "pubkey": USER_PK, "kind": 1},   # own -> excluded
+            {"id": "c3" * 32, "pubkey": "cc" * 32, "kind": 7},
+        ]
+        client._groups_gateway = types.SimpleNamespace(
+            get_events=lambda r, g: stored,
+            set_membership=lambda r, g, s: None,
+        )
+        page.post_entry.set_text("hello from gtk")
+        page.post_btn.emit("clicked")
+        post = client.dispatched[-1]
+        assert post["kind"] == 1, post
+        assert post["content"] == "hello from gtk"
+        assert post.get("sig"), "post dispatched through the signer path"
+        assert [t for t in post["tags"] if t[0] == "h"] == [["h", "test-group"]]
+        prevs = [t[1] for t in post["tags"] if t[0] == "previous"]
+        assert prevs == ["a1" * 4, "c3" * 4], prevs
+        assert page.post_entry.get_text() == "", "entry must clear on dispatch"
+        print("PASS: composer gates on membership; post = signed kind-1 + h + previous")
+    finally:
+        groups.fetch_nip11 = _no_nip11
+
+
 def main():
     Adw.init()
     checks = [
@@ -443,6 +486,7 @@ def main():
         check_retry_recovers_preview,
         check_join_timeout_reverts_ui,
         check_subs_queued_and_flushed_on_relay_up,
+        check_composer_member_flow,
     ]
     failed = 0
     for check in checks:
