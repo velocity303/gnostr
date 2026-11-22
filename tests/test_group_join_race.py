@@ -56,6 +56,8 @@ _METHODS = (
     "_process_group_event",
     "_on_join_clicked",
     "_on_leave_clicked",
+    "_on_post_clicked",
+    "_on_publish_result",
     "_render_preview",
     "_render_status",
     "_show_abort",
@@ -128,6 +130,9 @@ class _Rec:
     def set_text(self, t):
         self.text = t
 
+    def get_text(self):
+        return self.text
+
     def set_visible(self, v):
         self.visible = bool(v)
 
@@ -196,6 +201,11 @@ def _make_page(self_pk=None, machine=None):
     fake.leave_btn = _Rec()
     fake.retry_btn = _Rec()
     fake.timeline = _FakeBox()
+    fake.post_entry = _Rec("")
+    fake.post_btn = _Rec()
+    fake.post_row = _Rec()
+    fake.post_row.visible = False  # mirrors __init__ (hidden until member)
+    fake._post_ids = set()
     for name in _METHODS:
         setattr(fake, name, types.MethodType(_extract(name), fake))
     return fake
@@ -387,3 +397,89 @@ def test_buffer_is_bounded():
         )
         fake._process_group_event(ev)
     assert len(fake._pre_nip11_events) == 64
+
+
+# --- NIPW-P3-IMPL-B: post flow ----------------------------------------------
+
+
+def _member_machine():
+    m = _preview_machine()
+    m.on_join("a" * 64)
+    m.on_join_ok(True, "")
+    m.on_membership("member")
+    assert m.state == "member"
+    return m
+
+
+def test_composer_visibility_follows_membership():
+    """Non-members never see a composer (khatru relays reject their kind-1s);
+    members always do."""
+    fake = _make_page(self_pk=RELAY_PK, machine=_preview_machine())
+    fake._render_status()
+    assert fake.post_row.visible is False
+    fake2 = _make_page(self_pk=RELAY_PK, machine=_member_machine())
+    fake2._render_status()
+    assert fake2.post_row.visible is True
+
+
+def test_post_click_builds_signed_kind1_with_h_and_previous():
+    """The dispatched post: kind 1, h tag, <=3 previous ids (8-hex) of OTHERS'
+    most recent stored events, group relay only, entry cleared after dispatch."""
+    fake = _make_page(self_pk=RELAY_PK, machine=_member_machine())
+    fake.post_entry.set_text("hello group")
+    stored = [
+        {"id": "a1" * 32, "pubkey": "bb" * 32, "kind": 1},   # other, newest
+        {"id": "b2" * 32, "pubkey": USER_PK, "kind": 1},     # own -> excluded
+        {"id": "c3" * 32, "pubkey": "cc" * 32, "kind": 7},   # other
+        {"id": "d4" * 32, "pubkey": "dd" * 32, "kind": 1},   # other (3rd ref)
+        {"id": "e5" * 32, "pubkey": "ee" * 32, "kind": 1},   # other (beyond cap)
+    ]
+    fake.client._groups_gateway = SimpleNamespace(
+        get_events=lambda r, g: stored
+    )
+    fake._on_post_clicked(None)
+    assert len(fake.client.dispatched) == 1
+    signed, url, label = fake.client.dispatched[0]
+    assert url == RELAY, "posts must flow group-relay only (spec §3)"
+    assert label == "Group post"
+    assert signed["kind"] == 1
+    assert signed["content"] == "hello group"
+    assert signed.get("sig"), "dispatch signs downstream"
+    assert [t for t in signed["tags"] if t[0] == "h"] == [["h", GID]]
+    prevs = [t[1] for t in signed["tags"] if t[0] == "previous"]
+    assert prevs == ["a1" * 4, "c3" * 4, "d4" * 4], (
+        "previous refs: newest-first, others-only, capped at 3, first-8-hex"
+    )
+    assert fake.post_entry.text == "", "composer clears on dispatch"
+    assert signed["id"] in fake._post_ids, "ack tracking keys on signed id"
+
+
+def test_empty_post_dispatches_nothing():
+    fake = _make_page(self_pk=RELAY_PK, machine=_member_machine())
+    fake.post_entry.set_text("   ")
+    fake._on_post_clicked(None)
+    assert fake.client.dispatched == []
+    assert fake._post_ids == set()
+
+
+def test_post_rejection_toasts_without_disturbing_membership():
+    """A rejected post OK-ack surfaces the relay's reason verbatim and must
+    not touch the join state machine."""
+    fake = _make_page(self_pk=RELAY_PK, machine=_member_machine())
+    fake.post_entry.set_text("will be refused")
+    fake._on_post_clicked(None)
+    pid = fake.client.dispatched[0][0]["id"]
+    fake._on_publish_result(
+        fake.client, pid, False, "not a member", RELAY, "Group post"
+    )
+    assert len(fake.main_window.toasts) == 1
+    assert fake.machine.state == "member"
+    assert pid not in fake._post_ids
+    # accepted post: silent (the gtl echo renders the row)
+    fake.post_entry.set_text("will land")
+    fake._on_post_clicked(None)
+    pid2 = fake.client.dispatched[1][0]["id"]
+    fake._on_publish_result(
+        fake.client, pid2, True, "", RELAY, "Group post"
+    )
+    assert len(fake.main_window.toasts) == 1, "accepted post acks stay silent"

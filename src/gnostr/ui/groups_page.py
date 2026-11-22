@@ -340,6 +340,28 @@ class GroupDetailPage(Gtk.Box):
         self.timeline.set_selection_mode(Gtk.SelectionMode.NONE)
         outer.append(self.timeline)
 
+        # --- composer (NIPW-P3-IMPL-B; spec §3 "Posting": single entry + send
+        # button pinned at the bottom) --- hidden unless the state machine
+        # reports membership: khatru-family group relays reject kind-1s from
+        # non-members, and a composer that can only produce rejections is a
+        # lie on the screen.
+        self._post_ids = set()
+        post_row = Gtk.Box(spacing=8, margin_top=6)
+        self.post_entry = Adw.EntryRow(title="Post to group…")
+        self.post_entry.set_hexpand(True)
+        self.post_btn = Gtk.Button(label="Post")
+        self.post_btn.add_css_class("suggested-action")
+        self.post_btn.set_valign(Gtk.Align.CENTER)
+        self.post_btn.connect("clicked", self._on_post_clicked)
+        # Enter (or the row's apply checkmark) posts too — 'apply' is the
+        # Adw.EntryRow signal for both, present since EntryRow's introduction.
+        self.post_entry.connect("apply", lambda *_: self._on_post_clicked(None))
+        post_row.append(self.post_entry)
+        post_row.append(self.post_btn)
+        post_row.set_visible(False)
+        self.post_row = post_row
+        outer.append(post_row)
+
         self._handlers.append(
             self.client.connect("group-event-received", self._on_group_event)
         )
@@ -802,6 +824,44 @@ class GroupDetailPage(Gtk.Box):
         )
         return False
 
+    def _on_post_clicked(self, _btn):
+        """Post to the group (NIPW-P3-IMPL-B): kind 1 + h tag + best-effort
+        previous tags, group relay ONLY (spec §3 routing contract).
+
+        No optimistic append: the page's live gtl sub hears the relay's echo
+        on the same connection and _append_activity dedupes by id — what
+        renders is the post the relay actually accepted, not the one we
+        assumed it would.
+        """
+        text = (self.post_entry.get_text() or "").strip()
+        if not text:
+            return
+        pk = client_pk(self.main_window)
+        if not pk:
+            return
+        gw = getattr(self.client, "_groups_gateway", None)
+        stored = []
+        if gw is not None:
+            try:
+                stored = gw.get_events(self.relay, self.group_id) or []
+            except Exception:
+                stored = []
+        ev = groups.build_group_post_event(
+            pk, self.group_id, text, groups.previous_tags(stored, self_pk=pk)
+        )
+        # the unsigned template's id == the signed event's id (sig-independent
+        # serialization — see _on_join_clicked); the OK-ack matches on it.
+        self._post_ids.add(nostr_utils.compute_event_id(ev))
+        if not self.client.dispatch_signed_to_relay(
+            ev, self.relay, label="Group post"
+        ):
+            self._post_ids.clear()
+            self.main_window.add_toast(Adw.Toast(title="Could not post (signer)"))
+            _diag("post_pub", "fail", self.relay)
+            return
+        _diag("post_pub", "ok", self.relay)
+        self.post_entry.set_text("")
+
     def _on_publish_result(self, _client, event_id, accepted, message, relay_url, label):
         if event_id == getattr(self, "_leave_event_id", None):
             self._leave_event_id = None
@@ -823,6 +883,18 @@ class GroupDetailPage(Gtk.Box):
                 _diag("leave_ok", "fail", self.relay)
                 self.main_window.add_toast(
                     Adw.Toast(title=f"Leave rejected: {message or 'relay refused'}")
+                )
+            return
+        if event_id in self._post_ids:
+            self._post_ids.discard(event_id)
+            if accepted:
+                # the relay's echo arrives via the live gtl sub and renders
+                # as an activity row — log the ack, nothing else to do.
+                _diag("post_ok", "ok", relay_url)
+            else:
+                _diag("post_ok", "fail", relay_url)
+                self.main_window.add_toast(
+                    Adw.Toast(title=f"Post rejected: {message or 'relay refused'}")
                 )
             return
         if event_id != self.machine.join_event_id:
@@ -917,6 +989,8 @@ class GroupDetailPage(Gtk.Box):
         joined = s in ("member", "already_member")
         self.join_btn.set_visible(not joined)
         self.leave_btn.set_visible(joined)
+        # NIPW-P3-IMPL-B: posting is a member action (see composer comment).
+        self.post_row.set_visible(joined)
         self.join_btn.set_sensitive(s == "preview" and not self.machine.closed_without_invite())
         # NIPW-P3-HARDEN: the Retry button belongs to the retryable failure
         # state only — hidden in every other state.
