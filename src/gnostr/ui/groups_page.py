@@ -8,13 +8,15 @@ accepting an naddr or "wss://relay group-id".
 GroupDetailPage: preview-gated join flow. NIP-11 fetch -> relay-signed
 39000/39001 (verified against the NIP-11 self key BEFORE anything renders)
 -> preview card -> Join (9021) -> OK-ack -> membership probe. Private groups
-hard-abort (v1 has no NIP-42). Timeline REQ (kinds 1/7/9, #h tag) runs ONLY
-on the group relay. Posting is P3-IMPL-B scope; this page displays.
+hard-abort (v1 has no NIP-42). Activity REQ (kinds 1/6/7/9/11/1111/9734,
+#h tag) runs ONLY on the group relay. Posting is P3-IMPL-B scope; this page
+displays activity newest-first under a "Recent activity" header.
 
 Mobile-first: single column, AdwClamp, pushed onto the shared
 Adw.NavigationView like every other page (back contract on Phosh).
 """
 
+import json
 import time
 
 import gi
@@ -51,6 +53,18 @@ _SUB_STEPS = {
 
 def _short_pk(pk):
     return f"{pk[:8]}…{pk[-4:]}" if pk and len(pk) > 16 else (pk or "")
+
+
+def _ago(ts):
+    """Relative timestamp for activity rows (phone-friendly, no clock needed)."""
+    d = max(0, int(time.time()) - int(ts))
+    if d < 60:
+        return "just now"
+    if d < 3600:
+        return f"{d // 60}m ago"
+    if d < 86400:
+        return f"{d // 3600}h ago"
+    return f"{d // 86400}d ago"
 
 
 class GroupsPage(Gtk.Box):
@@ -317,7 +331,11 @@ class GroupDetailPage(Gtk.Box):
         self.card.append(self.retry_btn)
         outer.append(self.card)
 
-        # --- timeline ---
+        # --- recent activity (NIPW-P3-ACTIVITY) ---
+        activity_head = Gtk.Label(label="Recent activity", xalign=0)
+        activity_head.add_css_class("dim-label")
+        activity_head.set_margin_top(6)
+        outer.append(activity_head)
         self.timeline = Gtk.ListBox()
         self.timeline.set_selection_mode(Gtk.SelectionMode.NONE)
         outer.append(self.timeline)
@@ -365,7 +383,6 @@ class GroupDetailPage(Gtk.Box):
         threading.Thread(target=_worker, daemon=True).start()
 
     def _open_subs(self):
-        c = self.client
         gid = self.group_id
         # metadata (snapshot) + admins + members + live timeline — group
         # relay ONLY (spec §3: never general relays).
@@ -910,19 +927,57 @@ class GroupDetailPage(Gtk.Box):
         self.join_btn.set_sensitive(False)
         self._render_status()
 
+    def _activity_row_content(self, ev):
+        """(verb, body) per timeline kind — a glance must say WHAT happened.
+        Live audit 2026-11-22: group pages looked EMPTY because the groups
+        under test post NO kind-1 notes (blossom = kind-9 Blossom file
+        events; wisp = kind-11 videos + kind-1111 comments)."""
+        kind = ev.get("kind")
+        content = ev.get("content") or ""
+        if kind == 1:
+            return "posted", content[:500]
+        if kind == 6:
+            return "🔁 reposted", content[:500]
+        if kind == 7:
+            c = content.strip()
+            verb = {"+": "❤ reacted", "-": "👎 disliked"}.get(c)
+            if verb is None:
+                verb = f"reacted “{c}”" if c else "reacted"
+            return verb, ""
+        if kind == 9:
+            # Blossom file announcement: content = {"file": {"name": ...}, ...}
+            name = ""
+            try:
+                blob = json.loads(content)
+                name = str((blob.get("file") or {}).get("name") or "")
+            except (ValueError, AttributeError):
+                pass
+            return "📁 shared a file", name[:500]
+        if kind == 11:
+            title = next(
+                (t[1] for t in ev.get("tags") or []
+                 if len(t) >= 2 and t[0] == "title"),
+                "",
+            )
+            return "🎥 shared a video", (title or content)[:500]
+        if kind == 1111:
+            return "💬 commented", content[:500]
+        if kind == 9734:
+            # Zap request: content is a BOLT11 invoice — never echo it,
+            # just the act (receipts 9735 live on the payee's outbox, not
+            # the group relay).
+            return "⚡ zapped", ""
+        return "activity", content[:500]
+
     def _append_timeline_event(self, ev):
         eid = ev.get("id")
         if not eid or eid in self._seen_event_ids:
             return
         self._seen_event_ids.add(eid)
-        kind = ev.get("kind")
+        verb, body = self._activity_row_content(ev)
         author = _short_pk(ev.get("pubkey", ""))
-        if kind == 1:
-            title, body = author, (ev.get("content") or "")[:500]
-        elif kind == 7:
-            title, body = author, "❤ reacted"
-        else:
-            title, body = author, "⚡ zapped"
+        ts = ev.get("created_at")
+        title = f"{verb} · {author}" + (f" · {_ago(ts)}" if ts else "")
         row = Adw.ActionRow(title=title, subtitle=body)
         # Adw.ActionRow has NO get_subtitle_label() accessor — the old
         # subtitle-label calls raised AttributeError per event (FLX1 device
@@ -930,7 +985,9 @@ class GroupDetailPage(Gtk.Box):
         # set_subtitle_lines caps the (wrapping-by-default) subtitle at 4
         # lines with ellipsis. Guarded by tests/test_group_timeline_gtk_real.py.
         row.set_subtitle_lines(4)
-        self.timeline.append(row)
+        # Newest first: "recent activity" is not recent if 100 stale rows
+        # must be scrolled past on a phone to reach the live tail.
+        self.timeline.insert(row, 0)
 
     def _on_back(self, _btn):
         self.main_window.content_nav.pop()

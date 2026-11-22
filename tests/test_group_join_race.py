@@ -60,6 +60,7 @@ _METHODS = (
     "_render_status",
     "_show_abort",
     "_append_timeline_event",
+    "_activity_row_content",
     "_nip11_pk",
     "_mark_step_ok",
     "_arm_join_timeout",
@@ -111,6 +112,7 @@ def _extract(name, is_method=True):
     if is_method:
         ns["client_pk"] = _extract("client_pk", is_method=False)
         ns["_short_pk"] = _extract("_short_pk", is_method=False)
+        ns["_ago"] = _extract("_ago", is_method=False)
     exec(compile(ast.Module(body=[fn], type_ignores=[]), _PAGE_PATH, "exec"), ns)
     return ns[name]
 
@@ -139,6 +141,10 @@ class _FakeBox:
 
     def append(self, w):
         self.rows.append(w)
+
+    def insert(self, w, pos):
+        # NIPW-P3-ACTIVITY: real code inserts newest-first into the ListBox.
+        self.rows.insert(pos, w)
 
 
 class _FakeClient:

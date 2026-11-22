@@ -544,6 +544,10 @@ def test_req_shapes_pinned_against_live_tag_audit():
     assert "#d" not in f  # 9000/9001 carry ONLY h (probe: #d -> zero)
     assert G.metadata_filter(gid)["#d"] == [gid] and "#h" not in G.metadata_filter(gid)
     assert G.timeline_filter(gid)["#h"] == [gid] and "#d" not in G.timeline_filter(gid)
+    # NIPW-P3-ACTIVITY: live audit found the groups' ACTIVITY outside kind 1
+    # (blossom: kind 9 file events; wisp: kind 11 videos + 1111 comments) —
+    # the activity set is pinned so a regression to (1,7,9) fails the suite.
+    assert set(G.timeline_filter(gid)["kinds"]) == {1, 6, 7, 9, 11, 1111, 9734}
 
 
 # --- 39002-set membership (live finding: khatru relays keep no per-user

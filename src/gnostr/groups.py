@@ -54,8 +54,15 @@ GROUP_RELAY_KINDS = frozenset(
 GROUP_FLAGS = ("public", "open", "private", "closed", "restricted", "hidden", "livekit")
 OPEN_FLAGS = ("public", "open")
 
-# v1 timeline kinds (spec §3): notes + reactions; 6/30023 deferred.
-GROUP_TIMELINE_KINDS = (1, 7, 9)
+# Timeline/activity kinds (spec §3, expanded by the live tag audit 2026-11-22).
+# Nak probe of the two field-test groups found the ACTIVITY lives outside
+# kind 1: blossom @ groups.hzrd149.com = 99x kind 9 (Blossom file announce-
+# ments) + 53x kind 7; jensen-group @ chat.wisp.talk = kind 11 (video) posts
+# + kind 1111 (chat comment) replies + kind 7 reactions — with kinds (1,7,9)
+# the pages rendered ZERO feed rows because neither group has a single kind-1
+# note. 9734 = zap requests (zero live yet, but group zaps land on the group
+# relay on khatru-family relays). 30023 deferred (spec §3).
+GROUP_TIMELINE_KINDS = (1, 6, 7, 9, 11, 1111, 9734)
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 

@@ -91,6 +91,8 @@ groups_page = _load_groups_page()
 
 # No network in the harness: the resolve worker gets an instant None doc
 # (machine aborts; the timeline path is independent of the preview gate).
+
+
 def _no_nip11(relay_url, opener=None, timeout=10):
     return None
 
@@ -204,7 +206,9 @@ def _short(pk):
 
 def check_timeline_appends_rows():
     """Real signal emission of kind-1/7/9 events must land one
-    Adw.ActionRow per event in the timeline (the FLX1 bug appended zero)."""
+    Adw.ActionRow per event in the timeline (the FLX1 bug appended zero).
+    NIPW-P3-ACTIVITY: rows are verb-labelled and NEWEST FIRST (insert 0),
+    so the live tail is under the "Recent activity" header on a phone."""
     client, page = _build_page()
     client.emit("group-event-received", RELAY, json.dumps(_ev("a1", 1)))
     client.emit("group-event-received", RELAY, json.dumps(_ev("a2", 7, "+")))
@@ -212,13 +216,52 @@ def check_timeline_appends_rows():
     rows = _timeline_rows(page)
     assert len(rows) == 3, "expected 3 timeline rows, got %d" % len(rows)
     assert all(isinstance(r, Adw.ActionRow) for r in rows)
-    assert rows[0].get_title() == _short(AUTHOR_PK)
-    assert rows[0].get_subtitle() == "hello group"
-    assert rows[1].get_subtitle() == "❤ reacted"
-    assert rows[2].get_subtitle() == "⚡ zapped"
+    author = _short(AUTHOR_PK)
+    assert rows[0].get_title() == "📁 shared a file · %s" % author
+    assert rows[1].get_title() == "❤ reacted · %s" % author
+    assert rows[2].get_title() == "posted · %s" % author
+    assert rows[2].get_subtitle() == "hello group"
     # The 4-line cap the old (crashing) subtitle-label calls intended.
-    assert rows[0].get_subtitle_lines() == 4, "subtitle line cap not applied"
-    print("PASS: kind-1/7/9 emissions append 3 rows with 4-line subtitles")
+    assert rows[2].get_subtitle_lines() == 4, "subtitle line cap not applied"
+    print("PASS: kind-1/7/9 emit verb-labelled rows, newest first")
+
+
+def check_activity_kinds_from_live_audit():
+    """NIPW-P3-ACTIVITY: the kinds the field-test groups actually use
+    (nak audit 2026-11-22: blossom = kind-9 Blossom file events, wisp =
+    kind-11 videos + kind-1111 comments; zaps = 9734) must render labelled
+    rows with a relative timestamp — the empty-page complaint's root cause."""
+    client, page = _build_page()
+    now = int(time.time())
+    evs = [
+        {"id": "k6", "kind": 6, "pubkey": AUTHOR_PK, "created_at": now - 7200,
+         "content": "reposted note text"},
+        {"id": "k9", "kind": 9, "pubkey": AUTHOR_PK, "created_at": now - 3600,
+         "content": json.dumps({"file": {"name": "release.iso", "size": 42},
+                                "blobs": []})},
+        {"id": "k11", "kind": 11, "pubkey": AUTHOR_PK, "created_at": now - 600,
+         "tags": [["h", "test-group"], ["title", "jensen huang dancing"]],
+         "content": "https://r2a.primal.net/uploads2/7/a4/2e/clip.mp4"},
+        {"id": "k1111", "kind": 1111, "pubkey": AUTHOR_PK, "created_at": now - 30,
+         "content": "this is really good!"},
+        {"id": "kzap", "kind": 9734, "pubkey": AUTHOR_PK, "created_at": now - 10,
+         "content": "lnbc1...invoice-never-echoed"},
+    ]
+    for e in evs:
+        client.emit("group-event-received", RELAY, json.dumps(e))
+    rows = _timeline_rows(page)
+    assert len(rows) == 5, "activity kinds emitted %d rows" % len(rows)
+    titles = [r.get_title() for r in rows]
+    # newest first: zap(10s) at top ... repost(2h) at bottom
+    assert titles[0].startswith("⚡ zapped ·") and "just now" in titles[0], titles[0]
+    assert titles[1].startswith("💬 commented ·") and titles[1].endswith("just now")
+    assert titles[2].startswith("🎥 shared a video ·") and "10m ago" in titles[2]
+    assert rows[2].get_subtitle() == "jensen huang dancing"
+    assert titles[3].startswith("📁 shared a file ·")
+    assert rows[3].get_subtitle() == "release.iso"
+    assert titles[4].startswith("🔁 reposted ·") and "2h ago" in titles[4], titles[4]
+    assert "invoice" not in titles[0] + rows[0].get_subtitle(), "9734 invoice leaked"
+    print("PASS: kind 6/9/11/1111/9734 render labelled rows, newest first, invoice hidden")
 
 
 def check_dedup_and_bad_events_ignored():
@@ -391,6 +434,7 @@ def main():
     Adw.init()
     checks = [
         check_timeline_appends_rows,
+        check_activity_kinds_from_live_audit,
         check_dedup_and_bad_events_ignored,
         check_long_subtitle_row_survives,
         check_join_click_publishes_signed_join,
