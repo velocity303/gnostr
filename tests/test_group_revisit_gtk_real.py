@@ -20,6 +20,11 @@ Harness (real GTK4 + real GObject signal machinery + REAL SQLite gateway):
    silent member/pending ambiguity; a 39002 push carrying us flips status to
    '✓ Member' with [GROUP] step=member_confirm; absence says member_pending.
 5. Persisted 'pending' membership survives a revisit as REQUESTED.
+6. NIPW-P3-FIX-4: membership (member AND pending) survives a full APP
+   RESTART (new gateway over the same db) and renders BEFORE any relay
+   event; a row written under one relay-string form (trailing slash) is
+   visible from the other form — the silent-None path behind 'membership
+   regresses on revisit'.
 
 Runs standalone (NOT under the pytest suite: conftest mocks gi). Skips with
 exit 77 when real GTK4/Adw or a display is unavailable.
@@ -195,9 +200,9 @@ def _pump(seconds=0.3):
         time.sleep(0.01)
 
 
-def _seed(gw, name=None, about=None, membership=None):
+def _seed(gw, name=None, about=None, membership=None, relay=None, gid=None):
     gw.upsert_group(
-        RELAY, GID,
+        relay or RELAY, gid or GID,
         name=name or "Wisp Garden",
         about=about or "the quiet corner of the relay",
         picture=None, banner=None, flags=["public"], admins=[],
@@ -205,7 +210,7 @@ def _seed(gw, name=None, about=None, membership=None):
         fetched_at=int(time.time()) - 120,
     )
     if membership:
-        gw.set_membership(RELAY, GID, membership)
+        gw.set_membership(relay or RELAY, gid or GID, membership)
 
 
 def _capture():
@@ -375,6 +380,62 @@ def check_join_ok_is_requested_then_confirmed():
           "39002-with-us=member_confirm")
 
 
+def check_membership_survives_app_restart():
+    """NIPW-P3-FIX-4 (FLX1 symptom 'membership regresses on revisit'):
+    full restart = gateway closed + brand-new gateway over the SAME db.
+    A persisted 'member' row must render '✓ Member' at construction,
+    BEFORE any relay event arrives; same for 'pending'."""
+    tmp = tempfile.mkdtemp()
+    db = os.path.join(tmp, "gnostr.db")
+    client = FakeClient(db)
+    _seed(client._groups_gateway, membership="member")
+    client._groups_gateway.close()  # app quits
+
+    client2 = FakeClient(db)  # app relaunches: new gateway, same db
+    ctx, buf = _capture()
+    with ctx():
+        page = groups_page.GroupDetailPage(_mw(client2), RELAY, GID, name="Wisp")
+    assert page.machine.state == "member", page.machine.state
+    assert page.status_lbl.get_text() == "✓ Member", page.status_lbl.get_text()
+    assert not _diags(buf, "member_confirm"), "status must precede any relay event"
+
+    # and the pending form of the same promise
+    client3 = FakeClient(db)
+    client3._groups_gateway.set_membership(RELAY, GID, "pending")
+    client3._groups_gateway.close()
+    client4 = FakeClient(db)
+    with ctx():
+        page2 = groups_page.GroupDetailPage(_mw(client4), RELAY, GID, name="Wisp")
+    assert page2.machine.state == "pending", page2.machine.state
+    assert page2.status_lbl.get_text() == "Join requested — awaiting approval"
+    print("PASS: membership (member + pending) survives app restart, rendered "
+          "before any relay event")
+
+
+def check_membership_relay_key_forms_reconcile():
+    """NIPW-P3-FIX-4: the row was written via one relay-string form (trailing
+    slash — registry hint/manual-add path) and the detail page opens via
+    another (active-connection key). Membership must NOT regress to
+    'not joined' across that seam."""
+    tmp = tempfile.mkdtemp()
+    db = os.path.join(tmp, "gnostr.db")
+    client = FakeClient(db)
+    _seed(client._groups_gateway, membership="member",
+          relay=RELAY + "/", gid=GID)
+    with _capture()[0]():
+        page = groups_page.GroupDetailPage(_mw(client), RELAY, GID, name="Wisp")
+    assert page.machine.state == "member", (
+        "slash-written row invisible to no-slash page: %s" % page.machine.state)
+    assert page.status_lbl.get_text() == "✓ Member"
+    # reverse direction: page keyed WITH slash, row normalized without
+    with _capture()[0]():
+        page2 = groups_page.GroupDetailPage(_mw(client), RELAY + "/", GID,
+                                            name="Wisp")
+    assert page2.machine.state == "member", page2.machine.state
+    print("PASS: membership row reconciles across relay-string forms "
+          "(trailing-slash write, bare read, and back)")
+
+
 def main():
     checks = [
         check_revisit_renders_cached_meta_synchronously,
@@ -382,6 +443,8 @@ def main():
         check_revisit_member_state_persists,
         check_fresh_empty_eose_fails_once_with_retry,
         check_join_ok_is_requested_then_confirmed,
+        check_membership_survives_app_restart,
+        check_membership_relay_key_forms_reconcile,
     ]
     failed = 0
     for c in checks:

@@ -27,10 +27,33 @@ import traceback
 
 from gi.repository import GLib
 
+# NIPW-P3-FIX-4: relay-key hygiene. Membership rows were keyed by the RAW
+# relay string, so a row written from one entry form (registry hint, manual
+# add, active-connection key) could be looked up under a slightly different
+# form (trailing slash etc.) on the next visit — get_membership silently
+# returns None and the status regresses to 'not joined' on revisit/restart.
+# Single source: the same normalize_relay_hint as validate_relay_url / the
+# trust-shield hint rules (§1.2). Unparseable keys pass through unchanged
+# (they were already rejected upstream; never drop data here).
+try:
+    from gnostr.trust_shield import normalize_relay_hint as _norm_hint
+except Exception:  # pragma: no cover - import fallback
+    _norm_hint = lambda s: (s or "").strip().rstrip("/") or None
+
+
+def _norm_relay(relay):
+    if not isinstance(relay, str):
+        return relay
+    return _norm_hint(relay) or relay.strip()
+
 
 class SQLiteGroupsGateway:
     """Persistence for the group registry, cached group events, and
-    membership state. Safe for concurrent use (client threads + main)."""
+    membership state. Safe for concurrent use (client threads + main).
+
+    NIPW-P3-FIX-4: every relay key is normalized on write AND read, and
+    legacy rows are migrated once at init_db, so a membership row is always
+    reachable regardless of how the relay string was entered."""
 
     def __init__(self, db_path=None):
         self.db_path = db_path or GLib.get_user_data_dir() + "/gnostr/gnostr.db"
@@ -83,8 +106,63 @@ class SQLiteGroupsGateway:
                 """
             )
             self.conn.commit()
+            self._migrate_relay_keys()
         except Exception:
             traceback.print_exc()
+
+    def _migrate_relay_keys(self):
+        """NIPW-P3-FIX-4: one-time normalization of stored relay keys.
+        INSERT OR REPLACE folds rows that collide after normalization (the
+        groups row keeps the fresher fetched_at). Idempotent."""
+        for table in ("groups", "group_membership", "group_events"):
+            rows = self.conn.execute(
+                f"SELECT relay, group_id FROM {table}"
+            ).fetchall()
+            for raw, gid in rows:
+                norm = _norm_relay(raw)
+                if not (isinstance(norm, str) and norm != raw):
+                    continue
+                if table == "group_events":
+                    # id-keyed: plain UPDATE can't collide with a PK
+                    self.conn.execute(
+                        f"UPDATE {table} SET relay=? WHERE relay=? AND group_id=?",
+                        (norm, raw, gid),
+                    )
+                    continue
+                full = self.conn.execute(
+                    f"SELECT * FROM {table} WHERE relay=? AND group_id=?",
+                    (raw, gid),
+                ).fetchone()
+                # PRAGMA row layout: (cid, name, type, notnull, dflt, pk)
+                cols = [d[1] for d in self.conn.execute(
+                    f"PRAGMA table_info({table})").fetchall()]
+                merged = dict(zip(cols, full))
+                merged["relay"] = norm
+                if table == "groups":
+                    other = self.conn.execute(
+                        f"SELECT fetched_at FROM {table}"
+                        " WHERE relay=? AND group_id=?",
+                        (norm, gid),
+                    ).fetchone()
+                    if other and (other[0] or 0) >= (merged.get("fetched_at") or 0):
+                        # the normalized row already exists and is fresher:
+                        # drop the legacy one instead of clobbering it
+                        self.conn.execute(
+                            f"DELETE FROM {table} WHERE relay=? AND group_id=?",
+                            (raw, gid),
+                        )
+                        continue
+                marks = ", ".join("?" for _ in cols)
+                self.conn.execute(
+                    f"INSERT OR REPLACE INTO {table}"
+                    f" ({', '.join(cols)}) VALUES ({marks})",
+                    tuple(merged[c] for c in cols),
+                )
+                self.conn.execute(
+                    f"DELETE FROM {table} WHERE relay=? AND group_id=?",
+                    (raw, gid),
+                )
+        self.conn.commit()
 
     def close(self):
         with self.lock:
@@ -98,6 +176,7 @@ class SQLiteGroupsGateway:
         """Insert or update metadata for one group. `fields` is any subset of
         name/picture/about/banner/flags/supported_kinds/admins/member_count/
         fetched_at (lists/dicts stored as JSON)."""
+        relay = _norm_relay(relay)
         try:
             with self.lock:
                 row = self.conn.execute(
@@ -173,6 +252,7 @@ class SQLiteGroupsGateway:
         None. NIPW-P3-FIX-3 (Bug A): GroupDetailPage reads this on entry so
         a revisit renders verified metadata immediately instead of waiting
         on a fresh 39000 snapshot that khatru sometimes never replays."""
+        relay = _norm_relay(relay)
         try:
             with self.lock:
                 row = self.conn.execute(
@@ -189,6 +269,7 @@ class SQLiteGroupsGateway:
     def remove_group(self, relay, group_id):
         """Leave: drop registry + membership rows. Cached group_events are
         purged separately (purge_left_events) so re-joining can backfill."""
+        relay = _norm_relay(relay)
         try:
             with self.lock:
                 self.conn.execute(
@@ -207,6 +288,7 @@ class SQLiteGroupsGateway:
 
     def save_event(self, relay, group_id, event):
         """Idempotent upsert of one group-scoped event (timeline or probe)."""
+        relay = _norm_relay(relay)
         try:
             with self.lock:
                 self.conn.execute(
@@ -230,6 +312,7 @@ class SQLiteGroupsGateway:
 
     def get_events(self, relay, group_id, limit=100, since=None):
         """Newest-first cached events for one group (optionally since ts)."""
+        relay = _norm_relay(relay)
         try:
             with self.lock:
                 q = (
@@ -279,6 +362,7 @@ class SQLiteGroupsGateway:
     # -- membership -----------------------------------------------------------
 
     def set_membership(self, relay, group_id, state):
+        relay = _norm_relay(relay)
         try:
             with self.lock:
                 self.conn.execute(
@@ -291,7 +375,10 @@ class SQLiteGroupsGateway:
             traceback.print_exc()
 
     def get_membership(self, relay, group_id):
-        """'member' | 'pending' | None."""
+        """'member' | 'pending' | 'left' | None. NIPW-P3-FIX-4: relay key
+        normalized — a row written via one relay-string form is readable
+        from any other form of the same relay."""
+        relay = _norm_relay(relay)
         try:
             with self.lock:
                 row = self.conn.execute(

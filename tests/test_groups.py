@@ -460,6 +460,92 @@ def test_gateway_membership_and_leave(gw):
     assert gw.list_groups() == []
 
 
+# --- NIPW-P3-FIX-4: relay-key hygiene (membership regression on revisit) ----
+# Live tag audit 2026-11-21 (nak req probes, groups.hzrd149.com +
+# chat.wisp.talk) confirmed every REQ shape already matches relay reality:
+# 39000/39001/39002 are #d-tagged on khatru relays (39002 #h probes return
+# ZERO — the relay's own log says 'filter does not match'), while group
+# timeline posts and 9000/9001 audit events are #h-tagged. Those four shapes
+# are pinned below (test_req_shapes_* cover metadata/timeline/membership;
+# test_members_filter_shape pins 39002 #d). The only remaining way a correct
+# REQ can still read 'not joined' on revisit is the gateway losing the row
+# between a write keyed by one relay-string form and a read keyed by
+# another — fixed by normalizing every relay key + migrating legacy rows.
+
+
+def test_gateway_relay_keys_unified_across_forms(tmp_path):
+    """A membership row written via a trailing-slash relay form must be
+    readable via the no-slash form (and vice versa) — the exact silent-None
+    path that showed 'not joined' on revisit."""
+    db = str(tmp_path / "gk.db")
+    g = SQLiteGroupsGateway(db)
+    g.init_db()
+    g.upsert_group("wss://r.example/", "g1", name="One")
+    g.set_membership("wss://r.example/", "g1", "pending")
+    assert g.get_membership("wss://r.example", "g1") == "pending"
+    g.set_membership("wss://r.example", "g1", "member")
+    rows = [r for r in g.list_groups() if r["group_id"] == "g1"]
+    assert len(rows) == 1 and rows[0]["relay"] == "wss://r.example"
+    g.save_event("wss://r.example/", "g1", {"id": "ab" * 32, "kind": 1,
+                                            "pubkey": "bb" * 32, "created_at": 5,
+                                            "content": "", "tags": []})
+    assert len(g.get_events("wss://r.example", "g1")) == 1
+    g.close()
+
+
+def test_gateway_legacy_rows_migrated_on_reopen(tmp_path):
+    """Legacy DB (rows keyed with the old raw/slash form) migrates once at
+    init_db: membership survives the reopen, no duplicate rows, migration
+    is idempotent across restarts."""
+    db = str(tmp_path / "lg.db")
+    g1 = SQLiteGroupsGateway(db)
+    g1.init_db()
+    # simulate pre-FIX-4 writes (raw slash key in both tables)
+    g1.conn.execute(
+        "INSERT INTO groups (relay, group_id, name, fetched_at)"
+        " VALUES (?, ?, ?, ?)", ("wss://r.example/", "g1", "Old", 100))
+    g1.conn.execute(
+        "INSERT INTO group_membership (relay, group_id, state, updated_at)"
+        " VALUES (?, ?, ?, ?)", ("wss://r.example/", "g1", "member", 200))
+    g1.conn.commit()
+    g1.close()
+
+    g2 = SQLiteGroupsGateway(db)  # no init_db: reopen must NOT touch data
+    assert g2.conn is None
+    g2.init_db()
+    assert g2.get_membership("wss://r.example", "g1") == "member"
+    rows = [r for r in g2.list_groups() if r["group_id"] == "g1"]
+    assert len(rows) == 1 and rows[0]["relay"] == "wss://r.example"
+    g2.conn.execute(  # a fresher no-slash groups row already exists
+        "UPDATE groups SET fetched_at=500 WHERE relay=? AND group_id=?",
+        ("wss://r.example", "g1"))
+    # re-create the legacy slash row ALONGSIDE the fresh normalized row:
+    # next migration must keep the fresher normalized row, drop the stale
+    g2.conn.execute(
+        "INSERT OR REPLACE INTO groups (relay, group_id, name, fetched_at)"
+        " VALUES (?, ?, ?, ?)", ("wss://r.example/", "g1", "Stale", 50))
+    g2.conn.commit()
+    g2.close()
+    g3 = SQLiteGroupsGateway(db)
+    g3.init_db()  # collision merge: freshest wins, no duplicate rows
+    rows = [r for r in g3.list_groups() if r["group_id"] == "g1"]
+    assert len(rows) == 1 and rows[0]["fetched_at"] == 500
+    assert g3.get_membership("wss://r.example", "g1") == "member"
+    g3.close()
+
+
+# Pin of the live 2-relay tag audit (see module comment above): the four
+# group REQ shapes vs what the khatru relays actually store.
+def test_req_shapes_pinned_against_live_tag_audit():
+    gid = "0a3991"  # blossom @ groups.hzrd149.com
+    assert G.members_filter(gid) == {"kinds": [39002], "#d": [gid]}
+    f = G.membership_filter(gid, "aa" * 32)
+    assert f["#h"] == [gid] and 9000 in f["kinds"] and 9001 in f["kinds"]
+    assert "#d" not in f  # 9000/9001 carry ONLY h (probe: #d -> zero)
+    assert G.metadata_filter(gid)["#d"] == [gid] and "#h" not in G.metadata_filter(gid)
+    assert G.timeline_filter(gid)["#h"] == [gid] and "#d" not in G.timeline_filter(gid)
+
+
 # --- 39002-set membership (live finding: khatru relays keep no per-user
 # 9000/9001 audit trail for open joins; the 39002 set is the truth) ---------
 

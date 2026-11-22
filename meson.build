@@ -145,10 +145,12 @@ if xvfb_run.found() and gtk_python.found()
   test('test_group_timeline_gtk_real', xvfb_run,
     args: ['-a', gtk_python, meson.project_source_root() / 'tests/test_group_timeline_gtk_real.py'],
     timeout: 120)
-  # Real-GTK revisit harness (NIPW-P3-FIX-3): a pre-populated gateway row
-  # must render the group description at construction (no sub_meta wait);
+  # Real-GTK revisit harness (NIPW-P3-FIX-3 + FIX-4): a pre-populated gateway
+  # row must render the group description at construction (no sub_meta wait);
   # EOSE-without-events classifies once as empty/fail-with-Retry, never a
-  # re-REQ loop; join OK-ack shows 'requested' until a 39002 confirms.
+  # re-REQ loop; join OK-ack shows 'requested' until a 39002 confirms;
+  # membership (member + pending) survives an app restart and renders before
+  # any relay event, across relay-string forms (NIPW-P3-FIX-4).
   test('test_group_revisit_gtk_real', xvfb_run,
     args: ['-a', gtk_python, meson.project_source_root() / 'tests/test_group_revisit_gtk_real.py'],
     timeout: 120)
