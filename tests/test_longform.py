@@ -594,7 +594,10 @@ class TestClientArticleSection:
         c = FakeLongformClient()
         c.open_article_section(limit=12)
         c.close_article_section()
-        assert c.closed == ["longform_articles"]
+        # production shape is per-relay r.close_sub (NostrClient has no
+        # client-wide close_sub) — every read relay that opened it closes.
+        for r in c.active_relays.values():
+            assert r.closes == ["longform_articles"]
         assert c._longform_section_subs == set()
 
 

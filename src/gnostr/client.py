@@ -1381,7 +1381,7 @@ class NostrClient(GObject.Object):
         if self._backfill_pending.pop(sub_id, None) is not None:
             GLib.idle_add(self.emit, "backfill-done", sub_id)
 
-    def subscribe(self, sub_id, filters, snapshot=False, exclusive=True):
+    def subscribe(self, sub_id, filters, snapshot=False):
         # NIP-01: clamp at the client level (see request_once) so every
         # relay receives — and later CLOSEs — the identical legal id.
         sub_id = nip01_sub_id(sub_id)
@@ -1390,7 +1390,7 @@ class NostrClient(GObject.Object):
         # model is absent (legacy fakes) or no relay carries `read` — a
         # client that reads from nothing would show an empty feed.
         for url, r in self._read_relays().items():
-            r.subscribe(sub_id, filters, snapshot=snapshot, exclusive=exclusive)
+            r.subscribe(sub_id, filters, snapshot=snapshot)
 
     def _routed_relays(self, role):
         """Connected relays carrying `role`. When the entry model is absent
@@ -1954,9 +1954,13 @@ class NostrClient(GObject.Object):
         # client-side matching, no REQ, cheap dict-walk only while a fetch
         # is open). Events stay in their native kind — 1111/31234 never
         # enter the kind-1 feed models, they fan into the longform fetches.
-        if kind in (gnostr_longform.KIND_COMMENT,
-                    gnostr_longform.KIND_DRAFT_WRAP):
-            self._longform_note(ev)
+        # Literal kinds + getattr: house tests ast-bind _handle_event onto
+        # fakes that lack the longform module/attrs — keep this hot-path
+        # hook invisible to them.
+        if kind == 1111 or kind == 31234:  # longform KIND_COMMENT/_DRAFT_WRAP
+            _lf_note = getattr(self, "_longform_note", None)
+            if _lf_note is not None:
+                _lf_note(ev)
 
         if kind == 0:
             self.db.save_profile(pubkey, ev["content"], ev["created_at"])
@@ -2445,9 +2449,11 @@ class NostrClient(GObject.Object):
             self._longform_section_subs.add(sub_id)
 
     def close_article_section(self):
-        """CLOSE the opt-in 30023 sub on every relay that opened it."""
+        """CLOSE the opt-in 30023 sub on every read relay that opened it
+        (house per-relay shape, see close_sub_on_relay)."""
         for sub_id in list(self._longform_section_subs):
-            self.close_sub(sub_id)
+            for url, r in self._read_relays().items():
+                r.close_sub(sub_id)
         self._longform_section_subs.clear()
 
     def fetch_article_comments(self, article, callback):
@@ -2552,11 +2558,12 @@ class NostrClient(GObject.Object):
         kept only if it actually binds to the fetch's article (uppercase
         root AND lowercase parent refs both count, NIP-26 case discipline),
         a draft only if authored by self."""
-        if not self._longform_fetches:
+        fetches = getattr(self, "_longform_fetches", None)
+        if not fetches:
             return
         kind = ev.get("kind")
         ev_id = ev.get("id")
-        for st in list(self._longform_fetches.values()):
+        for st in list(fetches.values()):
             if st.get("settled") or ev_id in st["event_ids"]:
                 continue
             if kind == gnostr_longform.KIND_COMMENT and st["kind"] == "comments":
@@ -2574,7 +2581,7 @@ class NostrClient(GObject.Object):
         """EOSE fan-in branch (called from _handle_eose). Only the fetch's
         CURRENT phase sub counts — an EOSE for the retired primary sub
         arriving after the fallback fired must not pollute the fan-in."""
-        st = self._longform_fetches.get(sub_id)
+        st = (getattr(self, "_longform_fetches", None) or {}).get(sub_id)
         if st is None or st.get("settled"):
             return
         if st["active_sub"] != sub_id:
@@ -2584,7 +2591,7 @@ class NostrClient(GObject.Object):
             self._settle_longform_fetch(sub_id)
 
     def _settle_longform_fetch(self, sub_id):
-        st = self._longform_fetches.get(sub_id)
+        st = (getattr(self, "_longform_fetches", None) or {}).get(sub_id)
         if st is None or st.get("settled"):
             return
         if (
@@ -2673,8 +2680,11 @@ class NostrClient(GObject.Object):
             if len(bf["seen"]) >= bf["relay_count"]:
                 self._settle_backfill(sub_id)
         # NIPW P1 longform: comment/draft fetch fan-in (see
-        # fetch_article_comments/_settle_longform_fetch).
-        self._longform_eose(sub_id, relay_url)
+        # fetch_article_comments/_settle_longform_fetch). getattr: house
+        # tests ast-bind _handle_eose onto fakes without longform state.
+        _lf_eose = getattr(self, "_longform_eose", None)
+        if _lf_eose is not None:
+            _lf_eose(sub_id, relay_url)
         token = self._dm_status_by_sub.get(sub_id)
         if token is None:
             return
