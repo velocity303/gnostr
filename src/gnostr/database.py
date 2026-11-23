@@ -769,13 +769,26 @@ class Database:
     def get_feed_global(self, limit=50, before=None, after=None, pubkey=None):
         """All kind-1 events newest first (optionally one author's only).
 
-        Same keyset-pagination contract as get_feed_following — see its
-        docstring; the (created_at, id) tuple comparison and short-page
-        end-of-DB signal are identical. `pubkey` narrows to a single
-        author (the "me" feed); None means every author (global feed).
-        No JOIN, so idx_events_created carries the ORDER BY; the kind
-        filter runs on the fetched rows' window and stays cheap at our
-        row counts.
+        Delegates to get_feed_kind(1, ...) — same keyset-pagination
+        contract as get_feed_following (see its docstring). `pubkey`
+        narrows to a single author (the "me" feed); None means every
+        author (global feed).
+        """
+        return self.get_feed_kind(
+            1, limit=limit, before=before, after=after, pubkey=pubkey
+        )
+
+    def get_feed_kind(self, kind, limit=50, before=None, after=None,
+                      pubkey=None):
+        """Events of one kind newest first (NIPW P1 longform: the opt-in
+        30023 article section — the main feed's kind-1 subscriptions are
+        never broadened, agentic-flood posture).
+
+        Same keyset-pagination contract as get_feed_following:
+        (created_at, id) tuple comparison, `before` = older page, `after`
+        = newer re-pull, short page = end-of-DB, never OFFSET. No JOIN, so
+        idx_events_created carries the ORDER BY; the kind filter runs on
+        the fetched rows' window and stays cheap at our row counts.
         """
         if not self.conn:
             return []
@@ -788,32 +801,81 @@ class Database:
                 cursor.execute(
                     f"""
                     SELECT * FROM events
-                    WHERE kind = 1{author_sql}
+                    WHERE kind = ?{author_sql}
                       AND (created_at, id) > (?, ?)
                     ORDER BY created_at DESC, id DESC LIMIT ?
                 """,
-                    author_args + (after_created_at, after_id, limit),
+                    (kind,) + author_args + (after_created_at, after_id, limit),
                 )
             elif before is None:
                 cursor.execute(
                     f"""
                     SELECT * FROM events
-                    WHERE kind = 1{author_sql}
+                    WHERE kind = ?{author_sql}
                     ORDER BY created_at DESC, id DESC LIMIT ?
                 """,
-                    author_args + (limit,),
+                    (kind,) + author_args + (limit,),
                 )
             else:
                 before_created_at, before_id = before
                 cursor.execute(
                     f"""
                     SELECT * FROM events
-                    WHERE kind = 1{author_sql}
+                    WHERE kind = ?{author_sql}
                       AND (created_at, id) < (?, ?)
                     ORDER BY created_at DESC, id DESC LIMIT ?
                 """,
-                    author_args + (before_created_at, before_id, limit),
+                    (kind,) + author_args + (before_created_at, before_id, limit),
                 )
+            return self._rows_to_events(cursor.fetchall())
+
+    def get_article_comments(self, article_id, address=None, limit=100):
+        """Persisted kind-1111 comments bound to one article, newest
+        first. Same two-step filter as get_replies (house rule): the JSON
+        tags LIKE narrows candidates BEFORE LIMIT so old comments aren't
+        silently dropped by a newest-N cut, then longform.comment_matches
+        does the precise (uppercase root + lowercase parent) match.
+        Returns full event dicts."""
+        if not self.conn:
+            return []
+        from gnostr import longform as _longform
+        needles = [n for n in (article_id, address) if n]
+        if not needles:
+            return []
+        with self.lock:
+            cursor = self.conn.cursor()
+            clause = " OR ".join(["tags LIKE ?"] * len(needles))
+            args = tuple(f'%"{n}"%' for n in needles)
+            cursor.execute(
+                f"""
+                SELECT * FROM events
+                WHERE kind = 1111 AND ({clause})
+                ORDER BY created_at DESC, id DESC LIMIT ?
+            """,
+                args + (limit,),
+            )
+            events = self._rows_to_events(cursor.fetchall())
+        return [
+            ev
+            for ev in events
+            if _longform.comment_matches(ev, article_id, address)
+        ]
+
+    def get_self_drafts(self, pubkey, limit=100):
+        """Own kind-31234 draft wraps newest first (NIP-37 read side).
+        Returns full event dicts; parsing/decryption is longform's job."""
+        if not self.conn or not pubkey:
+            return []
+        with self.lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """
+                SELECT * FROM events
+                WHERE kind = 31234 AND pubkey = ?
+                ORDER BY created_at DESC, id DESC LIMIT ?
+            """,
+                (pubkey, limit),
+            )
             return self._rows_to_events(cursor.fetchall())
 
     def save_contacts(self, owner_pubkey, followed_pubkeys):
