@@ -278,6 +278,56 @@ def comments_for_article(events, article_id: str, address: str | None = None):
     return sorted(out.values(), key=lambda c: (c.created_at, c.id), reverse=True)
 
 
+def build_comment_event(pubkey, article, content, created_at=None):
+    """Unsigned kind-1111 template for a top-level comment on an article
+    (NIP-22). `article` is an ArticleCard or a raw 30023 event dict.
+
+    Tags: lowercase parent pointers (a top-level comment's parent IS the
+    article) + the uppercase root pointers E/A/K/P — the live-probed khatru
+    shape (2026-11-23: relays index #E/#A on those tags; #K matches the
+    parent KIND slot, never an event id). This makes the post round-trip
+    findable by comments_primary_filters + comment_matches.
+
+    House unsigned-template pattern (groups.build_join_event convention):
+    no id/sig — the downstream signer fills both, and
+    compute_event_id(template) == id(signed), so an optimistic UI row keyed
+    on the template id dedups against the relay echo. Returns None when the
+    pubkey or article is malformed (a comment must bind a real addressable
+    article — no address, no post).
+    """
+    try:
+        if isinstance(article, dict):
+            article_id = str(article.get("id") or "")
+            address = article_address(article)
+            author_pk = str(article.get("pubkey") or "")
+        else:
+            article_id = str(getattr(article, "id", "") or "")
+            address = getattr(article, "address", None)
+            author_pk = str(getattr(article, "pubkey", "") or "")
+        if not _HEX64.match(article_id) or not _HEX64.match(str(pubkey or "")):
+            return None
+        if not address or not author_pk:
+            return None
+        return nostr_utils.build_event(
+            str(pubkey),
+            KIND_COMMENT,
+            str(content),
+            [
+                ["e", article_id],
+                ["a", address],
+                ["k", str(KIND_ARTICLE)],
+                ["p", author_pk],
+                ["E", article_id],
+                ["A", address],
+                ["K", str(KIND_ARTICLE)],
+                ["P", author_pk],
+            ],
+            created_at=created_at,
+        )
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return None
+
+
 def comments_primary_filters(
     article_id: str, address: str | None, limit: int = COMMENT_FETCH_LIMIT
 ):
@@ -311,45 +361,84 @@ def comments_fallback_filters(
 
 @dataclass
 class DraftEntry:
-    """A read-only draft row from a kind-31234 wrap. `nevent_id` is the id
+    """A draft row: kind-31234 wrap (NIP-37), or a legacy kind-30024 plaintext
+    draft (legacy=True) if one ever reaches the reader. `nevent_id` is the id
     of the wrapped draft event (decrypted when a key is available, decoded
     from a nevent pointer otherwise, None when undecryptable). target_kind
     comes from the wrap's k tag; d prefers the inner draft's d, falling back
-    to the wrap's d."""
+    to the wrap's d.
+
+    C4 (card t_deee2a81) adds the display/publish payload: title (inner/legacy
+    draft title tag), content (decrypted or plaintext body; "" when the wrap
+    is an undecryptable nevent/opaque blob), word_count for the list row, and
+    extra_tags (inner draft tags minus d/title — carried through so publish
+    rebuilds the article with the draft's own t/… tags intact)."""
 
     wrap_id: str
     nevent_id: str | None
     target_kind: int | None
     d: str | None
     created_at: int
+    title: str | None = None
+    content: str = ""
+    word_count: int = 0
+    legacy: bool = False
+    extra_tags: list = field(default_factory=list)
 
 
 def drafts_filter(self_pubkey: str, limit: int = DRAFT_FETCH_LIMIT) -> dict:
-    return {"kinds": [KIND_DRAFT_WRAP], "authors": [self_pubkey], "limit": limit}
+    """C4 (card t_deee2a81): kinds include legacy 30024 alongside 31234 —
+    relays that actually carry the user's old plaintext drafts answer with
+    them and the list labels those rows 'legacy' (the 2026-11-23 probe found
+    none on the user's relays, so in practice this returns 31234 wraps)."""
+    return {"kinds": [KIND_DRAFT_WRAP, KIND_DRAFT_LEGACY],
+            "authors": [self_pubkey], "limit": limit}
 
 
 def parse_draft_event(ev, privkey_hex=None, self_pubkey_hex=None) -> DraftEntry | None:
-    """Parse a kind-31234 draft wrap. NIP-37: an empty content is the
-    deleted-draft signal (dropped); an expired `expiration` tag is dropped.
-    With `privkey_hex` (own key) the content is NIP-44 decrypted with the
-    self↔self conversation key — wrapper pubkey == author == self."""
+    """Parse a kind-31234 draft wrap (or a legacy kind-30024 plaintext draft,
+    flagged legacy=True — parse-side support only; the REQ still queries
+    31234 only per the 2026-11-23 probe, which found no self-authored 30024).
+    NIP-37: an empty content on a WRAP is the deleted-draft signal (dropped);
+    an expired `expiration` tag is dropped. With `privkey_hex` (own key) the
+    wrap content is NIP-44 decrypted with the self↔self conversation key —
+    wrapper pubkey == author == self — and the inner draft's title/body/tags
+    populate the row for the drafts list + publish rebuild."""
     try:
-        if not isinstance(ev, dict) or ev.get("kind") != KIND_DRAFT_WRAP:
+        if not isinstance(ev, dict) or ev.get("kind") not in (
+            KIND_DRAFT_WRAP, KIND_DRAFT_LEGACY
+        ):
             return None
+        legacy = ev.get("kind") == KIND_DRAFT_LEGACY
         tags = ev.get("tags") or []
         expiration = _tag_int(tags, "expiration")
         if expiration is not None and expiration < int(time_now()):
             return None
         content = ev.get("content")
         if content == "" or content is None:
-            return None  # NIP-37: empty content signals a deleted draft
+            if not legacy:
+                return None  # NIP-37: empty wrap content == deleted draft
         d = _tag_value(tags, "d") or None
         k_val = _tag_value(tags, "k")
         target_kind = int(k_val) if k_val and k_val.isdigit() else None
         wrap_id = ev.get("id") or ""
         created_at = int(ev.get("created_at") or 0)
         nevent_id = None
-        if isinstance(content, str) and content.startswith("nevent1"):
+        title = None
+        body = ""
+        word_count = 0
+        extra_tags = []
+        if legacy:
+            # C4: legacy plaintext draft — it is its own draft event.
+            nevent_id = wrap_id
+            target_kind = KIND_DRAFT_LEGACY
+            title = _tag_value(tags, "title") or None
+            body = content if isinstance(content, str) else ""
+            word_count = len(body.split())
+            extra_tags = [list(t) for t in tags
+                          if isinstance(t, (list, tuple)) and len(t) >= 2
+                          and t[0] not in ("d", "title", "expiration")]
+        elif isinstance(content, str) and content.startswith("nevent1"):
             decoded = nostr_utils.decode_nevent_full(content)
             if decoded:
                 nevent_id = decoded[0]
@@ -373,6 +462,13 @@ def parse_draft_event(ev, privkey_hex=None, self_pubkey_hex=None) -> DraftEntry 
                         inner_k = draft.get("kind")
                         if isinstance(inner_k, int):
                             target_kind = inner_k
+                    title = _tag_value(draft.get("tags") or [], "title") or None
+                    inner_body = draft.get("content")
+                    body = inner_body if isinstance(inner_body, str) else ""
+                    word_count = len(body.split())
+                    extra_tags = [list(t) for t in (draft.get("tags") or [])
+                                  if isinstance(t, (list, tuple)) and len(t) >= 2
+                                  and t[0] not in ("d", "title")]
             except Exception:
                 pass  # undecryptable content: row still listed (d + kind known)
         return DraftEntry(
@@ -381,9 +477,87 @@ def parse_draft_event(ev, privkey_hex=None, self_pubkey_hex=None) -> DraftEntry 
             target_kind=target_kind,
             d=d,
             created_at=created_at,
+            title=title,
+            content=body,
+            word_count=word_count,
+            legacy=legacy,
+            extra_tags=extra_tags,
         )
     except (KeyError, TypeError, ValueError):
         return None
+
+
+def draft_d(entry: DraftEntry) -> str:
+    """The NIP-33 `d` a published-from-draft article must carry: the draft's
+    own d when known, else a deterministic placeholder derived from the wrap
+    id (stable across republish attempts of the same draft)."""
+    return entry.d or f"draft-{(entry.wrap_id or '')[:8]}"
+
+
+def build_article_from_draft(entry: DraftEntry, self_pubkey: str) -> dict | None:
+    """Unsigned kind-30023 template rebuilt from a draft (C4 publish flow):
+    title/content ride straight through, d comes from draft_d(), the draft's
+    own extra tags (t/…) are preserved, published_at is stamped now. None for
+    a draft whose body we cannot read (undecryptable/nevent-only) or without
+    a pubkey. NEVER signs — client.publish_draft_article owns signing (house
+    signed-then-gated boundary)."""
+    if not isinstance(entry, DraftEntry) or not self_pubkey:
+        return None
+    if not entry.content:
+        return None
+    created = int(time_now())
+    tags = [["d", draft_d(entry)]]
+    if entry.title:
+        tags.append(["title", entry.title])
+    tags.append(["published_at", str(created)])
+    tags += [list(t) for t in (entry.extra_tags or [])
+             if isinstance(t, (list, tuple)) and len(t) >= 2
+             and t[0] not in ("d", "title", "published_at", "expiration")]
+    return {
+        "pubkey": self_pubkey,
+        "kind": KIND_ARTICLE,
+        "created_at": created,
+        "tags": tags,
+        "content": entry.content,
+    }
+
+
+def build_draft_deletion(wrap_id: str, self_pubkey: str = "") -> dict | None:
+    """Unsigned kind-5 deletion event targeting a draft wrap (C4: the delete
+    action AND the post-publish supersede step). longform.py semantics: the
+    wrap leaves every read path — relays drop kind-5 targets, and our parse
+    side would also drop an emptied republish (NIP-37 deleted-draft signal).
+    None for a missing wrap id. NEVER signs."""
+    if not wrap_id or not _HEX64.match(wrap_id):
+        return None
+    ev = {
+        "kind": 5,
+        "created_at": int(time_now()),
+        "content": "",
+        "tags": [["e", wrap_id]],
+    }
+    if self_pubkey:
+        ev["pubkey"] = self_pubkey
+    return ev
+
+
+def draft_card(entry: DraftEntry, self_pubkey: str) -> ArticleCard:
+    """View-model: the C1 reader rendered in draft mode shows the draft's
+    own body, not a relay-stored article. The card is synthetic (id = wrap
+    id, d = draft_d) so the reader's existing renderer needs no special
+    casing for shape; main.py passes draft=True for the banner/composer
+    gating instead."""
+    return ArticleCard(
+        id=entry.wrap_id,
+        pubkey=self_pubkey,
+        d=draft_d(entry),
+        title=entry.title,
+        image=None,
+        summary=None,
+        markdown=entry.content,
+        published_at=None,
+        created_at=entry.created_at,
+    )
 
 
 # --- sub ids (client fan-in keys; NIP-01 legal, <= 64 chars) ---------------

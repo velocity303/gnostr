@@ -713,6 +713,13 @@ class NostrClient(GObject.Object):
         # article-section sub_ids close_article_section can CLOSE.
         self._longform_fetches = {}
         self._longform_section_subs = set()
+        # NIPW1123-P1-C3: which relays host each article (30023 arrival
+        # evidence) and/or its comments (1111 fetch hits) — comment posts
+        # fan to these ∪ the default write relays.
+        # NIPW1123-P1-C4: same evidence shape for draft wraps (31234/30024
+        # fetch hits), keyed by wrap id — publish/delete targets.
+        self._longform_article_relays = {}
+        self._longform_draft_relays = {}
         self._dm_poll_source = None  # GLib source id for the DM freshness poll
         # P5 throttle: timestamps (time.time()) of new-conversation
         # initiations in the rolling hour. In-memory only by design — a
@@ -1877,6 +1884,17 @@ class NostrClient(GObject.Object):
             self._enqueue_zap_receipt(ev)
             return
 
+        # NIPW1123-P1-C3 relay attribution: every relay a 30023 ARRIVES from
+        # hosts that article — comment posts should ride the same relays.
+        # Runs BEFORE dedup on purpose: the same article seen via relay B
+        # after relay A is evidence B hosts it too. Literal kind + getattr
+        # (house rule: _handle_event is ast-bound onto fakes lacking the
+        # longform attrs — the hook must stay invisible to them).
+        if kind == 30023 and relay_url and eid:  # longform KIND_ARTICLE
+            _lf_article = getattr(self, "_note_article_relay", None)
+            if _lf_article is not None:
+                _lf_article(eid, relay_url)
+
         # Dedup FIRST so re-subscribed events (e.g. thread refresh) are never
         # re-counted into metrics or re-saved/re-emitted.
         if eid in self.seen_events:
@@ -1957,10 +1975,10 @@ class NostrClient(GObject.Object):
         # Literal kinds + getattr: house tests ast-bind _handle_event onto
         # fakes that lack the longform module/attrs — keep this hot-path
         # hook invisible to them.
-        if kind == 1111 or kind == 31234:  # longform KIND_COMMENT/_DRAFT_WRAP
+        if kind in (1111, 31234, 30024):  # longform KIND_COMMENT/_DRAFT_WRAP/_DRAFT_LEGACY
             _lf_note = getattr(self, "_longform_note", None)
             if _lf_note is not None:
-                _lf_note(ev)
+                _lf_note(ev, relay_url)
 
         if kind == 0:
             self.db.save_profile(pubkey, ev["content"], ev["created_at"])
@@ -2456,6 +2474,202 @@ class NostrClient(GObject.Object):
                 r.close_sub(sub_id)
         self._longform_section_subs.clear()
 
+    def _note_article_relay(self, article_id, relay_url):
+        """Arrival evidence: this relay hosts the 30023 (called from
+        _handle_event per relay, before dedup). getattr-guarded: house
+        fakes ast-bind this method without the store dict."""
+        store = getattr(self, "_longform_article_relays", None)
+        if store is not None:
+            store.setdefault(article_id, set()).add(relay_url)
+
+    def comment_target_relays(self, article_id=""):
+        """Publish targets for a 1111 (card C3: 'the article's known relays
+        + defaults'): relays proven to carry the article or its comments
+        (_longform_article_relays) ∪ the configured write-role relays —
+        the user's own default publish set."""
+        known = set(
+            (getattr(self, "_longform_article_relays", None) or {}).get(
+                article_id, ()
+            )
+        )
+        wr = getattr(self, "_write_relays", None)
+        if wr is not None:
+            try:
+                defaults = set(wr().keys())
+            except (AttributeError, TypeError):
+                defaults = set()
+        else:
+            defaults = set(getattr(self, "relay_urls", None) or set())
+        return known | defaults
+
+    def draft_target_relays(self, wrap_id=""):
+        """Publish/delete targets for a draft wrap (card C4): relays proven
+        to host the wrap (31234/30024 fetch hits, _longform_draft_relays) ∪
+        the configured write-role relays. Drafts are private events on the
+        user's own relays: the union means a publish supersede / delete
+        reaches wherever the wrap actually lives AND the user's default write
+        set, without spraying plain read relays that never carried it."""
+        known = set(
+            (getattr(self, "_longform_draft_relays", None) or {}).get(
+                wrap_id, ()
+            )
+        )
+        wr = getattr(self, "_write_relays", None)
+        if wr is not None:
+            try:
+                defaults = set(wr().keys())
+            except (AttributeError, TypeError):
+                defaults = set()
+        else:
+            defaults = set(getattr(self, "relay_urls", None) or set())
+        return known | defaults
+
+    def publish_draft_article(self, event, wrap_id=""):
+        """Draft-publish flow (NIPW1123-P1-C4), signed-then-gated exactly
+        like publish_article_comment: the UI hands an unsigned 30023 rebuilt
+        from the draft (longform.build_article_from_draft), this signs it
+        ONCE through the active backend (local inline / Bunker on worker),
+        fans it to draft_target_relays, and — only after the article was
+        accepted — supersedes the draft with a signed kind-5 deletion of the
+        wrap (longform.py semantics: the wrap leaves every read path; a
+        failed publish keeps the draft intact). Returns False only when
+        nothing could be dispatched. The UI never signs."""
+        targets = self.draft_target_relays(wrap_id)
+        if not targets:
+            return False
+        backend = getattr(self, "signer", None)
+        if backend is not None and not getattr(backend, "is_local", True):
+
+            def _worker():
+                try:
+                    signed = backend.sign_event(event)
+                except Exception as e:
+                    print(f"❌ bunker draft signing failed: {e}")
+                    return
+                if not signed:
+                    return
+                if self._publish_comment_targets(
+                    signed, targets, "Draft article"
+                ):
+                    self._supersede_draft(wrap_id, signed, backend=backend)
+
+            threading.Thread(target=_worker, daemon=True).start()
+            return True
+        signed = self._sign(event)
+        if not signed:
+            return False
+        ok = self._publish_comment_targets(signed, targets, "Draft article")
+        if ok:
+            self._supersede_draft(wrap_id, signed)
+        return ok
+
+    def _supersede_draft(self, wrap_id, signed_article, backend=None):
+        """Post-publish draft removal (card C4 'removes or supersedes'):
+        sign a kind-5 deletion targeting the wrap and fan it to the same
+        target set. Signing failure or an unusable wrap id is non-fatal —
+        the article is already out; the draft row simply survives to be
+        retried via the explicit delete action."""
+        deletion = gnostr_longform.build_draft_deletion(
+            wrap_id, signed_article.get("pubkey") or ""
+        )
+        if deletion is None:
+            return
+        if backend is not None:
+            try:
+                signed_del = backend.sign_event(deletion)
+            except Exception:
+                return
+        else:
+            signed_del = self._sign(deletion)
+        if signed_del:
+            self._publish_comment_targets(
+                signed_del, self.draft_target_relays(wrap_id), "Draft deletion"
+            )
+
+    def delete_draft(self, wrap_id):
+        """Draft delete (card C4): a signed kind-5 deletion event targeting
+        the wrap, signed-then-gated (local inline / Bunker on worker), fanned
+        to draft_target_relays. Returns True on dispatch accepted (UI then
+        removes the row + shows the confirmation toast); False when nothing
+        could be dispatched (no targets / signer declined / bad wrap id)."""
+        targets = self.draft_target_relays(wrap_id)
+        if not targets:
+            return False
+        template = gnostr_longform.build_draft_deletion(
+            wrap_id, getattr(self, "my_pubkey", "") or ""
+        )
+        if template is None:
+            return False
+        backend = getattr(self, "signer", None)
+        if backend is not None and not getattr(backend, "is_local", True):
+
+            def _worker():
+                try:
+                    signed = backend.sign_event(template)
+                except Exception as e:
+                    print(f"❌ bunker draft-deletion signing failed: {e}")
+                    return
+                if signed:
+                    self._publish_comment_targets(
+                        signed, targets, "Draft deletion"
+                    )
+
+            threading.Thread(target=_worker, daemon=True).start()
+            return True
+        signed = self._sign(template)
+        if not signed:
+            return False
+        return self._publish_comment_targets(signed, targets, "Draft deletion")
+
+    def publish_article_comment(self, event, article_id=""):
+        """Comment-post flow (NIPW1123-P1-C3), signed-then-gated like the
+        group composer: sign the unsigned 1111 template ONCE through the
+        active backend (local backends sign inline; Bunker signs on a
+        worker thread — same split as _dispatch_signed), then publish the
+        signed event to comment_target_relays, connecting relays on demand
+        (publish_to_relay house rule), and register one _track_publish
+        entry so the OK-ack + DM-3 retry machinery covers the whole
+        candidate set. Returns False only when nothing can be dispatched
+        (no targets / local signer declined) — the caller surfaces that."""
+        targets = self.comment_target_relays(article_id)
+        if not targets:
+            return False
+        backend = getattr(self, "signer", None)
+        if backend is not None and not getattr(backend, "is_local", True):
+
+            def _worker():
+                try:
+                    signed = backend.sign_event(event)
+                except Exception as e:
+                    print(f"❌ bunker comment signing failed: {e}")
+                    return
+                if signed:
+                    self._publish_comment_targets(signed, targets)
+
+            threading.Thread(target=_worker, daemon=True).start()
+            return True
+        signed = self._sign(event)
+        if not signed:
+            return False
+        return self._publish_comment_targets(signed, targets)
+
+    def _publish_comment_targets(self, signed, targets, label="Article comment"):
+        sent = set()
+        for url in targets:
+            if url not in self.active_relays:
+                self.add_relay_connection(url)
+            r = self.active_relays.get(url)
+            if r is not None and r.publish(signed):
+                sent.add(url)
+        self._track_publish(
+            signed, label, sent_urls=sent, candidates=set(targets)
+        )
+        self._log_relay(
+            f"[lf] EVENT {signed['id'][:8]} {label} sent to "
+            f"{len(sent)}/{len(targets)} relay(s)"
+        )
+        return bool(sent)
+
     def fetch_article_comments(self, article, callback):
         """One-shot kind-1111 fetch for one article; callback(events,
         meta) on the main context when all responding relays EOSE'd (or
@@ -2550,14 +2764,20 @@ class NostrClient(GObject.Object):
         self._arm_longform_timeout(sub_id)
         self.request_once(sub_id, gnostr_longform.drafts_filter(my_pub))
 
-    def _longform_note(self, ev):
+    def _longform_note(self, ev, relay_url=None):
         """Hot path from _handle_event: capture 1111/31234 arrivals into
         any in-flight fetch. Matching is fully client-side so a relay that
         ignores tag filters (or answers the authors-fallback with the
         author's OTHER comments) still lands the right rows — a comment is
         kept only if it actually binds to the fetch's article (uppercase
         root AND lowercase parent refs both count, NIP-26 case discipline),
-        a draft only if authored by self."""
+        a draft only if authored by self.
+
+        C3 relay attribution: a comment FOUND on relay X proves X carries
+        this article's comment traffic (seen_relays accumulates across the
+        primary and fallback phases; settle merges it into
+        _longform_article_relays).
+        """
         fetches = getattr(self, "_longform_fetches", None)
         if not fetches:
             return
@@ -2572,10 +2792,20 @@ class NostrClient(GObject.Object):
                 ):
                     st["event_ids"].add(ev_id)
                     st["events"].append(dict(ev))
-            elif kind == gnostr_longform.KIND_DRAFT_WRAP and st["kind"] == "drafts":
+                    if relay_url:
+                        st.setdefault("seen_relays", set()).add(relay_url)
+            elif kind in (
+                gnostr_longform.KIND_DRAFT_WRAP, gnostr_longform.KIND_DRAFT_LEGACY
+            ) and st["kind"] == "drafts":
                 if ev.get("pubkey") == st["author_pk"]:
                     st["event_ids"].add(ev_id)
                     st["events"].append(dict(ev))
+                    # C4 attribution: a draft FOUND on relay X proves X hosts
+                    # it — publish supersede + delete fan to these relays.
+                    if relay_url:
+                        drafts_store = getattr(self, "_longform_draft_relays", None)
+                        if drafts_store is not None:
+                            drafts_store.setdefault(ev_id, set()).add(relay_url)
 
     def _longform_eose(self, sub_id, relay_url):
         """EOSE fan-in branch (called from _handle_eose). Only the fetch's
@@ -2587,6 +2817,7 @@ class NostrClient(GObject.Object):
         if st["active_sub"] != sub_id:
             return
         st["phase_seen"].add(relay_url)
+        st.setdefault("seen_relays", set()).add(relay_url)
         if len(st["phase_seen"]) >= st["relay_count"]:
             self._settle_longform_fetch(sub_id)
 
@@ -2635,6 +2866,15 @@ class NostrClient(GObject.Object):
                 if row is not None:
                     rows.append(row)
             events = rows
+        if st["kind"] == "comments":
+            # C3 attribution: relays that answered this article's comment
+            # REQ (EOSE) or delivered a matching comment participate in its
+            # comment channel — publish_article_comment fans there.
+            # getattr: house fakes ast-bind these methods without the dict.
+            seen = st.get("seen_relays") or ()
+            store = getattr(self, "_longform_article_relays", None)
+            if seen and store is not None:
+                store.setdefault(st["article_id"], set()).update(seen)
         meta = {"fallback_used": st["phase"] == "fallback"}
         for cb in st["callbacks"]:
             try:
