@@ -511,7 +511,6 @@ def test_reader_renders_all_fields_for_fixture_event():
             else:
                 sys.modules[k] = old
 
-    constructed = {id(m): m for m in created}
     labels = [m for m in created if "label" in m.construct_kwargs]
     texts = [m.construct_kwargs["label"] for m in labels]
 
@@ -898,7 +897,10 @@ def test_live_quote_handler_reveals_gate_for_30023():
     test_main_feed_dispatcher_stays_kind1_only."""
     seg = _main_body("on_quote_event_received")
     assert "if kind == 30023:" in seg
-    assert "self._reveal_articles_for_author(pubkey)" in seg
+    # Guarded call shape (handlers run on duck-typed windows in tests):
+    # getattr lookup + reveal(pubkey) invocation must both be present.
+    assert 'getattr(self, "_reveal_articles_for_author", None)' in seg
+    assert "reveal(pubkey)" in seg
     assert seg.index("_reveal_articles_for_author") < \
         seg.index("for w in self.event_widgets")
 
@@ -907,9 +909,11 @@ def test_login_and_contacts_warm_the_gate():
     """Warm start: perform_login re-evaluates the gate (idle, DB-only) and
     on_contacts_updated re-evaluates after the follow set lands."""
     login_seg = _main_body("perform_login")
-    assert "GLib.idle_add(self._refresh_articles_row)" in login_seg
+    assert 'getattr(self, "_refresh_articles_row", None)' in login_seg
+    assert "GLib.idle_add(refresh)" in login_seg
     contacts_seg = _main_body("on_contacts_updated")
-    assert "self._refresh_articles_row()" in contacts_seg
+    assert 'getattr(self, "_refresh_articles_row", None)' in contacts_seg
+    assert "refresh()" in contacts_seg
 
 
 def test_reload_lists_newest_only_via_longform_dedupe():

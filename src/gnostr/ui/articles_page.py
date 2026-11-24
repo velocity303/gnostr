@@ -404,7 +404,8 @@ class ArticleReaderPage(Gtk.Box):
         prof = self.db.get_profile(card.pubkey) or {}
         name = prof.get("display_name") or prof.get("name") or \
             nostr_utils.hex_to_npub(card.pubkey) or _short_pk(card.pubkey)
-        meta = Gtk.Label(label=f"{name} · {_ago(card.published_at or card.created_at)} · {_short_pk(card.pubkey)}")
+        updated = card.published_at or card.created_at
+        meta = Gtk.Label(label=f"{name} · {_ago(updated)} · {_short_pk(card.pubkey)}")
         meta.add_css_class("dim-label")
         meta.set_wrap(True)
         meta.set_xalign(0)

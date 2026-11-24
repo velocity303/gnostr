@@ -810,7 +810,11 @@ class MainWindow(Adw.ApplicationWindow):
             # NIPW P1 C2: first-article-arrival evidence. A live 30023 from
             # a FOLLOWED author reveals the opt-in Articles row (section
             # sub or quote backfill); kind-1 routing is untouched.
-            self._reveal_articles_for_author(pubkey)
+            # getattr guard: handlers get bound onto duck-typed windows in
+            # tests (FakeWindow); partial windows must not break routing.
+            reveal = getattr(self, "_reveal_articles_for_author", None)
+            if callable(reveal):
+                reveal(pubkey)
 
         # Addressable coordinate for naddr cards: kind:pubkey:d-tag.
         d_tag = ""
@@ -944,7 +948,9 @@ class MainWindow(Adw.ApplicationWindow):
             )
             # NIPW P1 C2: the follow set just changed — re-evaluate the
             # opt-in Articles row gate (DB evidence only, no new REQ).
-            self._refresh_articles_row()
+            refresh = getattr(self, "_refresh_articles_row", None)
+            if callable(refresh):
+                refresh()
 
     def on_profile_updated(self, client, pubkey):
         # Profile metadata (kind 0) arrived — refresh avatars/names in existing
@@ -1093,7 +1099,9 @@ class MainWindow(Adw.ApplicationWindow):
         # NIPW P1 C2: warm DB evidence (follows + any 30023 persisted by an
         # earlier session) decides the Articles row at login — no REQ here;
         # a first-ever login reveals later via on_contacts_updated/arrival.
-        GLib.idle_add(self._refresh_articles_row)
+        refresh = getattr(self, "_refresh_articles_row", None)
+        if callable(refresh):
+            GLib.idle_add(refresh)
 
     def switch_feed(self, feed_type):
         self.active_feed_type = feed_type
