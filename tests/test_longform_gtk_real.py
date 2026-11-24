@@ -516,9 +516,9 @@ def main():
     # Real click -> handler -> unsigned 1111 template handed to the client
     # (signing is the client's job; tier-1 proves the signed round-trip).
     page3.comment_entry.set_text("harness ships it")
-    page3.comment_post_btn.emit("clicked")  # activate() no-ops on unrealized
-                                           # buttons (C2 row precedent); the
-                                           # clicked->handler connection is real
+    # activate() no-ops on unrealized buttons (C2 row precedent); emit the
+    # real clicked signal so the connected handler runs.
+    page3.comment_post_btn.emit("clicked")
     check("Post click dispatches exactly once",
           len(mw3.client.published) == 1, str(len(mw3.client.published)))
     template, target_id = mw3.client.published[0]
