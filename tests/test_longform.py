@@ -470,10 +470,13 @@ class TestDraftParsing:
         assert longform.parse_draft_event(expired) is None
 
     def test_drafts_filter_shape(self):
+        # C4 (card t_deee2a81): legacy 30024 joined the REQ so relays that
+        # carry the user's old plaintext drafts answer; rows get the
+        # 'legacy' label (probe found none in practice: 31234 dominates).
         assert longform.drafts_filter(A_PUB) == {
-            "kinds": [31234], "authors": [A_PUB], "limit": 100
+            "kinds": [31234, 30024], "authors": [A_PUB], "limit": 100
         }
-        assert longform.KIND_DRAFT_LEGACY == 30024  # documented, not queried
+        assert longform.KIND_DRAFT_LEGACY == 30024
 
     # --- C4 (card t_deee2a81): display payload + publish/delete builders ---
 
@@ -851,7 +854,9 @@ class TestClientDraftFetch:
         calls = []
         c.fetch_drafts(lambda rows, meta: calls.append((rows, meta)))
         filt = c.reqs_for("longform_drafts")[0]
-        assert filt == {"kinds": [31234], "authors": [A_PUB], "limit": 100}
+        # C4: legacy 30024 joined the REQ (labelled legacy rows when found)
+        assert filt == {"kinds": [31234, 30024], "authors": [A_PUB],
+                        "limit": 100}
         mine = {"id": "d1" + "0" * 62, "pubkey": A_PUB, "kind": 31234,
                 "created_at": 100, "tags": [["k", "23"], ["d", "mine"]],
                 "content": "x"}

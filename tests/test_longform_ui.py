@@ -753,10 +753,10 @@ def test_drafts_fetch_wires_callback_and_watchdog():
 
 
 def test_no_composer_anywhere():
-    """P1 drafts list stays READ-ONLY (no publish/sign path there). The
-    COMMENT composer (card C3) lives in ArticleReaderPage only — signing
-    still never happens in the UI file: signer tokens stay banned
-    file-wide, and the DraftsPage segment stays composer-free."""
+    """Signing/editor tokens stay banned (C4 card: DraftsPage gains
+    PUBLISH/DELETE ACTIONS but no editor widgets and no signing — the row
+    hands UNSIGNED templates / wrap ids to the client). The COMMENT
+    composer (card C3) lives in ArticleReaderPage only."""
     src = _src(_ARTICLES)
     for banned in ("publish_event", "sign_event", "nsec", "privkey",
                    "Gtk.TextEditor", "EntryBuffer"):
@@ -767,9 +767,16 @@ def test_no_composer_anywhere():
             drafts_src = ast.get_source_segment(src, node)
             break
     assert drafts_src is not None and "class DraftsPage" in drafts_src
-    for banned in ("publish", "sign", "composer", "Entry", "TextEditor"):
+    for banned in ("TextEditor", "EntryBuffer", "Gtk.Entry", ".sign(",
+                   "sign_event"):
         assert banned not in drafts_src, (
-            f"{banned!r} must not appear inside DraftsPage (read-only list)")
+            f"{banned!r} must not appear inside DraftsPage (no editor, "
+            "no signing)")
+    # C4 contract: the actions are client-delegated, not home-grown.
+    assert "client.publish_draft_article(" in drafts_src
+    assert "client.delete_draft(" in drafts_src
+    assert "longform.build_article_from_draft(" in drafts_src
+    assert "longform.build_article_event(" not in drafts_src
     # ...and the comment composer is real (card C3): reader owns it.
     assert "comment_composer" in src and "comment_post_btn" in src
 
@@ -1121,3 +1128,228 @@ def test_comment_post_dispatch_failure_no_optimistic_row():
     fake.comment_entry.set_text.assert_not_called()  # text kept for retry
     # user gets feedback via toast when the window supports one
     fake.main_window.add_toast.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# C4 (card t_deee2a81): DraftsPage row actions + draft-mode reader
+# ---------------------------------------------------------------------------
+
+
+def _c4_draft(wid, d="post-x", created=300, nevent="e" * 64,
+              title="My Draft", content="one two three four five",
+              legacy=False, extra=None):
+    return longform.DraftEntry(
+        wrap_id=wid, nevent_id=nevent,
+        target_kind=(None if legacy else 31234), d=d, created_at=created,
+        title=title, content=content,
+        word_count=(len(content.split()) if content else 0),
+        legacy=legacy, extra_tags=extra or [])
+
+
+class _ToastRec:
+    """Adw.Toast stand-in that keeps the title (the confirmation snackbar
+    assertion rides on this title, not on overlay plumbing)."""
+
+    def __init__(self, title="", **kw):
+        self.title = title
+
+
+class _ReaderRec:
+    built = []
+
+    def __init__(self, window, card, draft=False):
+        _ReaderRec.built.append((window, card, draft))
+
+
+def _drafts_fake(pub_key="ab" * 32, publish_ok=True, delete_ok=True,
+                 reader_stub=None):
+    """DraftsPage self built from the house fake + all C4 methods bound."""
+    fake = MagicMock()
+    fake._rows_by_wrap = {}
+    fake.main_window = MagicMock()
+    fake.main_window.pub_key = pub_key
+    fake.list_box = MagicMock()
+    fake.list_box.get_first_child.return_value = None
+    fake._empty = MagicMock()
+    fake.client = MagicMock()
+    fake.client.publish_draft_article.return_value = publish_ok
+    fake.client.delete_draft.return_value = delete_ok
+    ns = dict(_NS)
+    ns["longform"] = longform
+    ns["Adw"] = types.SimpleNamespace(ActionRow=MagicMock, Toast=_ToastRec,
+                                      NavigationPage=MagicMock)
+    ns["Gtk"] = MagicMock()  # fresh: never share the module _NS call logs
+    ns["ArticleReaderPage"] = reader_stub or MagicMock()
+    for m in ("_toast", "_remove_row", "_on_publish", "_on_delete",
+              "_on_view", "_render_drafts"):
+        setattr(fake, m, types.MethodType(
+            _class_method(_ARTICLES, "DraftsPage", m, ns), fake))
+    fake._draft_rows = _class_method(_ARTICLES, "DraftsPage", "_draft_rows",
+                                     ns)
+    return fake, ns
+
+
+def test_draft_rows_c4_word_count_and_legacy_labels():
+    """EXIT CRITERION (C4): rows show title, kind, updated, word count and
+    the legacy label (31234 rows unlabelled)."""
+    rows_fn = _class_method(_ARTICLES, "DraftsPage", "_draft_rows", dict(_NS))
+    rows = rows_fn([
+        _c4_draft("w1", created=100),
+        _c4_draft("w2", created=200, title=None, d=None, legacy=True,
+                  content="alpha beta"),
+        _c4_draft("w3", created=150, title="Secret", nevent=None, content=""),
+    ])
+    assert rows[0][0] == "(untitled draft)"          # w2 legacy, newest
+    assert "kind 30024" in rows[0][1]
+    assert "legacy" in rows[0][1]
+    assert "2 words" in rows[0][1]
+    assert rows[1][0] == "Secret"                    # w150 encrypted wrap
+    assert "encrypted" in rows[1][1]
+    assert "words" not in rows[1][1]                 # unreadable -> no count
+    assert rows[2][0] == "My Draft"                  # w1, title tag wins
+    assert "5 words" in rows[2][1]
+    assert "legacy" not in rows[2][1]                # 31234 not labelled
+
+
+def test_drafts_render_rows_carry_view_publish_delete_buttons():
+    fake, ns = _drafts_fake()
+    fake._render_drafts(
+        [_c4_draft("a" * 64), _c4_draft("b" * 64, legacy=True, d=None)], {})
+    assert fake.list_box.append.call_count == 2
+    assert set(fake._rows_by_wrap) == {"a" * 64, "b" * 64}
+    labels = [c.kwargs.get("label") for c in ns["Gtk"].Button.call_args_list]
+    assert labels == ["View", "Publish", "Delete"] * 2
+
+
+def test_drafts_publish_hands_unsigned_template_to_client():
+    """EXIT CRITERION (C4): publish builds a 30023 from the draft's
+    title/content/tags — UNSIGNED at the UI boundary — and hands it to the
+    client (signing + supersede live client-side)."""
+    fake, _ = _drafts_fake(publish_ok=True)
+    entry = _c4_draft("c" * 64, extra=[["t", "linux"]])
+    row = MagicMock()
+    fake._on_publish(MagicMock(), entry, row)
+    fake.client.publish_draft_article.assert_called_once()
+    template, wrap = fake.client.publish_draft_article.call_args[0]
+    assert wrap == entry.wrap_id
+    assert template["kind"] == 30023
+    assert "id" not in template and "sig" not in template
+    assert template["content"] == entry.content
+    tags = {(t[0], t[1]) for t in template["tags"]}
+    assert ("d", "post-x") in tags and ("title", "My Draft") in tags
+    assert ("t", "linux") in tags  # draft's own tags carried through
+    assert template["pubkey"] == "ab" * 32
+    fake.list_box.remove.assert_called_once_with(row)
+    toast = fake.main_window.add_toast.call_args[0][0]
+    assert toast.title == "Draft published — article sent"
+
+
+def test_drafts_publish_failure_keeps_row_and_toasts():
+    fake, _ = _drafts_fake(publish_ok=False)
+    entry = _c4_draft("d" * 64)
+    row = MagicMock()
+    fake._on_publish(MagicMock(), entry, row)
+    assert fake.client.publish_draft_article.call_count == 1
+    fake.list_box.remove.assert_not_called()  # draft survives a failed send
+    toast = fake.main_window.add_toast.call_args[0][0]
+    assert toast.title == "Could not publish draft (relays unreachable)"
+
+
+def test_drafts_publish_signed_out_or_encrypted_never_reaches_client():
+    fake, _ = _drafts_fake(pub_key=None)
+    fake._on_publish(MagicMock(), _c4_draft("e" * 64), MagicMock())
+    fake.client.publish_draft_article.assert_not_called()
+    assert fake.main_window.add_toast.call_args[0][0].title == (
+        "Sign in to publish drafts")
+    fake2, _ = _drafts_fake(pub_key="ab" * 32)
+    fake2._on_publish(MagicMock(), _c4_draft("f" * 64, content=""),
+                      MagicMock())
+    fake2.client.publish_draft_article.assert_not_called()
+    assert "encrypted" in fake2.main_window.add_toast.call_args[0][0].title
+
+
+def test_drafts_delete_sends_deletion_and_shows_confirmation_snackbar():
+    """EXIT CRITERION (C4): delete -> client.delete_draft(wrap) + confirmed
+    toast; on failure the row stays."""
+    fake, _ = _drafts_fake(delete_ok=True)
+    entry = _c4_draft("g" * 64)
+    row = MagicMock()
+    fake._on_delete(MagicMock(), entry, row)
+    fake.client.delete_draft.assert_called_once_with(entry.wrap_id)
+    fake.list_box.remove.assert_called_once_with(row)
+    toast = fake.main_window.add_toast.call_args[0][0]
+    assert toast.title == "Draft deleted"
+
+
+def test_drafts_delete_failure_keeps_the_row():
+    fake, _ = _drafts_fake(delete_ok=False)
+    entry = _c4_draft("h" * 64)
+    row = MagicMock()
+    fake._on_delete(MagicMock(), entry, row)
+    fake.list_box.remove.assert_not_called()
+    assert fake.main_window.add_toast.call_args[0][0].title == (
+        "Could not delete draft")
+
+
+def test_drafts_view_opens_the_reader_in_draft_mode():
+    _ReaderRec.built = []
+    fake, _ = _drafts_fake(reader_stub=_ReaderRec)
+    entry = _c4_draft("i" * 64)
+    fake._on_view(MagicMock(), entry, MagicMock())
+    assert len(_ReaderRec.built) == 1
+    window, card, draft = _ReaderRec.built[0]
+    assert draft is True
+    assert isinstance(card, longform.ArticleCard)
+    assert card.id == entry.wrap_id and card.markdown == entry.content
+    fake.main_window.content_nav.push.assert_called_once()
+
+
+def test_drafts_view_encrypted_toasts_instead_of_opening():
+    _ReaderRec.built = []
+    fake, _ = _drafts_fake(reader_stub=_ReaderRec)
+    fake._on_view(MagicMock(), _c4_draft("j" * 64, content=""), MagicMock())
+    assert _ReaderRec.built == []
+    fake.main_window.content_nav.push.assert_not_called()
+    toast = fake.main_window.add_toast.call_args[0][0]
+    assert "needs your key" in toast.title
+
+
+def test_reader_draft_mode_renders_banner_and_skips_comments():
+    """Card C4 draft mode: the reader shows the draft body + banner and
+    stops before the comments thread / composer."""
+    import html as _html
+
+    gtk, created = _fresh_gtk()
+    glib = types.SimpleNamespace(
+        markup_escape_text=lambda s: _html.escape(s or ""),
+        timeout_add=lambda ms, cb: 7,
+        source_remove=lambda i: None,
+    )
+    card = longform.draft_card(_c4_draft("k" * 64, title="Draft K"),
+                               "ab" * 32)
+    fake = MagicMock()
+    fake.card = card
+    fake._draft = True
+    fake.client = MagicMock()
+    fake.db = MagicMock()
+    fake.db.get_profile.return_value = {}
+    extra = dict(_NS)
+    extra["Gtk"] = gtk
+    extra["GLib"] = glib
+    render = _class_method(_ARTICLES, "ArticleReaderPage", "_render_page",
+                           extra)
+    render(fake)
+    labels = [m.construct_kwargs["label"] for m in created
+              if "label" in m.construct_kwargs]
+    assert "Draft K" in labels
+    assert "Draft preview — not yet published" in labels
+    # draft body reaches the markup content label
+    body = None
+    for m in created:
+        for call in m.set_markup.call_args_list:
+            if "one two three" in call[0][0]:
+                body = call[0][0]
+    assert body is not None
+    # no comments scaffolding, no comment fetch in draft mode
+    fake._render_comments.assert_not_called()
+    fake._fetch_comments.assert_not_called()

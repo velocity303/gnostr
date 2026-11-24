@@ -34,16 +34,21 @@ user can see why a loosely-matched comment is there; the precise primary
 chain renders no caption. Every async step carries a watchdog + visible
 Retry (GroupDetailPage reliability house rule).
 
-DraftsPage: read-only kind-31234 list (target_kind, d) via
-client.fetch_drafts. NO edit/publish path (out of P1 scope), kind-1234
-checkpoints stay out.
+DraftsPage (card C4): NIP-63 kind-31234 list (title, kind, updated, word
+count) via client.fetch_drafts + per-row View / Publish / Delete actions.
+Publish rebuilds the unsigned 30023 template (longform.build_article_from_draft)
+and hands it to client.publish_draft_article; delete hands the wrap id to
+client.delete_draft — the client signs once and fans to seen ∪ write relays,
+and supersede-after-accept removes the wrap (signed-then-gated boundary;
+the UI never signs and has no editor widgets — resume-into-editor is a
+follow-on for a later wave, kind-1234 checkpoints stay out).
 
-30024 legacy-draft decision (reported): NOT surfaced in P1. The data-layer
-probe audit (longform.py docstring) found live 30024 rows belong to OTHER
-authors (7 on nos.lol, 0 on our own accounts); surfacing them would need a
-REQ the P1 contract does not make (31234-only) and get_event_by_a(30024,
-pubkey, d) needs a known d that 31234 wraps do not carry. The P1 drafts
-list therefore reads fetch_drafts (31234) exclusively.
+30024 legacy drafts (card C4 decision): now surfaced, labelled 'legacy'.
+The REQ includes kind 30024 so relays that carry the user's own old
+plaintext drafts answer with them (parse-side parse_draft_event flags
+legacy=True); the 2026-11-23 probe audit found 0 self-authored 30024 rows
+on our accounts (7 on nos.lol belong to OTHER authors and stay out via the
+authors=[self] filter), so in practice the list is 31234 wraps.
 """
 
 import json
@@ -370,11 +375,15 @@ class ArticlesPage(Gtk.Box):
 class ArticleReaderPage(Gtk.Box):
     """One article: markdown-as-plaintext reader + NIP-22 comments thread."""
 
-    def __init__(self, main_window, card):
+    def __init__(self, main_window, card, draft=False):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.main_window = main_window
         self.client = main_window.client
         self.db = main_window.db
+        # Card C4 draft mode: synthetic card from a DraftEntry — banner +
+        # no comments thread / composer (an unpublished draft has no
+        # comment channel yet).
+        self._draft = bool(draft)
 
         # Edit-replacement transparent: the address point-query already
         # returns newest-only (db.get_event_by_a, NIP-33 replaceable).
@@ -407,6 +416,14 @@ class ArticleReaderPage(Gtk.Box):
         title.set_wrap(True)
         title.set_xalign(0)
         body.append(title)
+
+        if getattr(self, "_draft", False) is True:
+            banner = Gtk.Label(label="Draft preview — not yet published")
+            banner.add_css_class("heading")
+            banner.add_css_class("dim-label")
+            banner.set_wrap(True)
+            banner.set_xalign(0)
+            body.append(banner)
 
         prof = self.db.get_profile(card.pubkey) or {}
         name = prof.get("display_name") or prof.get("name") or \
@@ -451,6 +468,11 @@ class ArticleReaderPage(Gtk.Box):
         content.set_markup(markup.emphasis_to_pango(
             GLib.markup_escape_text(card.markdown)))
         body.append(content)
+
+        if getattr(self, "_draft", False) is True:
+            # Card C4 draft mode: stop at the body. An unpublished draft has
+            # no comment channel — no thread, no composer, no comment fetch.
+            return
 
         # --- comments thread -------------------------------------------
         head = Gtk.Box(spacing=8, margin_top=12)
@@ -521,6 +543,8 @@ class ArticleReaderPage(Gtk.Box):
     def _resolve_card(self, card):
         """Swap in the newest edit for the same (pubkey, d) address if the
         DB has one newer than the card the list rendered (transparent)."""
+        if getattr(self, "_draft", False) is True:
+            return card  # synthetic draft card: no relay address to resolve
         try:
             row = self.db.get_event_by_a(
                 longform.KIND_ARTICLE, card.pubkey, card.d)
@@ -694,13 +718,19 @@ class ArticleReaderPage(Gtk.Box):
 
 
 class DraftsPage(Gtk.Box):
-    """Read-only kind-31234 drafts list (NIP-37 read side). No edit path."""
+    """Draft management list (card C4): read NIP-63 kind-31234 wraps (and
+    legacy kind-30024 drafts when relays carry them, labelled 'legacy').
+    Per-row View / Publish / Delete: the row hands an UNSIGNED 30023
+    template or the wrap id to the client — signing + relay fan stay
+    client-side (house signed-then-gated boundary, C3 precedent). No editor
+    widgets here; confirmation toasts use the window's ToastOverlay."""
 
     def __init__(self, main_window):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.main_window = main_window
         self.client = main_window.client
         self.db = main_window.db
+        self._rows_by_wrap = {}  # wrap id -> Adw.ActionRow (action targets)
 
         bar = Gtk.Box(spacing=12, halign=Gtk.Align.START, margin_top=6,
                       margin_bottom=6, margin_start=6)
@@ -777,14 +807,21 @@ class DraftsPage(Gtk.Box):
 
     @staticmethod
     def _draft_rows(entries):
-        """(title, subtitle) pairs, newest-first, for the read-only list."""
+        """(title, subtitle) pairs, newest-first. Card C4: title prefers the
+        draft's own title tag; subtitle carries kind, age, word count (when
+        the body is readable), the 'legacy' label for kind-30024 rows, and
+        the encrypted marker for undecryptable wraps."""
         rows = sorted(entries or [], key=lambda e: (e.created_at, e.wrap_id),
                       reverse=True)
         out = []
         for e in rows:
-            title = e.d or "(untitled draft)"
-            kind = e.target_kind if e.target_kind is not None else "?"
+            title = e.title or e.d or "(untitled draft)"
+            kind = e.target_kind if e.target_kind is not None else 30024
             sub = f"kind {kind} · {_ago(e.created_at)}"
+            if e.word_count:
+                sub += f" · {e.word_count} words"
+            if e.legacy:
+                sub += " · legacy"
             if e.nevent_id is None:
                 sub += " · encrypted"
             out.append((title, sub))
@@ -796,14 +833,92 @@ class DraftsPage(Gtk.Box):
             nxt = row.get_next_sibling()
             self.list_box.remove(row)
             row = nxt
+        self._rows_by_wrap.clear()
         if meta and meta.get("settled_by") == "no-key":
             self._empty.set_text("Sign in with a key to read your drafts.")
             self._empty.set_visible(True)
             return
+        ordered = sorted(entries or [],
+                         key=lambda e: (e.created_at, e.wrap_id), reverse=True)
         pairs = self._draft_rows(entries)
-        for title, sub in pairs:
+        for entry, (title, sub) in zip(ordered, pairs):
             r = Adw.ActionRow(title=title, subtitle=sub)
-            r.set_activatable(False)  # read-only: no edit, no open flow
+            r.set_activatable(False)  # actions are the explicit buttons
+            actions = Gtk.Box(spacing=6)
+            btn_view = Gtk.Button(label="View")
+            btn_view.connect("clicked",
+                             lambda b, en=entry, ro=r: self._on_view(b, en, ro))
+            btn_pub = Gtk.Button(label="Publish")
+            btn_pub.connect("clicked",
+                            lambda b, en=entry, ro=r: self._on_publish(b, en,
+                                                                       ro))
+            btn_del = Gtk.Button(label="Delete")
+            btn_del.add_css_class("destructive-action")
+            btn_del.connect("clicked",
+                            lambda b, en=entry, ro=r: self._on_delete(b, en,
+                                                                      ro))
+            for b in (btn_view, btn_pub, btn_del):
+                b.add_css_class("flat")
+                actions.append(b)
+            r.add_suffix(actions)
+            self._rows_by_wrap[entry.wrap_id] = r
             self.list_box.append(r)
         self._empty.set_text("No drafts.")
         self._empty.set_visible(not pairs)
+
+    # ------------------------------------------------------------------
+    # Row actions (card C4): hand unsigned templates / wrap ids to the
+    # client — signing + relay fan stay client-side (house boundary).
+    # ------------------------------------------------------------------
+
+    def _toast(self, title):
+        """Confirmation via the window's Adw.ToastOverlay (house snackbar).
+        Duck-typed test windows without add_toast stay silent (getattr rule,
+        C3 window-gating precedent)."""
+        add = getattr(self.main_window, "add_toast", None)
+        if callable(add):
+            add(Adw.Toast(title=title))
+
+    def _remove_row(self, wrap_id, row):
+        self._rows_by_wrap.pop(wrap_id, None)
+        try:
+            self.list_box.remove(row)
+        except (TypeError, RuntimeError):
+            pass  # already detached (list was re-rendered meanwhile)
+
+    def _on_view(self, _btn, entry, _row):
+        """Open the C1 reader in draft mode (banner, no comments thread)."""
+        if not entry.content:
+            self._toast("Encrypted draft — needs your key to preview")
+            return
+        pub_key = getattr(self.main_window, "pub_key", None) or ""
+        card = longform.draft_card(entry, pub_key)
+        view = ArticleReaderPage(self.main_window, card, draft=True)
+        page = Adw.NavigationPage(title=entry.title or "Draft preview",
+                                  child=view)
+        self.main_window.content_nav.push(page)
+
+    def _on_publish(self, _btn, entry, row):
+        if not getattr(self.main_window, "pub_key", None):
+            self._toast("Sign in to publish drafts")
+            return
+        template = longform.build_article_from_draft(
+            entry, self.main_window.pub_key)
+        if template is None:
+            self._toast("Draft body is encrypted — cannot publish it")
+            return
+        # UNSIGNED handoff: client signs once + fans + supersedes the wrap.
+        ok = self.client.publish_draft_article(template, entry.wrap_id)
+        if ok:
+            self._remove_row(entry.wrap_id, row)
+            self._toast("Draft published — article sent")
+        else:
+            self._toast("Could not publish draft (relays unreachable)")
+
+    def _on_delete(self, _btn, entry, row):
+        ok = self.client.delete_draft(entry.wrap_id)
+        if ok:
+            self._remove_row(entry.wrap_id, row)
+            self._toast("Draft deleted")  # confirmation snackbar (exit crit)
+        else:
+            self._toast("Could not delete draft")

@@ -387,7 +387,12 @@ class DraftEntry:
 
 
 def drafts_filter(self_pubkey: str, limit: int = DRAFT_FETCH_LIMIT) -> dict:
-    return {"kinds": [KIND_DRAFT_WRAP], "authors": [self_pubkey], "limit": limit}
+    """C4 (card t_deee2a81): kinds include legacy 30024 alongside 31234 —
+    relays that actually carry the user's old plaintext drafts answer with
+    them and the list labels those rows 'legacy' (the 2026-11-23 probe found
+    none on the user's relays, so in practice this returns 31234 wraps)."""
+    return {"kinds": [KIND_DRAFT_WRAP, KIND_DRAFT_LEGACY],
+            "authors": [self_pubkey], "limit": limit}
 
 
 def parse_draft_event(ev, privkey_hex=None, self_pubkey_hex=None) -> DraftEntry | None:
