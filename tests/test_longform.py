@@ -677,6 +677,7 @@ class FakeLongformClient:
         self._longform_fetches = {}
         self._longform_section_subs = set()
         self._longform_article_relays = {}  # C3 attribution store
+        self._longform_draft_relays = {}    # C4 attribution store (wrap -> urls)
         self.my_keys = {"pubkey": A_PUB, "privatekey": "11" * 32}
         self.closed = []
 
@@ -950,6 +951,8 @@ class TestLiveNosLolParse:
 
 COMMENTER_PRIV = "11" * 32
 COMMENTER_PUB = nostr_utils.get_public_key(COMMENTER_PRIV)
+DRAFTER_PRIV = "22" * 32
+DRAFTER_PUB = nostr_utils.get_public_key(DRAFTER_PRIV)
 
 
 def _comment_template():
@@ -1156,3 +1159,252 @@ class TestArticleCommentPublish:
         assert longform.build_comment_event(
             A_PUB, {"kind": 30023}, "x") is None
         assert longform.build_comment_event("", CANON_ART, "x") is None
+
+
+# ---------------------------------------------------------------------------
+# C4 (card t_deee2a81): draft attribution + publish/delete client flows
+# ---------------------------------------------------------------------------
+
+DRAFT_WRAP_ID = "a" * 64
+
+
+def _c4_draft_entry():
+    """Real decryptable draft: nip44 wrap (inner 23-style draft w/ title +
+    tags) parsed with the owner key — the exact row the DraftsPage renders."""
+    priv = DRAFTER_PRIV
+    pub = DRAFTER_PUB
+    draft = {
+        "pubkey": pub, "kind": 23, "created_at": 1750000500,
+        "content": "body words from the draft",
+        "tags": [["d", "my-post"], ["title", "My Draft"], ["t", "linux"]],
+    }
+    draft["id"] = _canonical_id(draft)
+    conv = nip44.get_conversation_key(bytes.fromhex(priv), bytes.fromhex(pub))
+    wrap = {
+        "id": DRAFT_WRAP_ID, "pubkey": pub, "kind": 31234,
+        "created_at": 1750000000,
+        "tags": [["k", "23"], ["d", "wrap-d"]],
+        "content": nip44.encrypt(json.dumps(draft), conv),
+    }
+    return longform.parse_draft_event(wrap, privkey_hex=priv,
+                                      self_pubkey_hex=pub)
+
+
+class TestDraftRelayAttribution:
+    def test_fetch_hit_records_wrap_host(self):
+        c = FakeLongformClient()
+        setattr(c, "draft_target_relays",
+                types.MethodType(_bound("draft_target_relays"), c))
+        calls = []
+        c.fetch_drafts(lambda entries, meta: calls.append((entries, meta)))
+        ev = {"id": DRAFT_WRAP_ID, "pubkey": A_PUB, "kind": 31234,
+              "created_at": 1750000000, "tags": [["k", "23"], ["d", "x"]],
+              "content": "opaque-blob"}
+        c._longform_note(ev, "wss://d1.example")
+        assert c._longform_draft_relays == {DRAFT_WRAP_ID: {"wss://d1.example"}}
+        # targets = seen ∪ write defaults (C3 union shape)
+        c.relay_urls = {"wss://u.example"}
+        assert c.draft_target_relays(DRAFT_WRAP_ID) == {
+            "wss://d1.example", "wss://u.example",
+        }
+        assert c.draft_target_relays("c" * 64) == {"wss://u.example"}
+
+    def test_legacy_30024_arrival_accepted_as_own_draft(self):
+        c = FakeLongformClient()
+        calls = []
+        c.fetch_drafts(lambda entries, meta: calls.append((entries, meta)))
+        ev = {"id": "c" * 64, "pubkey": A_PUB, "kind": 30024,
+              "created_at": 1740000000, "tags": [["d", "old"]],
+              "content": "plain old draft"}
+        c._longform_note(ev, "wss://d2.example")
+        c.eose_all("longform_drafts")
+        entries, meta = calls[0]
+        assert any(e.wrap_id == "c" * 64 and e.legacy for e in entries)
+        assert c._longform_draft_relays["c" * 64] == {"wss://d2.example"}
+
+
+class TestDraftPublishFlow:
+    """publish_draft_article: sign-then-gated like C3 — fan the signed 30023
+    to seen ∪ write relays, THEN supersede the wrap with a signed kind-5.
+    A failed publish keeps the draft."""
+
+    def _client(self, seen=("wss://seen.example",), priv=DRAFTER_PRIV,
+                publish_ok=True):
+        c = FakeLongformClient()
+        c._longform_draft_relays = {DRAFT_WRAP_ID: set(seen)}
+        c.my_privkey = priv
+        c.my_pubkey = DRAFTER_PUB
+        c.signer = None
+        c.tracked = []
+        c.new_conns = []
+
+        def _new_relay(url):
+            r = c.active_relays.setdefault(url, _FakeRecRelay(url))
+            if not publish_ok:  # relay rejects EVERY publish (offline path)
+                r.publish = lambda ev: False
+            return r
+
+        def add_relay_connection(url):
+            c.new_conns.append(url)
+            _new_relay(url)
+
+        c.add_relay_connection = add_relay_connection
+        c._write_relays = lambda: {"wss://w.example": None}
+
+        def _track_publish(event, label, sent_urls=None, candidates=None):
+            c.tracked.append(
+                (event, label, set(sent_urls or ()), set(candidates or ()))
+            )
+
+        c._track_publish = _track_publish
+        c._log_relay = lambda msg: None
+        for m in ("publish_draft_article", "delete_draft", "_supersede_draft",
+                  "draft_target_relays", "_publish_comment_targets", "_sign"):
+            setattr(c, m, types.MethodType(_bound(m), c))
+        for url in seen:
+            _new_relay(url)
+        return c
+
+    def test_publish_fans_article_then_supersedes_wrap(self):
+        c = self._client()
+        entry = _c4_draft_entry()
+        template = longform.build_article_from_draft(entry, DRAFTER_PUB)
+        assert template is not None and "id" not in template
+        assert c.publish_draft_article(template, DRAFT_WRAP_ID) is True
+        targets = {"wss://seen.example", "wss://w.example"}
+        article_id = nostr_utils.compute_event_id(
+            {k: v for k, v in template.items() if k not in ("id", "sig")}
+        )
+        for url in targets:
+            pub = c.active_relays[url].published
+            kinds = [e["kind"] for e in pub]
+            assert kinds == [30023, 5], f"{url}: {kinds}"
+            art, dele = pub
+            # every fan copy carries the id computed over the UNSIGNED
+            # template (sign-once invariant, C3 lesson)
+            assert art["id"] == article_id
+            assert verify_event_sig(art) and art["kind"] == 30023
+            assert dele["kind"] == 5 and dele["tags"] == [["e", DRAFT_WRAP_ID]]
+            assert verify_event_sig(dele)
+            assert dele["id"] == nostr_utils.compute_event_id(
+                {k: v for k, v in dele.items() if k not in ("id", "sig")}
+            )
+        # read relays that never hosted the draft are NOT sprayed
+        assert c.active_relays["wss://r0.example"].published == []
+        assert c.active_relays["wss://r1.example"].published == []
+        labels = [t[1] for t in c.tracked]
+        assert labels == ["Draft article", "Draft deletion"]
+        for _ev, _lbl, sent, cand in c.tracked:
+            assert cand == targets and sent == targets
+        # the default write relay wasn't connected yet -> publish connects it
+        assert "wss://w.example" in c.new_conns
+
+    def test_publish_failure_keeps_the_draft(self):
+        c = self._client(publish_ok=False)
+        entry = _c4_draft_entry()
+        template = longform.build_article_from_draft(entry, DRAFTER_PUB)
+        assert c.publish_draft_article(template, DRAFT_WRAP_ID) is False
+        # article attempt recorded, but NO supersede deletion was signed/sent
+        for url in ("wss://seen.example", "wss://r0.example"):
+            assert all(e["kind"] != 5 for e in c.active_relays[url].published)
+        assert [t[1] for t in c.tracked] == ["Draft article"]
+
+    def test_publish_no_targets_returns_false_before_signing(self):
+        c = self._client(seen=())
+        c._write_relays = lambda: {}
+        entry = _c4_draft_entry()
+        template = longform.build_article_from_draft(entry, DRAFTER_PUB)
+        assert c.publish_draft_article(template, DRAFT_WRAP_ID) is False
+        assert not c.tracked
+        assert not any(r.published for r in c.active_relays.values())
+
+    def test_publish_bunker_signs_article_and_deletion_on_worker(self):
+        c = self._client()
+        bunker = _FakeBunkerSigner({DRAFTER_PUB}, DRAFTER_PRIV)
+        c.signer = bunker
+        c.my_privkey = None  # local fallback must NOT be used
+        entry = _c4_draft_entry()
+        template = longform.build_article_from_draft(entry, DRAFTER_PUB)
+        t0 = time.time()
+        assert c.publish_draft_article(template, DRAFT_WRAP_ID) is True
+        assert time.time() - t0 < 1.0  # worker signs, call returns now
+        deadline = time.time() + 5.0
+        while time.time() < deadline and len(c.tracked) < 2:
+            time.sleep(0.05)
+        assert bunker.calls == 2  # article + supersede deletion, no more
+        published = [e for r in c.active_relays.values() for e in r.published]
+        kinds = sorted(e["kind"] for e in published)
+        assert kinds == [5, 5, 30023, 30023]  # 2 targets x article+deletion
+        assert all(verify_event_sig(e) for e in published)
+
+
+class TestDraftDeleteFlow:
+    def _client(self, priv=DRAFTER_PRIV, seen=("wss://seen.example",)):
+        c = FakeLongformClient()
+        c._longform_draft_relays = {DRAFT_WRAP_ID: set(seen)}
+        c.my_privkey = priv
+        c.my_pubkey = DRAFTER_PUB
+        c.signer = None
+        c.tracked = []
+        c.new_conns = []
+
+        def add_relay_connection(url):
+            c.new_conns.append(url)
+            c.active_relays.setdefault(url, _FakeRecRelay(url))
+
+        c.add_relay_connection = add_relay_connection
+        c._write_relays = lambda: {"wss://w.example": None}
+
+        def _track_publish(event, label, sent_urls=None, candidates=None):
+            c.tracked.append(
+                (event, label, set(sent_urls or ()), set(candidates or ()))
+            )
+
+        c._track_publish = _track_publish
+        c._log_relay = lambda msg: None
+        for url in seen:
+            c.active_relays.setdefault(url, _FakeRecRelay(url))
+        for m in ("delete_draft", "draft_target_relays",
+                  "_publish_comment_targets", "_sign"):
+            setattr(c, m, types.MethodType(_bound(m), c))
+        return c
+
+    def test_delete_sends_signed_kind5_to_seen_and_write(self):
+        c = self._client()
+        assert c.delete_draft(DRAFT_WRAP_ID) is True
+        for url in ("wss://seen.example", "wss://w.example"):
+            pub = c.active_relays[url].published
+            assert len(pub) == 1
+            ev = pub[0]
+            assert ev["kind"] == 5 and ev["tags"] == [["e", DRAFT_WRAP_ID]]
+            assert ev["pubkey"] == DRAFTER_PUB
+            assert verify_event_sig(ev)
+        assert len(c.tracked) == 1
+        assert c.tracked[0][1] == "Draft deletion"
+        # local relays never hosting the draft untouched
+        assert c.active_relays["wss://r0.example"].published == []
+
+    def test_delete_no_targets_returns_false(self):
+        c = self._client(seen=())
+        c._write_relays = lambda: {}
+        assert c.delete_draft(DRAFT_WRAP_ID) is False
+        assert not c.tracked
+
+    def test_delete_bad_wrap_id_returns_false(self):
+        c = self._client()
+        assert c.delete_draft("nothex") is False
+        assert not any(r.published for r in c.active_relays.values())
+
+    def test_delete_bunker_signs_on_worker(self):
+        c = self._client()
+        bunker = _FakeBunkerSigner({DRAFTER_PUB}, DRAFTER_PRIV)
+        c.signer = bunker
+        c.my_privkey = None
+        assert c.delete_draft(DRAFT_WRAP_ID) is True
+        deadline = time.time() + 5.0
+        while time.time() < deadline and not c.tracked:
+            time.sleep(0.05)
+        assert bunker.calls == 1
+        published = [e for r in c.active_relays.values() for e in r.published]
+        assert len(published) == 2  # 2 targets
+        assert all(e["kind"] == 5 and verify_event_sig(e) for e in published)

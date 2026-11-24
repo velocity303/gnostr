@@ -716,7 +716,10 @@ class NostrClient(GObject.Object):
         # NIPW1123-P1-C3: which relays host each article (30023 arrival
         # evidence) and/or its comments (1111 fetch hits) — comment posts
         # fan to these ∪ the default write relays.
+        # NIPW1123-P1-C4: same evidence shape for draft wraps (31234/30024
+        # fetch hits), keyed by wrap id — publish/delete targets.
         self._longform_article_relays = {}
+        self._longform_draft_relays = {}
         self._dm_poll_source = None  # GLib source id for the DM freshness poll
         # P5 throttle: timestamps (time.time()) of new-conversation
         # initiations in the rolling hour. In-memory only by design — a
@@ -1972,7 +1975,7 @@ class NostrClient(GObject.Object):
         # Literal kinds + getattr: house tests ast-bind _handle_event onto
         # fakes that lack the longform module/attrs — keep this hot-path
         # hook invisible to them.
-        if kind == 1111 or kind == 31234:  # longform KIND_COMMENT/_DRAFT_WRAP
+        if kind in (1111, 31234, 30024):  # longform KIND_COMMENT/_DRAFT_WRAP/_DRAFT_LEGACY
             _lf_note = getattr(self, "_longform_note", None)
             if _lf_note is not None:
                 _lf_note(ev, relay_url)
@@ -2499,6 +2502,125 @@ class NostrClient(GObject.Object):
             defaults = set(getattr(self, "relay_urls", None) or set())
         return known | defaults
 
+    def draft_target_relays(self, wrap_id=""):
+        """Publish/delete targets for a draft wrap (card C4): relays proven
+        to host the wrap (31234/30024 fetch hits, _longform_draft_relays) ∪
+        the configured write-role relays. Drafts are private events on the
+        user's own relays: the union means a publish supersede / delete
+        reaches wherever the wrap actually lives AND the user's default write
+        set, without spraying plain read relays that never carried it."""
+        known = set(
+            (getattr(self, "_longform_draft_relays", None) or {}).get(
+                wrap_id, ()
+            )
+        )
+        wr = getattr(self, "_write_relays", None)
+        if wr is not None:
+            try:
+                defaults = set(wr().keys())
+            except (AttributeError, TypeError):
+                defaults = set()
+        else:
+            defaults = set(getattr(self, "relay_urls", None) or set())
+        return known | defaults
+
+    def publish_draft_article(self, event, wrap_id=""):
+        """Draft-publish flow (NIPW1123-P1-C4), signed-then-gated exactly
+        like publish_article_comment: the UI hands an unsigned 30023 rebuilt
+        from the draft (longform.build_article_from_draft), this signs it
+        ONCE through the active backend (local inline / Bunker on worker),
+        fans it to draft_target_relays, and — only after the article was
+        accepted — supersedes the draft with a signed kind-5 deletion of the
+        wrap (longform.py semantics: the wrap leaves every read path; a
+        failed publish keeps the draft intact). Returns False only when
+        nothing could be dispatched. The UI never signs."""
+        targets = self.draft_target_relays(wrap_id)
+        if not targets:
+            return False
+        backend = getattr(self, "signer", None)
+        if backend is not None and not getattr(backend, "is_local", True):
+
+            def _worker():
+                try:
+                    signed = backend.sign_event(event)
+                except Exception as e:
+                    print(f"❌ bunker draft signing failed: {e}")
+                    return
+                if not signed:
+                    return
+                if self._publish_comment_targets(
+                    signed, targets, "Draft article"
+                ):
+                    self._supersede_draft(wrap_id, signed, backend=backend)
+
+            threading.Thread(target=_worker, daemon=True).start()
+            return True
+        signed = self._sign(event)
+        if not signed:
+            return False
+        ok = self._publish_comment_targets(signed, targets, "Draft article")
+        if ok:
+            self._supersede_draft(wrap_id, signed)
+        return ok
+
+    def _supersede_draft(self, wrap_id, signed_article, backend=None):
+        """Post-publish draft removal (card C4 'removes or supersedes'):
+        sign a kind-5 deletion targeting the wrap and fan it to the same
+        target set. Signing failure or an unusable wrap id is non-fatal —
+        the article is already out; the draft row simply survives to be
+        retried via the explicit delete action."""
+        deletion = gnostr_longform.build_draft_deletion(
+            wrap_id, signed_article.get("pubkey") or ""
+        )
+        if deletion is None:
+            return
+        if backend is not None:
+            try:
+                signed_del = backend.sign_event(deletion)
+            except Exception:
+                return
+        else:
+            signed_del = self._sign(deletion)
+        if signed_del:
+            self._publish_comment_targets(
+                signed_del, self.draft_target_relays(wrap_id), "Draft deletion"
+            )
+
+    def delete_draft(self, wrap_id):
+        """Draft delete (card C4): a signed kind-5 deletion event targeting
+        the wrap, signed-then-gated (local inline / Bunker on worker), fanned
+        to draft_target_relays. Returns True on dispatch accepted (UI then
+        removes the row + shows the confirmation toast); False when nothing
+        could be dispatched (no targets / signer declined / bad wrap id)."""
+        targets = self.draft_target_relays(wrap_id)
+        if not targets:
+            return False
+        template = gnostr_longform.build_draft_deletion(
+            wrap_id, getattr(self, "my_pubkey", "") or ""
+        )
+        if template is None:
+            return False
+        backend = getattr(self, "signer", None)
+        if backend is not None and not getattr(backend, "is_local", True):
+
+            def _worker():
+                try:
+                    signed = backend.sign_event(template)
+                except Exception as e:
+                    print(f"❌ bunker draft-deletion signing failed: {e}")
+                    return
+                if signed:
+                    self._publish_comment_targets(
+                        signed, targets, "Draft deletion"
+                    )
+
+            threading.Thread(target=_worker, daemon=True).start()
+            return True
+        signed = self._sign(template)
+        if not signed:
+            return False
+        return self._publish_comment_targets(signed, targets, "Draft deletion")
+
     def publish_article_comment(self, event, article_id=""):
         """Comment-post flow (NIPW1123-P1-C3), signed-then-gated like the
         group composer: sign the unsigned 1111 template ONCE through the
@@ -2531,7 +2653,7 @@ class NostrClient(GObject.Object):
             return False
         return self._publish_comment_targets(signed, targets)
 
-    def _publish_comment_targets(self, signed, targets):
+    def _publish_comment_targets(self, signed, targets, label="Article comment"):
         sent = set()
         for url in targets:
             if url not in self.active_relays:
@@ -2540,10 +2662,10 @@ class NostrClient(GObject.Object):
             if r is not None and r.publish(signed):
                 sent.add(url)
         self._track_publish(
-            signed, "Article comment", sent_urls=sent, candidates=set(targets)
+            signed, label, sent_urls=sent, candidates=set(targets)
         )
         self._log_relay(
-            f"[lf] EVENT {signed['id'][:8]} comment sent to "
+            f"[lf] EVENT {signed['id'][:8]} {label} sent to "
             f"{len(sent)}/{len(targets)} relay(s)"
         )
         return bool(sent)
@@ -2672,10 +2794,18 @@ class NostrClient(GObject.Object):
                     st["events"].append(dict(ev))
                     if relay_url:
                         st.setdefault("seen_relays", set()).add(relay_url)
-            elif kind == gnostr_longform.KIND_DRAFT_WRAP and st["kind"] == "drafts":
+            elif kind in (
+                gnostr_longform.KIND_DRAFT_WRAP, gnostr_longform.KIND_DRAFT_LEGACY
+            ) and st["kind"] == "drafts":
                 if ev.get("pubkey") == st["author_pk"]:
                     st["event_ids"].add(ev_id)
                     st["events"].append(dict(ev))
+                    # C4 attribution: a draft FOUND on relay X proves X hosts
+                    # it — publish supersede + delete fan to these relays.
+                    if relay_url:
+                        drafts_store = getattr(self, "_longform_draft_relays", None)
+                        if drafts_store is not None:
+                            drafts_store.setdefault(ev_id, set()).add(relay_url)
 
     def _longform_eose(self, sub_id, relay_url):
         """EOSE fan-in branch (called from _handle_eose). Only the fetch's
