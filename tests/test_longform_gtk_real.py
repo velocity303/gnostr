@@ -26,7 +26,13 @@ cannot catch widget-level failures — the FLX1 bug class):
      window's reader path. Opt-in lifecycle: map opens the articles sub
      once, unmap closes it. Sidebar Articles row starts hidden and only
      set_articles_visible can reveal it.
-  6. No GTK error/critical log records during the run.
+  7. (C4) Drafts: real DraftsPage rows for a decrypted 31234 wrap (real
+     NIP-44 parse) + a legacy 30024 row labeled 'legacy'; real
+     View/Publish/Delete buttons clicked drive the full flows — unsigned
+     30023 rebuilt from the draft (title/content/t-tags carried), row
+     removal, confirmation toasts on a real Adw.ToastOverlay, and the
+     draft-mode reader (banner, no comments) on a real Adw.NavigationView.
+  8. No GTK error/critical log records during the run.
 
 Standalone run (NOT under the pytest suite — conftest mocks gi):
     xvfb-run -a python3 tests/test_longform_gtk_real.py
@@ -558,7 +564,188 @@ def main():
           or "harness ships it" in texts_dedup[-2:],
           repr(texts_dedup[-2:]))
 
-    # 7. No GTK criticals during the whole run.
+    # 7. (C4) Draft management on real widgets: DraftsPage renders a
+    #    decrypted 31234 wrap (real NIP-44 self↔self parse through the
+    #    shipped code) + a legacy 30024 row; real View/Publish/Delete
+    #    buttons drive the flows against real Adw.ToastOverlay /
+    #    Adw.NavigationView hosts.
+    from gnostr import nip44  # noqa: F401  (resolved via SRC path)
+
+    conv_self = nip44.get_conversation_key(
+        bytes.fromhex(HARNESS_PRIV), bytes.fromhex(HARNESS_PUB))
+
+    inner_draft = {
+        "pubkey": HARNESS_PUB,
+        "kind": 30023,
+        "created_at": 1763000400,
+        "content": "alpha beta gamma delta work in progress",
+        "tags": [["d", "mydraft"], ["title", "My Draft Title"],
+                 ["t", "linux"], ["t", "nostr"]],
+    }
+    inner_draft["id"] = nostr_utils.compute_event_id(inner_draft)
+    wrap_ev = {
+        "pubkey": HARNESS_PUB,
+        "kind": 31234,
+        "created_at": 1763000401,
+        "content": nip44.encrypt(json.dumps(inner_draft), conv_self),
+        "tags": [["d", "wrap-1"], ["k", "30023"]],
+    }
+    wrap_ev["id"] = nostr_utils.compute_event_id(wrap_ev)
+    legacy_ev = {
+        "id": "ee" * 32,
+        "pubkey": HARNESS_PUB,
+        "kind": 30024,
+        "created_at": 1763000500,
+        "content": "one two three four five six seven",
+        "tags": [["d", "legacy-1"], ["title", "Old Legacy Draft"]],
+    }
+
+    entry_wrap = longform.parse_draft_event(
+        wrap_ev, privkey_hex=HARNESS_PRIV, self_pubkey_hex=HARNESS_PUB)
+    entry_legacy = longform.parse_draft_event(legacy_ev)
+    check("31234 wrap decrypts via the real parse path (title/words/target)",
+          entry_wrap is not None
+          and entry_wrap.title == "My Draft Title"
+          and entry_wrap.word_count == 7 and not entry_wrap.legacy
+          and entry_wrap.target_kind == 30023
+          and entry_wrap.nevent_id == inner_draft["id"], repr(entry_wrap))
+    check("legacy 30024 parses flagged legacy",
+          entry_legacy is not None and entry_legacy.legacy
+          and entry_legacy.title == "Old Legacy Draft"
+          and entry_legacy.word_count == 7, repr(entry_legacy))
+
+    class DraftsCaptureClient:
+        """Records exactly what the DraftsPage actions hand the client."""
+
+        def __init__(self, entries):
+            self.entries = list(entries)
+            self.published = []  # (unsigned template, wrap_id)
+            self.deleted = []    # wrap ids handed to delete_draft
+
+        def fetch_drafts(self, cb):
+            cb(list(self.entries), {})
+
+        def publish_draft_article(self, template, wrap_id):
+            self.published.append((template, wrap_id))
+            return True
+
+        def delete_draft(self, wrap_id):
+            self.deleted.append(wrap_id)
+            return True
+
+    toast_overlay = Adw.ToastOverlay()   # real house snackbar host
+    nav = Adw.NavigationView()           # real content nav (main.py layout)
+    added_toasts = []
+
+    def _add_toast(toast):
+        toast_overlay.add_toast(toast)   # real widget first: a failure
+        added_toasts.append(toast)       # here is a real failure, not noise
+
+    dc = DraftsCaptureClient([entry_legacy, entry_wrap])
+    mw4 = types.SimpleNamespace(
+        client=dc, db=FakeDb([]), pub_key=HARNESS_PUB,
+        content_nav=nav, add_toast=_add_toast)
+    drafts_page = articles_page.DraftsPage(mw4)
+    drafts_page._disarm_deadline()
+
+    def _action_rows(list_box):
+        out, r = [], list_box.get_first_child()
+        while r is not None:
+            if isinstance(r, Adw.ActionRow):
+                out.append(r)
+            r = r.get_next_sibling()
+        return out
+
+    def _row_buttons(row, label):
+        return [b for b in _collect(row, lambda n: isinstance(n, Gtk.Button))
+                if b.get_label() == label]
+
+    def _row_for(title):
+        for r in _action_rows(drafts_page.list_box):
+            if title in " ".join(_label_texts(r)):
+                return r
+        return None
+
+    def _toast_titles():
+        return [t.get_title() for t in added_toasts]
+
+    rows4 = _action_rows(drafts_page.list_box)
+    texts4 = _joined(rows4)
+    check("draft list renders both fixture rows (Adw.ActionRow)",
+          len(rows4) == 2, repr(texts4))
+    check("31234 row shows title + word count (not labeled legacy)",
+          any("My Draft Title" in t and "7 words" in t and "legacy" not in t
+              for t in texts4), repr(texts4))
+    check("30024 row labeled legacy with word count",
+          any("Old Legacy Draft" in t and "7 words" in t and "legacy" in t
+              for t in texts4), repr(texts4))
+    check("each draft row carries View + Publish + Delete real buttons",
+          all(len(_row_buttons(r, lbl)) == 1 for r in rows4
+              for lbl in ("View", "Publish", "Delete")), repr(texts4))
+
+    # View click -> C1 reader in draft mode on the REAL nav stack: preview
+    # banner present, comments thread absent (drafts are unpublished).
+    row_wrap = _row_for("My Draft Title")
+    if row_wrap is not None:
+        _row_buttons(row_wrap, "View")[0].emit("clicked")
+    nav_page = nav.get_visible_page() if nav is not None else None
+    draft_view_tree = ""
+    if nav_page is not None:
+        draft_view_tree = " | ".join(
+            " ".join(_label_texts(n))
+            for n in _collect(nav_page, lambda n: True))
+    check("View opens the draft-mode reader on the real nav stack",
+          "Draft preview — not yet published" in draft_view_tree
+          and "My Draft Title" in draft_view_tree, draft_view_tree[:160])
+    check("draft reader hides the comments thread",
+          "Comments" not in draft_view_tree, draft_view_tree[:160])
+
+    # Publish click -> UNSIGNED 30023 rebuilt from the draft, handed to
+    # the client once; signs + verifies under the harness key; row gone;
+    # confirmation toast on the real overlay.
+    if row_wrap is not None:
+        _row_buttons(row_wrap, "Publish")[0].emit("clicked")
+    check("Publish click hands exactly one signed-then-gated draft to "
+          "the client (wrap id carried for supersede)",
+          len(dc.published) == 1 and dc.published[0][1] == wrap_ev["id"],
+          repr(dc.published))
+    art_tmpl = dc.published[0][0] if dc.published else {}
+    art_tags = {(t[0], t[1]) for t in art_tmpl.get("tags", [])}
+    check("rebuilt 30023 carries title/content/d/pubkey from the draft",
+          art_tmpl.get("kind") == 30023
+          and art_tmpl.get("content") == inner_draft["content"]
+          and art_tmpl.get("pubkey") == HARNESS_PUB
+          and ("title", "My Draft Title") in art_tags
+          and any(t[0] == "d" for t in art_tmpl.get("tags", [])),
+          repr(sorted(art_tags)))
+    check("rebuilt 30023 preserves the draft's own t tags",
+          ("t", "linux") in art_tags and ("t", "nostr") in art_tags,
+          repr(sorted(art_tags)))
+    check("UI hands the UNSIGNED 30023 (client owns signing)",
+          "sig" not in art_tmpl and "id" not in art_tmpl, repr(art_tmpl))
+    signed_article = nostr_utils.sign_event(dict(art_tmpl), HARNESS_PRIV)
+    check("draft publish template signs + verifies as a real 30023",
+          signed_article is not None
+          and signed_article["pubkey"] == HARNESS_PUB
+          and verify_event_sig(signed_article), repr(signed_article))
+    check("publish removes the row + shows confirmation toast",
+          len(_action_rows(drafts_page.list_box)) == 1
+          and "Draft published — article sent" in _toast_titles(),
+          repr(_toast_titles()))
+
+    # Delete click -> wrap id handed to client.delete_draft (the client
+    # signs + fans the deletion event, NIP-09 semantics); row gone;
+    # snackbar.
+    row_legacy = _row_for("Old Legacy Draft")
+    if row_legacy is not None:
+        _row_buttons(row_legacy, "Delete")[0].emit("clicked")
+    check("Delete click sends the wrap id to delete_draft",
+          dc.deleted == [legacy_ev["id"]], repr(dc.deleted))
+    check("delete empties the list + shows confirmation snackbar",
+          not _action_rows(drafts_page.list_box)
+          and "Draft deleted" in _toast_titles(), repr(_toast_titles()))
+
+    # 8. No GTK criticals during the whole run.
     check("no GTK error/critical records", not criticals, repr(criticals))
 
     print("SUMMARY: %s (%d failures)" % ("ALL CHECKS PASS" if not failed
