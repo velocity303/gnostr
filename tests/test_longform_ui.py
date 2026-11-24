@@ -259,7 +259,7 @@ def test_article_section_sub_opened_by_client_helpers_exist():
 # ---------------------------------------------------------------------------
 
 
-def _fake_articles_self(section_open=False):
+def _fake_articles_self(section_open=False, gtk=None):
     from gnostr.service.feed_model import FeedModel
 
     fake = MagicMock()
@@ -283,11 +283,16 @@ def _fake_articles_self(section_open=False):
     # Bind the real methods under test (MethodType: instance attributes
     # do not auto-bind self — house ast-extraction idiom).
     ns = dict(_NS)
+    if gtk is not None:
+        ns["Gtk"] = gtk
     for m in ("_on_map", "_on_unmap", "_on_quote_event", "_render_card",
               "_remove_row", "_clear_rows", "_sync_footer",
-              "_load_more_visible"):
+              "_load_more_visible", "_reload", "_zap_sats",
+              "_on_row_activated"):
         setattr(fake, m, types.MethodType(
             _class_method(_ARTICLES, "ArticlesPage", m, ns), fake))
+    fake.main_window = MagicMock()
+    fake.db.zap_totals_for_events.return_value = {}
     return fake
 
 
@@ -767,3 +772,216 @@ def test_cover_https_only_and_none_skips_render():
     # The UI renders the cover block only when the card carries one.
     src = _src(_ARTICLES)
     assert src.count("if card.image:") == 2  # section card + reader page
+
+
+# ---------------------------------------------------------------------------
+# C2: opt-in sidebar gate + list row rendering + row -> reader activation
+# ---------------------------------------------------------------------------
+
+
+def _main_body(fn_name):
+    """Source segment of one MainWindow method (ast-extraction house idiom)."""
+    src = _src(_MAIN)
+    tree = ast.parse(src)
+    cls = next(n for n in tree.body
+               if isinstance(n, ast.ClassDef) and n.name.endswith("Window"))
+    for n in cls.body:
+        if isinstance(n, ast.FunctionDef) and n.name == fn_name:
+            seg = ast.get_source_segment(src, n)
+            assert seg, f"{fn_name} has no source segment"
+            return seg
+    raise AssertionError(f"MainWindow.{fn_name} not found in main.py")
+
+
+def test_sidebar_articles_row_hidden_until_revealed():
+    """EXIT CRITERION: the Articles row exists but starts HIDDEN — it is
+    revealed only via set_articles_visible (no empty-section noise on
+    Librem5). Construction hides it; the setter is the only reveal door."""
+    src = _src(_SIDEBAR)
+    assert 'self.rows["articles"].set_visible(False)' in src
+
+    set_vis = _class_method(_SIDEBAR, "Sidebar", "set_articles_visible",
+                            dict(_NS))
+    fake = MagicMock()
+    fake.rows = {"articles": MagicMock()}
+    set_vis(fake, True)
+    assert fake.rows["articles"].set_visible.call_args[0][0] is True
+    set_vis(fake, False)
+    assert fake.rows["articles"].set_visible.call_args[0][0] is False
+    # Missing row (defensive): never raises into the caller.
+    fake2 = MagicMock()
+    fake2.rows = {}
+    set_vis(fake2, True)
+
+
+def test_gate_reveals_only_when_followed_author_has_article():
+    """MainWindow._refresh_articles_row: reveal iff follows ∩ stored 30023
+    authors is non-empty — DB evidence only, capped scan, never raises."""
+    refresh = _class_method(_MAIN, "MainWindow", "_refresh_articles_row",
+                            dict(_NS))
+
+    # Followed author has an article -> revealed (capped evidence scan).
+    fake = MagicMock()
+    fake.pub_key = SELF
+    fake.db.get_following_list.return_value = [PUB]
+    fake.db.get_feed_kind.return_value = [{"pubkey": PUB, "kind": 30023}]
+    refresh(fake)
+    fake.db.get_feed_kind.assert_called_once_with(30023, limit=100)
+    fake.sidebar.set_articles_visible.assert_called_once_with(True)
+
+    # Following nobody -> hidden, and the events scan is skipped entirely.
+    fake2 = MagicMock()
+    fake2.pub_key = SELF
+    fake2.db.get_following_list.return_value = []
+    refresh(fake2)
+    fake2.db.get_feed_kind.assert_not_called()
+    fake2.sidebar.set_articles_visible.assert_called_once_with(False)
+
+    # Not logged in -> hidden, no DB touching of the following list.
+    fake3 = MagicMock()
+    fake3.pub_key = None
+    refresh(fake3)
+    fake3.db.get_following_list.assert_not_called()
+    fake3.sidebar.set_articles_visible.assert_called_once_with(False)
+
+    # Articles stored, but only from a NON-followed author -> hidden.
+    fake4 = MagicMock()
+    fake4.pub_key = SELF
+    fake4.db.get_following_list.return_value = ["e" * 64]
+    fake4.db.get_feed_kind.return_value = [{"pubkey": PUB}]
+    refresh(fake4)
+    fake4.sidebar.set_articles_visible.assert_called_once_with(False)
+
+    # DB blowup -> hidden, never raised into the UI.
+    fake5 = MagicMock()
+    fake5.pub_key = SELF
+    fake5.db.get_following_list.side_effect = RuntimeError("db gone")
+    refresh(fake5)
+    fake5.sidebar.set_articles_visible.assert_called_once_with(False)
+
+
+def test_live_reveal_requires_followed_author():
+    """MainWindow._reveal_articles_for_author: a live 30023 from a FOLLOWED
+    author reveals the row; strangers, no-key, no-args never do."""
+    reveal = _class_method(_MAIN, "MainWindow", "_reveal_articles_for_author",
+                           dict(_NS))
+    fake = MagicMock()
+    fake.pub_key = SELF
+    fake.db.get_following_list.return_value = [PUB]
+    reveal(fake, PUB)
+    fake.sidebar.set_articles_visible.assert_called_once_with(True)
+    reveal(fake, "d" * 64)   # non-followed author: never reveals
+    reveal(fake, None)       # no pubkey: no-op
+    assert fake.sidebar.set_articles_visible.call_count == 1
+    fake2 = MagicMock()
+    fake2.pub_key = None     # not logged in
+    reveal(fake2, PUB)
+    fake2.sidebar.set_articles_visible.assert_not_called()
+    reveal(None, PUB)        # no sidebar yet: must not raise
+
+
+def test_gate_never_opens_new_req():
+    """Relay economy: both gate methods read the local DB only — no client
+    calls, no subs, no backfill inside the gate."""
+    for fn in ("_refresh_articles_row", "_reveal_articles_for_author"):
+        seg = _main_body(fn)
+        for banned in ("client.", "subscribe", "fetch_contacts",
+                       "request_backfill", "open_article_section",
+                       "connect_all"):
+            assert banned not in seg, f"{banned!r} must not appear in {fn}"
+
+
+def test_live_quote_handler_reveals_gate_for_30023():
+    """on_quote_event_received (all-kinds quote signal) reveals the gate on
+    a 30023, before the quote-card bookkeeping. The kind-1 dispatcher
+    (on_event_received) stays 30023-free — covered by
+    test_main_feed_dispatcher_stays_kind1_only."""
+    seg = _main_body("on_quote_event_received")
+    assert "if kind == 30023:" in seg
+    assert "self._reveal_articles_for_author(pubkey)" in seg
+    assert seg.index("_reveal_articles_for_author") < \
+        seg.index("for w in self.event_widgets")
+
+
+def test_login_and_contacts_warm_the_gate():
+    """Warm start: perform_login re-evaluates the gate (idle, DB-only) and
+    on_contacts_updated re-evaluates after the follow set lands."""
+    login_seg = _main_body("perform_login")
+    assert "GLib.idle_add(self._refresh_articles_row)" in login_seg
+    contacts_seg = _main_body("on_contacts_updated")
+    assert "self._refresh_articles_row()" in contacts_seg
+
+
+def test_reload_lists_newest_only_via_longform_dedupe():
+    """EXIT CRITERION: the list shows one row per (pubkey, d), newest wins,
+    newest-first — via the data layer's longform.dedupe_articles (the UI
+    must not re-implement the rule)."""
+    src = _src(_ARTICLES)
+    assert "longform.dedupe_articles(" in src  # reuse, not re-implement
+
+    fake = _fake_articles_self()
+    ev_b = _article_ev("e" * 64, "post-2", "Second Post", 250)
+    evs = {e["id"]: e for e in (EV_A_OLD, EV_A_NEW, EV_A_NEWER, ev_b)}
+    fake.db.get_event_by_id.side_effect = lambda eid: evs.get(eid)
+    fake.model = MagicMock()  # scripted page: fresh first page
+    fake.model.event_ids = [EV_A_OLD["id"], EV_A_NEW["id"],
+                            EV_A_NEWER["id"], ev_b["id"]]
+    fake._reload()
+    fake.model.load_first.assert_called_once()
+    assert fake.list_box.append.call_count == 2  # deduped one row per addr
+    assert set(fake._cards) == {EV_A_NEWER["id"], ev_b["id"]}
+    assert fake._row_by_addr[(PUB, "post-1")] == EV_A_NEWER["id"]
+    assert fake._row_by_addr[(PUB, "post-2")] == ev_b["id"]  # same author
+    # Render order newest-first: 300 (post-1 newest) before 250 (post-2).
+    assert list(fake._row_by_id) == [EV_A_NEWER["id"], ev_b["id"]]
+
+
+def test_rows_show_title_author_updated_and_optional_zap_chip():
+    """Row spec: compact row = title + author/updated meta line; a ⚡sats
+    chip only when verified 9735 receipts exist (zap_totals_for_events)."""
+    gtk, created = _fresh_gtk()
+    fake = _fake_articles_self(gtk=gtk)
+    fake.db.get_profile.return_value = {"display_name": "Alice"}
+    card = longform.parse_article_event(EV_A_NEW)
+    fake.db.zap_totals_for_events.return_value = {card.id: 21000}  # msat
+    fake._render_card(card)
+    labels = [m.construct_kwargs["label"] for m in created
+              if "label" in m.construct_kwargs]
+    assert "Post One" in labels
+    meta = next(t for t in labels if t.startswith("Alice ·"))
+    assert " ago" in meta           # humanized updated timestamp
+    assert "⚡21" in meta           # 21000 msat -> 21 sats chip
+    fake.db.zap_totals_for_events.assert_called_once_with([card.id])
+
+    gtk2, created2 = _fresh_gtk()
+    fake2 = _fake_articles_self(gtk=gtk2)
+    fake2.db.get_profile.return_value = {"display_name": "Alice"}
+    fake2._render_card(card)
+    labels2 = [m.construct_kwargs["label"] for m in created2
+               if "label" in m.construct_kwargs]
+    meta2 = next(t for t in labels2 if t.startswith("Alice ·"))
+    assert "⚡" not in meta2        # no verified receipts -> no chip
+
+    # DB blowup in the zap lookup must not kill the row.
+    gtk3, _c3 = _fresh_gtk()
+    fake3 = _fake_articles_self(gtk=gtk3)
+    fake3.db.zap_totals_for_events.side_effect = RuntimeError("db gone")
+    fake3._render_card(card)       # must not raise
+
+
+def test_row_activation_opens_c1_reader_with_that_card():
+    """EXIT CRITERION: activating a row hands the row's card to the C1
+    reader path (main_window.show_article_reader). Rows are wired via the
+    real row-activated signal; card-less rows open nothing."""
+    src = _src(_ARTICLES)
+    assert 'self.list_box.connect("row-activated", self._on_row_activated)' \
+        in src
+
+    fake = _fake_articles_self()
+    card = longform.parse_article_event(EV_A_NEW)
+    fake._on_row_activated(MagicMock(), types.SimpleNamespace(card=card))
+    fake.main_window.show_article_reader.assert_called_once_with(card)
+
+    fake2 = _fake_articles_self()
+    fake2._on_row_activated(MagicMock(), types.SimpleNamespace(card=None))
+    fake2.main_window.show_article_reader.assert_not_called()

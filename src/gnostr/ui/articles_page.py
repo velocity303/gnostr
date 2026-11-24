@@ -234,7 +234,8 @@ class ArticlesPage(Gtk.Box):
         try:
             totals = self.db.zap_totals_for_events([event_id]) or {}
             msat = int(totals.get(event_id, 0) or 0)
-        except (AttributeError, TypeError, ValueError):
+        except Exception:
+            # Decorative chip: a DB blowup must never kill the row.
             return 0
         return msat // 1000
 
