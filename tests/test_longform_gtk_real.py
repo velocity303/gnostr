@@ -40,6 +40,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import types
 
 try:
@@ -105,6 +106,7 @@ sys.modules["gnostr.renderer"] = _r
 import gnostr.longform as longform  # noqa: E402  (real logic layer)
 import gnostr.nostr_utils as nostr_utils  # noqa: E402
 import gnostr.database as database_mod  # noqa: E402  (real DB, seeded)
+from gnostr.zaps.request import verify_event_sig  # noqa: E402  (C3 sig proof)
 
 
 def _load_articles_page():
@@ -456,7 +458,107 @@ def main():
 
     shutil.rmtree(data_home, ignore_errors=True)
 
-    # 6. No GTK criticals during the whole run.
+    # 6. (C3) Comments: 30-row oldest-first render on real widgets, composer
+    #    gating, and a REAL Post-button click driving the signed-then-gated
+    #    flow end to end.
+    check("signed-out reader hides the composer",
+          not page.comment_composer.get_visible())
+
+    class PostCaptureClient(FakeClient):
+        def __init__(self, fetched):
+            super().__init__(fetched)
+            self.published = []  # (template, article_id) handed to client
+
+        def publish_article_comment(self, ev, article_id):
+            self.published.append((ev, article_id))
+            return True
+
+    HARNESS_PRIV = "22" * 32
+    HARNESS_PUB = nostr_utils.get_public_key(HARNESS_PRIV)
+    base_ts = 1763000000
+    many = []
+    for i in range(30):
+        many.append(_comment_event(
+            "%064x" % (i + 1), base_ts + (i * 7) % 30, "harness comment %02d" % i))
+    expected_order = [e["content"] for e in sorted(
+        many, key=lambda e: (e["created_at"], e["id"]))]
+
+    mw3 = types.SimpleNamespace(
+        client=PostCaptureClient([]), db=FakeDb(many), pub_key=HARNESS_PUB)
+    t0 = time.perf_counter()
+    page3 = articles_page.ArticleReaderPage(mw3, card)
+    render_s = time.perf_counter() - t0
+    page3._disarm_comments_deadline()
+
+    texts3 = _label_texts(page3)
+    comment_labels = [t for t in texts3 if t.startswith("harness comment ")]
+    check("30 fixture comments render in the reader",
+          len(comment_labels) == 30, str(len(comment_labels)))
+    check("comments render oldest-first (reply order)",
+          comment_labels == expected_order,
+          "got %r want %r" % (comment_labels[:3], expected_order[:3]))
+    check("30 comments + full article build under 2s scroll budget",
+          render_s < 2.0, "%.3fs" % render_s)
+    check("compact rows: author line carries npub + ago",
+          any("npub" in t and " ago" in t for t in texts3))
+
+    # Composer is a real entry+button row once signed in.
+    check("signed-in reader shows the composer row",
+          page3.comment_composer.get_visible())
+    entries = [n for n in _collect(page3, lambda n: isinstance(n, Gtk.Entry))]
+    posts = [n for n in _collect(page3, lambda n: isinstance(n, Gtk.Button))
+             if n.get_label() == "Post"]
+    check("composer carries the real entry + Post button",
+          page3.comment_entry in entries and len(posts) == 1
+          and page3.comment_post_btn in posts,
+          repr((len(entries), len(posts))))
+
+    # Real click -> handler -> unsigned 1111 template handed to the client
+    # (signing is the client's job; tier-1 proves the signed round-trip).
+    page3.comment_entry.set_text("harness ships it")
+    page3.comment_post_btn.emit("clicked")  # activate() no-ops on unrealized
+                                           # buttons (C2 row precedent); the
+                                           # clicked->handler connection is real
+    check("Post click dispatches exactly once",
+          len(mw3.client.published) == 1, str(len(mw3.client.published)))
+    template, target_id = mw3.client.published[0]
+    check("dispatched event is kind 1111 with correct article id",
+          template["kind"] == 1111 and target_id == card.id)
+    tag_pairs = {(t[0], t[1]) for t in template["tags"]}
+    check("template carries e/a/k parent pointers",
+          ("e", card.id) in tag_pairs and ("a", card.address) in tag_pairs
+          and ("k", "30023") in tag_pairs, repr(sorted(tag_pairs)))
+    check("template carries E/A/K/P root pointers (NIP-22/26 shape)",
+          ("E", card.id) in tag_pairs and ("A", card.address) in tag_pairs
+          and ("K", "30023") in tag_pairs and ("P", card.pubkey) in tag_pairs)
+    check("UI hands the UNSIGNED template (never signs itself)",
+          "sig" not in template and "id" not in template)
+    check("entry cleared after accepted dispatch",
+          page3.comment_entry.get_text() == "")
+
+    # Optimistic row lands as a REAL widget; signed echo then dedups by id.
+    signed_ev = nostr_utils.sign_event(dict(template), HARNESS_PRIV)
+    check("template signs and verifies with the harness key",
+          signed_ev is not None and signed_ev["pubkey"] == HARNESS_PUB
+          and verify_event_sig(signed_ev))
+    texts_after = _label_texts(page3)
+    ships = [t for t in texts_after if t == "harness ships it"]
+    check("optimistic comment row rendered after post",
+          len(ships) == 1, repr(ships))
+    counts3 = [t for t in texts_after if t.startswith("(")]
+    check("count covers the pending comment (31)",
+          counts3 == ["(31)"], repr(counts3))
+    page3._on_comments_done([signed_ev], {"fallback_used": False})
+    texts_dedup = _label_texts(page3)
+    check("relay echo dedups by id (still 31, no double row)",
+          [t for t in texts_dedup if t == "harness ships it"] == ships
+          and [t for t in texts_dedup if t.startswith("(")] == ["(31)"])
+    check("posted comment sits at the thread tail (newest ts)",
+          texts_dedup[-1] == "harness ships it"
+          or "harness ships it" in texts_dedup[-2:],
+          repr(texts_dedup[-2:]))
+
+    # 7. No GTK criticals during the whole run.
     check("no GTK error/critical records", not criticals, repr(criticals))
 
     print("SUMMARY: %s (%d failures)" % ("ALL CHECKS PASS" if not failed
