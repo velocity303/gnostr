@@ -475,6 +475,135 @@ class TestDraftParsing:
         }
         assert longform.KIND_DRAFT_LEGACY == 30024  # documented, not queried
 
+    # --- C4 (card t_deee2a81): display payload + publish/delete builders ---
+
+    def test_decrypt_populates_title_body_words_tags(self):
+        priv = "11" * 32
+        pub = nostr_utils.get_public_key(priv)
+        draft = {
+            "pubkey": pub, "kind": 23, "created_at": 1750000500,
+            "content": "alpha beta gamma delta",
+            "tags": [["d", "inner-d"], ["title", "Private post"],
+                     ["t", "linux"]],
+        }
+        draft["id"] = _canonical_id(draft)
+        conv = nip44.get_conversation_key(bytes.fromhex(priv), bytes.fromhex(pub))
+        payload = nip44.encrypt(json.dumps(draft), conv)
+        wrap = self._wrap(payload, pubkey=pub,
+                          tags=[["k", "23"], ["d", "wrap-d"]])
+        entry = longform.parse_draft_event(
+            wrap, privkey_hex=priv, self_pubkey_hex=pub
+        )
+        assert entry is not None
+        assert entry.title == "Private post"
+        assert entry.content == "alpha beta gamma delta"
+        assert entry.word_count == 4
+        assert entry.legacy is False
+        # draft tags ride through MINUS the d/title the rebuild re-adds itself
+        assert entry.extra_tags == [["t", "linux"]]
+
+    def test_legacy_30024_parses_labeled(self):
+        ev = {
+            "id": "c" * 64, "pubkey": A_PUB, "kind": 30024,
+            "created_at": 1740000000,
+            "tags": [["d", "old"], ["title", "Old boy"], ["t", "legacy"]],
+            "content": "one two three four",
+        }
+        entry = longform.parse_draft_event(ev)
+        assert entry is not None
+        assert entry.legacy is True
+        assert entry.target_kind == 30024
+        assert entry.nevent_id == "c" * 64  # the draft IS its own event
+        assert entry.title == "Old boy"
+        assert entry.content == "one two three four"
+        assert entry.word_count == 4
+        assert entry.extra_tags == [["t", "legacy"]]
+        # NIP-37 empty-content deletion signal is WRAP-ONLY semantics:
+        # a legacy 30024 stays a row (0 words).
+        empty = dict(ev, content="")
+        kept = longform.parse_draft_event(empty)
+        assert kept is not None and kept.word_count == 0
+
+    def test_build_article_from_draft_unsigned_shape(self):
+        priv = "11" * 32
+        pub = nostr_utils.get_public_key(priv)
+        draft = {
+            "pubkey": pub, "kind": 23, "created_at": 1750000500,
+            "content": "the real body words",
+            "tags": [["d", "my-post"], ["title", "My Draft"],
+                     ["t", "nostr"], ["t", "linux"]],
+        }
+        draft["id"] = _canonical_id(draft)
+        conv = nip44.get_conversation_key(bytes.fromhex(priv), bytes.fromhex(pub))
+        wrap = self._wrap(nip44.encrypt(json.dumps(draft), conv), pubkey=pub,
+                          tags=[["k", "23"], ["d", "wrap-d"]])
+        entry = longform.parse_draft_event(
+            wrap, privkey_hex=priv, self_pubkey_hex=pub
+        )
+        tmpl = longform.build_article_from_draft(entry, pub)
+        assert tmpl is not None
+        assert tmpl["kind"] == 30023
+        assert tmpl["pubkey"] == pub
+        assert tmpl["content"] == "the real body words"
+        tag_map = {t[0]: t[1] for t in tmpl["tags"]}
+        assert tag_map["d"] == "my-post"  # inner d wins (same preference as row)
+        assert tag_map["title"] == "My Draft"
+        assert int(tag_map["published_at"]) >= int(time.time()) - 5
+        # draft's own t tags preserved (card: publish builds 30023 WITH tags)
+        assert [t for t in tmpl["tags"] if t[0] == "t"] == [
+            ["t", "nostr"], ["t", "linux"]]
+        # unsigned-then-client-signs boundary (C3 convention): template has
+        # NO id/sig; canonical id still computes over it.
+        assert "id" not in tmpl and "sig" not in tmpl
+        nostr_utils.compute_event_id(tmpl)
+
+    def test_build_article_d_generated_and_blocked_cases(self):
+        entry = longform.DraftEntry(
+            wrap_id="a" * 64, nevent_id=None, target_kind=23, d=None,
+            created_at=1, content="words words", word_count=2,
+        )
+        tmpl = longform.build_article_from_draft(entry, A_PUB)
+        assert tmpl is not None and tmpl["tags"][0] == ["d", "draft-aaaaaaaa"]
+        # deterministic across calls (republish keeps the same address)
+        assert longform.build_article_from_draft(entry, A_PUB)["tags"][0] == \
+            tmpl["tags"][0]
+        # unreadable body (nevent-only / undecryptable wrap) -> not publishable
+        blank = longform.DraftEntry(
+            wrap_id="b" * 64, nevent_id="e" * 64, target_kind=23, d=None,
+            created_at=1, content="",
+        )
+        assert longform.build_article_from_draft(blank, A_PUB) is None
+        assert longform.build_article_from_draft(entry, "") is None
+
+    def test_build_draft_deletion_unsigned_targets_wrap(self):
+        ev = longform.build_draft_deletion("a" * 64, A_PUB)
+        assert ev is not None
+        assert ev["kind"] == 5
+        assert ev["pubkey"] == A_PUB
+        assert ev["content"] == ""
+        assert ev["tags"] == [["e", "a" * 64]]
+        assert "id" not in ev and "sig" not in ev
+        nostr_utils.compute_event_id(ev)  # signable canonical form
+        # client-side call with no pubkey yet: _sign fills it in (C3 funnel)
+        bare = longform.build_draft_deletion("a" * 64)
+        assert bare is not None and "pubkey" not in bare
+        assert longform.build_draft_deletion("") is None
+        assert longform.build_draft_deletion("nothex") is None
+
+    def test_draft_card_view_model(self):
+        entry = longform.DraftEntry(
+            wrap_id="a" * 64, nevent_id="n" * 64, target_kind=23, d="my-post",
+            created_at=1750000000, title="My Draft", content="body text",
+            word_count=2,
+        )
+        card = longform.draft_card(entry, A_PUB)
+        assert card.id == "a" * 64  # wrap id keys the synthetic card
+        assert card.pubkey == A_PUB
+        assert card.d == "my-post"
+        assert card.title == "My Draft"
+        assert card.markdown == "body text"
+        assert card.address == f"30023:{A_PUB}:my-post"
+
 
 # --- client fetch fan-in (tier-1 ast pattern) ---------------------------------
 
