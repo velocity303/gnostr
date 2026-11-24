@@ -356,6 +356,10 @@ def _fake_reader_self(card=longform.parse_article_event(EV_A_NEW)):
     fake.comments_retry = MagicMock()
     fake.comments_count = MagicMock()
     fake.comments_box = MagicMock()
+    # Drain loop in _render_comments calls get_first_child()/get_next_sibling()
+    # until None; a bare MagicMock answers with new mocks forever (infinite
+    # loop that allocates a mock per spin). Same guard as the list fake.
+    fake.comments_box.get_first_child.return_value = None
     fake.comments_empty = MagicMock()
     fake._comments_deadline_id = None
     fake._comments_settled = False
@@ -536,6 +540,7 @@ def test_draft_rows_newest_first_with_target_kind_caption():
 def test_drafts_no_key_meta_prompts_signin():
     fake = MagicMock()
     fake.list_box = MagicMock()
+    fake.list_box.get_first_child.return_value = None
     fake._empty = MagicMock()
     ns = dict(_NS)
     fake._draft_rows = _class_method(_ARTICLES, "DraftsPage", "_draft_rows",
@@ -551,6 +556,7 @@ def test_drafts_no_key_meta_prompts_signin():
 def test_drafts_render_read_only_rows():
     fake = MagicMock()
     fake.list_box = MagicMock()
+    fake.list_box.get_first_child.return_value = None
     fake._empty = MagicMock()
     ns = dict(_NS)
     fake._draft_rows = _class_method(_ARTICLES, "DraftsPage", "_draft_rows",
@@ -564,6 +570,7 @@ def test_drafts_render_read_only_rows():
 def test_drafts_fetch_wires_callback_and_watchdog():
     fake = MagicMock()
     fake.client = MagicMock()
+    fake.list_box.get_first_child.return_value = None
     fake._settled = False
     fake._deadline_id = None
     fake.err_lbl = MagicMock()
