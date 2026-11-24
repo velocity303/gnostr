@@ -100,6 +100,13 @@ _NS = {
     "time": time,
 }
 
+# Module-level helpers the extracted methods reference (_render_card ->
+# _ago/_short_pk, _binding_caption -> _short_pk, _render_card -> _rank,
+# _draft_rows -> _ago): extract them from source like the methods, so the
+# standalone namespace mirrors the real module's globals.
+for _helper in ("_ago", "_short_pk", "_rank"):
+    _NS[_helper] = _module_func(_ARTICLES, _helper)
+
 
 # ---------------------------------------------------------------------------
 # Fixtures: unsigned-but-parseable events (the parser does not verify sigs)
