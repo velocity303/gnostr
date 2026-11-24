@@ -131,9 +131,12 @@ def _article_ev(eid, d, title, created, content="# hi\n\n**bold** body"):
     }
 
 
+# NOTE: ids must be hex64 — longform.parse_article_event recomputes a
+# canonical id via compute_event_id when ev["id"] is not [0-9a-f]{64},
+# which silently renames the card out from under the assertions.
 EV_A_NEW = _article_ev("a" * 64, "post-1", "Post One", 200)
-EV_A_OLD = _article_ev("o" * 64, "post-1", "Post One (older edit)", 100)
-EV_A_NEWER = _article_ev("n" * 64, "post-1", "Post One (newest edit)", 300)
+EV_A_OLD = _article_ev("0" * 64, "post-1", "Post One (older edit)", 100)
+EV_A_NEWER = _article_ev("f" * 64, "post-1", "Post One (newest edit)", 300)
 
 
 def _comment_ev(eid, created, content="nice post", pubkey=PUB[::-1].upper()[:64]):
@@ -323,8 +326,8 @@ def test_live_upsert_newest_wins_and_boundaries():
     # Detached page: handler inert.
     fake._section_open = False
     fake._on_quote_event(MagicMock(), ev_json(
-        _article_ev("z" * 64, "post-9", "Later", 500)))
-    assert "z" * 64 not in fake._cards
+        _article_ev("9" * 64, "post-9", "Later", 500)))
+    assert "9" * 64 not in fake._cards
     assert fake.list_box.insert.call_count == 2
 
 
@@ -604,7 +607,7 @@ def test_no_composer_anywhere():
 
 
 def test_cover_https_only_and_none_skips_render():
-    http_ev = _article_ev("h" * 64, "post-h", "HTTP cover", 200)
+    http_ev = _article_ev("7" * 64, "post-h", "HTTP cover", 200)
     http_ev["tags"] = [["d", "post-h"], ["image", "http://evil/x.jpg"]]
     card = longform.parse_article_event(http_ev)
     assert card.image is None  # https-only policy: http dropped at parse
