@@ -806,6 +806,12 @@ class MainWindow(Adw.ApplicationWindow):
         pubkey = ev.get("pubkey")
         tags = ev.get("tags", [])
 
+        if kind == 30023:
+            # NIPW P1 C2: first-article-arrival evidence. A live 30023 from
+            # a FOLLOWED author reveals the opt-in Articles row (section
+            # sub or quote backfill); kind-1 routing is untouched.
+            self._reveal_articles_for_author(pubkey)
+
         # Addressable coordinate for naddr cards: kind:pubkey:d-tag.
         d_tag = ""
         for t in tags:
@@ -882,6 +888,45 @@ class MainWindow(Adw.ApplicationWindow):
             {"kinds": [1], "authors": contacts[:300], "since": since, "limit": 50},
         )
 
+    def _refresh_articles_row(self):
+        """Opt-in Articles row gate (NIPW P1 C2).
+
+        Revealed only when the user follows at least one author that already
+        has a 30023 in the local DB — offline evidence only, never a new REQ
+        (relay economy; live 30023 arrivals reveal via
+        _reveal_articles_for_author). Librem5 sense: no empty-section noise.
+        """
+        show = False
+        try:
+            if self.pub_key:
+                following = set(self.db.get_following_list(self.pub_key) or [])
+                if following:
+                    # Capped evidence scan: the newest 100 stored articles
+                    # prove "follows at least one 30023 author" at P1 scale
+                    # (the section itself pages at 30 per relays).
+                    for row in self.db.get_feed_kind(30023, limit=100) or []:
+                        if row.get("pubkey") in following:
+                            show = True
+                            break
+        except Exception:
+            pass
+        try:
+            self.sidebar.set_articles_visible(show)
+        except Exception:
+            pass
+
+    def _reveal_articles_for_author(self, pubkey):
+        """First-arrival reveal (NIPW P1 C2): a live 30023 from a FOLLOWED
+        author (section sub or quote backfill) reveals the Articles row.
+        Arrivals from non-followed authors never reveal it."""
+        try:
+            if not self.sidebar or not self.pub_key or not pubkey:
+                return
+            if pubkey in (self.db.get_following_list(self.pub_key) or []):
+                self.sidebar.set_articles_visible(True)
+        except Exception:
+            pass
+
     def on_contacts_updated(self, client, pubkey):
         # An owner's following list was reconciled (own or foreign kind-3).
         # Open FollowsListView widgets self-refresh via the signal; nothing
@@ -897,6 +942,9 @@ class MainWindow(Adw.ApplicationWindow):
             self.client.subscribe_zaps(
                 self.db.get_following_list(self.pub_key) + [self.pub_key]
             )
+            # NIPW P1 C2: the follow set just changed — re-evaluate the
+            # opt-in Articles row gate (DB evidence only, no new REQ).
+            self._refresh_articles_row()
 
     def on_profile_updated(self, client, pubkey):
         # Profile metadata (kind 0) arrived — refresh avatars/names in existing
@@ -1042,6 +1090,10 @@ class MainWindow(Adw.ApplicationWindow):
         self._update_fab_visibility()
         self.update_dm_badge()
         GLib.idle_add(self.client.connect_all)
+        # NIPW P1 C2: warm DB evidence (follows + any 30023 persisted by an
+        # earlier session) decides the Articles row at login — no REQ here;
+        # a first-ever login reveals later via on_contacts_updated/arrival.
+        GLib.idle_add(self._refresh_articles_row)
 
     def switch_feed(self, feed_type):
         self.active_feed_type = feed_type

@@ -57,6 +57,13 @@ class Sidebar(Gtk.Box):
             self.menu_list.append(r)
             self.rows[r_id] = r
 
+        # NIPW P1 C2 opt-in gate: the Articles row starts HIDDEN (Librem5
+        # sense: no empty-section noise). MainWindow reveals it via
+        # set_articles_visible() once the user follows at least one author
+        # that has a 30023 in the local DB, or a live 30023 from a followed
+        # author arrives.
+        self.rows["articles"].set_visible(False)
+
         # Unread-DM badge on the Messages row (hidden at 0). MainWindow
         # refreshes it via update_dm_badge() off gateway queries.
         self.dm_badge = Gtk.Label(label="0")
@@ -224,3 +231,11 @@ class Sidebar(Gtk.Box):
             self.dm_badge.show()
         else:
             self.dm_badge.hide()
+
+    def set_articles_visible(self, visible):
+        """Reveal/hide the opt-in Articles row (NIPW P1 C2 gate). Hidden
+        until the user follows at least one 30023 author — MainWindow
+        computes the evidence in _refresh_articles_row / live arrivals."""
+        row = self.rows.get("articles")
+        if row is not None:
+            row.set_visible(bool(visible))

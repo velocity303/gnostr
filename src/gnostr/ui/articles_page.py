@@ -7,10 +7,15 @@ opt-in; the live sub opens when the page maps and CLOSEs when it detaches
 posture, enforced in service/feed_pagination: the 'articles' source
 accepts kind 30023 only). Pagination rides the shared FeedModel with
 make_source("articles", ...); live arrivals are upserted in time order.
-Cover images are https-only (longform.parse_article_event already drops
-anything else — None means render skip). Edit-replacement is transparent:
-newest wins per (pubkey, d), same rule as longform.dedupe_articles /
-db.get_event_by_a.
+Compact row = title + dim author/updated meta line + a ⚡sats chip when
+verified 9735 zap receipts exist (C2 row spec "zap count if available").
+Sidebar gating: the Articles row starts hidden and MainWindow reveals it
+once the user follows at least one 30023 author (DB evidence / live
+arrival). Cover images are https-only (longform.parse_article_event
+already drops anything else — None means render skip). Edit-replacement
+is transparent: newest wins per (pubkey, d) — the list defers to
+longform.dedupe_articles on reload and the _render_card rank guard on
+live arrivals (same rule as db.get_event_by_a).
 
 ArticleReaderPage: title/summary/markdown-as-plaintext (emphasis via
 markup.emphasis_to_pango, selectable), cover, author line. Comments thread
@@ -183,11 +188,17 @@ class ArticlesPage(Gtk.Box):
         """Fresh first page from the model + re-render the whole list."""
         self.model.load_first()
         self._clear_rows()
+        cards = []
         for eid in self.model.event_ids:
             ev = self.db.get_event_by_id(eid) or self._live_events.get(eid)
             card = longform.parse_article_event(ev)
             if card is not None:
-                self._render_card(card)
+                cards.append(card)
+        # Newest-only edit-replacement defers to the data layer's ONE rule
+        # (longform.dedupe_articles): newest wins per (pubkey, d), newest-
+        # first output. The _render_card rank guard covers live arrivals.
+        for card in longform.dedupe_articles(cards):
+            self._render_card(card)
         self._sync_footer()
 
     def _on_load_more(self, _btn):
@@ -215,6 +226,17 @@ class ArticlesPage(Gtk.Box):
         self._cards = {}
         self._row_by_id = {}
         self._row_by_addr = {}
+
+    def _zap_sats(self, event_id):
+        """Received zap total in sats for one row (C2 row spec: "zap count
+        if available"). Verified 9735 receipts only — db.zap_totals_for_events
+        sums split receipts; no receipts means no chip."""
+        try:
+            totals = self.db.zap_totals_for_events([event_id]) or {}
+            msat = int(totals.get(event_id, 0) or 0)
+        except (AttributeError, TypeError, ValueError):
+            return 0
+        return msat // 1000
 
     def _render_card(self, card, at_top=False):
         """Append one article row (or replace an older edit in place).
@@ -244,7 +266,11 @@ class ArticlesPage(Gtk.Box):
         prof = self.db.get_profile(card.pubkey) or {}
         name = prof.get("display_name") or prof.get("name") or \
             nostr_utils.hex_to_npub(card.pubkey) or _short_pk(card.pubkey)
-        meta = Gtk.Label(label=f"{name} · {_ago(card.published_at or card.created_at)}")
+        meta_text = f"{name} · {_ago(card.published_at or card.created_at)}"
+        zaps = self._zap_sats(card.id)
+        if zaps:
+            meta_text += f" · ⚡{zaps}"
+        meta = Gtk.Label(label=meta_text)
         meta.add_css_class("dim-label")
         meta.set_xalign(0)
         box.append(meta)
