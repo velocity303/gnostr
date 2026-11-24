@@ -105,7 +105,10 @@ _NS = {
 # _draft_rows -> _ago): extract them from source like the methods, so the
 # standalone namespace mirrors the real module's globals.
 for _helper in ("_ago", "_short_pk", "_rank"):
-    _NS[_helper] = _module_func(_ARTICLES, _helper)
+    # Compile the helpers against _NS itself so their __globals__ resolve
+    # module-level names (time, nostr_utils) at CALL time — dict(_NS)
+    # copies elsewhere share the same function objects.
+    _NS[_helper] = _module_func(_ARTICLES, _helper, _NS)
 
 
 # ---------------------------------------------------------------------------
