@@ -45,6 +45,10 @@ def backfill_filter(kind, owner_pubkey, cursor, page_size, db):
     if cursor is None:
         return None
     base = {"kinds": [1], "until": cursor[0], "limit": page_size}
+    if kind == "articles":
+        # NIPW P1 longform: the opt-in article section backfills its own
+        # 30023 history — never the kind-1 base (agentic-flood posture).
+        return {"kinds": [30023], "until": cursor[0], "limit": page_size}
     if kind == "global":
         return base
     if kind == "me":
@@ -79,9 +83,29 @@ def make_source(kind, db, owner_pubkey):
             kwargs["pubkey"] = pubkey
         return db.get_feed_global(**kwargs)
 
+    def _kind_page(kind):
+        def _page(limit, before=None, after=None):
+            kwargs = {"limit": limit}
+            if after is not None:
+                kwargs["after"] = after
+            else:
+                kwargs["before"] = before
+            return db.get_feed_kind(kind, **kwargs)
+
+        return _page
+
     if kind == "global":
         return FeedSource("global", lambda limit, before=None, after=None:
                           _global(limit, before=before, after=after))
+    if kind == "articles":
+        # NIPW P1 longform (nipw2026-11-longform-v1): the opt-in article
+        # section shares the FeedModel pagination; live 30023 arrivals
+        # belong to this feed only (kind-1 posts never leak in).
+        return FeedSource(
+            "articles",
+            _kind_page(30023),
+            accepts=lambda row: row.get("kind") == 30023,
+        )
     if kind == "me":
         return FeedSource(
             "me",

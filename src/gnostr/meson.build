@@ -22,6 +22,7 @@ install_data(
     'nostr_utils.py',
     'relay_entries.py',
     'groups.py',
+    'longform.py',
     'profile_nips.py',
     'trust_shield.py',
     'trust_settings.py',

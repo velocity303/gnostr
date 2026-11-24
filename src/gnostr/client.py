@@ -15,6 +15,7 @@ import gnostr
 from . import proxy_settings
 from .proxy_settings import proxy_get, url_allowed
 from . import groups
+from . import longform as gnostr_longform
 from . import trust_settings, trust_shield
 from .util.connection_state import ConnectionState
 from .util.tor_state import (TorState, host_is_onion, onion_inert,
@@ -706,6 +707,12 @@ class NostrClient(GObject.Object):
         # Infinite-scroll phase 2: one in-flight history backfill at a time
         # (sub_id -> {"seen": set, "relay_count": int, "sent": float}).
         self._backfill_pending = {}
+        # NIPW P1 longform (spec nipw2026-11-longform-v1): one-shot comment/
+        # draft fetch fan-in (sub_id -> fetch-state dict, see
+        # fetch_article_comments / fetch_drafts), plus the open opt-in
+        # article-section sub_ids close_article_section can CLOSE.
+        self._longform_fetches = {}
+        self._longform_section_subs = set()
         self._dm_poll_source = None  # GLib source id for the DM freshness poll
         # P5 throttle: timestamps (time.time()) of new-conversation
         # initiations in the rolling hour. In-memory only by design — a
@@ -1943,6 +1950,18 @@ class NostrClient(GObject.Object):
         # never hit the kind-1 event-received path, so this is their only route.
         GLib.idle_add(self.emit, "quote-event-received", json.dumps(ev))
 
+        # NIPW P1 longform: feed an in-flight comment/draft fetch (pure
+        # client-side matching, no REQ, cheap dict-walk only while a fetch
+        # is open). Events stay in their native kind — 1111/31234 never
+        # enter the kind-1 feed models, they fan into the longform fetches.
+        # Literal kinds + getattr: house tests ast-bind _handle_event onto
+        # fakes that lack the longform module/attrs — keep this hot-path
+        # hook invisible to them.
+        if kind == 1111 or kind == 31234:  # longform KIND_COMMENT/_DRAFT_WRAP
+            _lf_note = getattr(self, "_longform_note", None)
+            if _lf_note is not None:
+                _lf_note(ev)
+
         if kind == 0:
             self.db.save_profile(pubkey, ev["content"], ev["created_at"])
             GLib.idle_add(self.emit, "profile-updated", pubkey)
@@ -2398,6 +2417,248 @@ class NostrClient(GObject.Object):
             self._settle_dm_status_batch(token)
         return False  # one-shot
 
+    # --- NIPW P1 longform (spec nipw2026-11-longform-v1) --------------------
+    #
+    # Opt-in article section + one-shot comment/draft fetches. Nothing here
+    # ever touches the main kind-1 feed subs (agentic-flood posture): 30023
+    # only ever arrives on a dedicated `longform_articles` sub that the UI
+    # opens when the article section is on screen, and comment/draft REQs
+    # are snapshot one-shots (request_once auto-CLOSEs at EOSE).
+    #
+    # Fetch protocol (house fan-in, mirrors request_backfill/dm_status):
+    # primary REQ [#E + #A filters, live-verified 4/4 relays 2026-11-23] ->
+    # all read-relays EOSE'd AND zero matching comments -> fallback REQ
+    # [authors=[article author] + broad recent-1111 window] whose matching
+    # runs 100% client-side via longform.comment_matches (the spec's K-tag
+    # fallback; #K proven relay-unsupported, see longform.py docstring).
+    # Settle = once per fetch (EOSE fan-in OR the timeout OR relay-less),
+    # callback on the main context.
+
+    LONGFORM_FETCH_TIMEOUT_MS = 12000
+
+    def open_article_section(self, limit=gnostr_longform.ARTICLE_FEED_LIMIT):
+        """Open the opt-in 30023 live section sub on read-role relays.
+        exclusive=False: this coexists with the main feed sub on the same
+        relay (the relay's single-sub slot exists only for the feed's
+        rotating queries — see NostrRelay.subscribe). Idempotent re-open
+        re-REQs the same sub_id with the new limit."""
+        sub_id = gnostr_longform.article_sub_id()
+        filt = gnostr_longform.article_feed_filter(limit)
+        for url, r in self._read_relays().items():
+            r.subscribe(sub_id, filt, exclusive=False)
+            self._longform_section_subs.add(sub_id)
+
+    def close_article_section(self):
+        """CLOSE the opt-in 30023 sub on every read relay that opened it
+        (house per-relay shape, see close_sub_on_relay)."""
+        for sub_id in list(self._longform_section_subs):
+            for url, r in self._read_relays().items():
+                r.close_sub(sub_id)
+        self._longform_section_subs.clear()
+
+    def fetch_article_comments(self, article, callback):
+        """One-shot kind-1111 fetch for one article; callback(events,
+        meta) on the main context when all responding relays EOSE'd (or
+        after LONGFORM_FETCH_TIMEOUT_MS). `article` is an ArticleCard or a
+        raw 30023 event dict. meta = {"fallback_used": bool}.
+
+        Concurrent calls for the same article JOIN the in-flight fetch
+        instead of stacking REQs (relay courtesy). Persisted comments the
+        caller may already have live in db.get_article_comments(article.id,
+        article.address) — the UI merges by event id (house dedup).
+        """
+        if isinstance(article, dict):
+            article_id = article.get("id") or ""
+            author_pk = article.get("pubkey") or ""
+            address = gnostr_longform.article_address(article)
+        else:
+            article_id = getattr(article, "id", "") or ""
+            author_pk = getattr(article, "pubkey", "") or ""
+            address = getattr(article, "address", None)
+        if not article_id or not author_pk:
+            GLib.idle_add(callback, [], {"fallback_used": False})
+            return
+        fetches = self._longform_fetches
+        for st in fetches.values():
+            if (
+                st["kind"] == "comments"
+                and st["article_id"] == article_id
+                and not st.get("settled")
+            ):
+                st["callbacks"].append(callback)
+                return
+        relays = self._read_relays()
+        sub_id = gnostr_longform.comments_sub_id(article_id)
+        st = {
+            "kind": "comments",
+            "article_id": article_id,
+            "address": address,
+            "author_pk": author_pk,
+            "phase": "primary",
+            "active_sub": sub_id,
+            "relay_count": len(relays),
+            "phase_seen": set(),
+            "events": [],
+            "event_ids": set(),
+            "callbacks": [callback],
+            "settled": False,
+        }
+        fetches[sub_id] = st
+        if not relays:
+            self._settle_longform_fetch(sub_id)
+            return
+        self._arm_longform_timeout(sub_id)
+        self.request_once(
+            sub_id,
+            gnostr_longform.comments_primary_filters(article_id, address),
+        )
+
+    def fetch_drafts(self, callback):
+        """One-shot NIP-37 read side: {"kinds":[31234],"authors":[self],
+        "limit":100} fan-out on read relays; callback(DraftEntry list,
+        meta) on the main context at fan-in/timeout. Read-only v1 — no
+        composer, no checkpoint replay (kind-1234 stays out of scope).
+        Wraps that fail NIP-44 decryption still yield a row
+        (wrap_id/target_kind/d known, nevent_id None)."""
+        my_pub = (self.my_keys or {}).get("pubkey") or ""
+        if not my_pub:
+            GLib.idle_add(callback, [], {"settled_by": "no-key"})
+            return
+        fetches = self._longform_fetches
+        sub_id = gnostr_longform.drafts_sub_id()
+        existing = fetches.get(sub_id)
+        if existing is not None and not existing.get("settled"):
+            existing["callbacks"].append(callback)
+            return
+        relays = self._read_relays()
+        st = {
+            "kind": "drafts",
+            "author_pk": my_pub,
+            "active_sub": sub_id,
+            "phase": "primary",
+            "relay_count": len(relays),
+            "phase_seen": set(),
+            "events": [],
+            "event_ids": set(),
+            "callbacks": [callback],
+            "settled": False,
+        }
+        fetches[sub_id] = st
+        if not relays:
+            self._settle_longform_fetch(sub_id)
+            return
+        self._arm_longform_timeout(sub_id)
+        self.request_once(sub_id, gnostr_longform.drafts_filter(my_pub))
+
+    def _longform_note(self, ev):
+        """Hot path from _handle_event: capture 1111/31234 arrivals into
+        any in-flight fetch. Matching is fully client-side so a relay that
+        ignores tag filters (or answers the authors-fallback with the
+        author's OTHER comments) still lands the right rows — a comment is
+        kept only if it actually binds to the fetch's article (uppercase
+        root AND lowercase parent refs both count, NIP-26 case discipline),
+        a draft only if authored by self."""
+        fetches = getattr(self, "_longform_fetches", None)
+        if not fetches:
+            return
+        kind = ev.get("kind")
+        ev_id = ev.get("id")
+        for st in list(fetches.values()):
+            if st.get("settled") or ev_id in st["event_ids"]:
+                continue
+            if kind == gnostr_longform.KIND_COMMENT and st["kind"] == "comments":
+                if gnostr_longform.comment_matches(
+                    ev, st["article_id"], st.get("address")
+                ):
+                    st["event_ids"].add(ev_id)
+                    st["events"].append(dict(ev))
+            elif kind == gnostr_longform.KIND_DRAFT_WRAP and st["kind"] == "drafts":
+                if ev.get("pubkey") == st["author_pk"]:
+                    st["event_ids"].add(ev_id)
+                    st["events"].append(dict(ev))
+
+    def _longform_eose(self, sub_id, relay_url):
+        """EOSE fan-in branch (called from _handle_eose). Only the fetch's
+        CURRENT phase sub counts — an EOSE for the retired primary sub
+        arriving after the fallback fired must not pollute the fan-in."""
+        st = (getattr(self, "_longform_fetches", None) or {}).get(sub_id)
+        if st is None or st.get("settled"):
+            return
+        if st["active_sub"] != sub_id:
+            return
+        st["phase_seen"].add(relay_url)
+        if len(st["phase_seen"]) >= st["relay_count"]:
+            self._settle_longform_fetch(sub_id)
+
+    def _settle_longform_fetch(self, sub_id):
+        st = (getattr(self, "_longform_fetches", None) or {}).get(sub_id)
+        if st is None or st.get("settled"):
+            return
+        if (
+            st["kind"] == "comments"
+            and st["phase"] == "primary"
+            and not st["events"]
+        ):
+            # Primary tag filters answered empty — spec's fallback: broad
+            # authors=[article author] REQ + recent-1111 window, matched
+            # client-side (K/tag filtering not trusted on this relay).
+            fb_sub = gnostr_longform.comments_sub_id(
+                st["article_id"], fallback=True
+            )
+            st["phase"] = "fallback"
+            st["active_sub"] = fb_sub
+            st["phase_seen"] = set()
+            st["relay_count"] = max(1, len(self._read_relays()))
+            self._longform_fetches[fb_sub] = st
+            self._arm_longform_timeout(fb_sub)
+            self.request_once(
+                fb_sub,
+                gnostr_longform.comments_fallback_filters(st["author_pk"]),
+            )
+            return
+        st["settled"] = True
+        for key in [k for k, v in self._longform_fetches.items() if v is st]:
+            self._longform_fetches.pop(key, None)
+        events = sorted(
+            st["events"],
+            key=lambda e: (int(e.get("created_at") or 0), e.get("id") or ""),
+            reverse=True,
+        )
+        if st["kind"] == "drafts":
+            priv = (self.my_keys or {}).get("privatekey") or ""
+            rows = []
+            for ev in events:
+                row = gnostr_longform.parse_draft_event(
+                    ev, privkey_hex=priv or None,
+                    self_pubkey_hex=st["author_pk"],
+                )
+                if row is not None:
+                    rows.append(row)
+            events = rows
+        meta = {"fallback_used": st["phase"] == "fallback"}
+        for cb in st["callbacks"]:
+            try:
+                GLib.idle_add(cb, events, meta)
+            except Exception:
+                pass
+
+    def _arm_longform_timeout(self, sub_id):
+        # Headless/test contexts (no GLib main loop) settle via the EOSE
+        # fake or an explicit cancel; arming failure must not break the
+        # fetch — the timeout is the backstop, not the protocol.
+        try:
+            GLib.timeout_add(
+                self.LONGFORM_FETCH_TIMEOUT_MS, self._longform_timeout, sub_id
+            )
+        except Exception:
+            pass
+
+    def _longform_timeout(self, sub_id):
+        st = self._longform_fetches.get(sub_id)
+        if st is not None and not st.get("settled"):
+            self._settle_longform_fetch(sub_id)
+        return False
+
     def _handle_eose(self, sub_id, relay_url):
         """EOSE fan-in for P4 batch probes: a chunk settles once every relay
         that was connected at REQ time has answered. Other sub_ids are not
@@ -2418,6 +2679,12 @@ class NostrClient(GObject.Object):
             bf["seen"].add(relay_url)
             if len(bf["seen"]) >= bf["relay_count"]:
                 self._settle_backfill(sub_id)
+        # NIPW P1 longform: comment/draft fetch fan-in (see
+        # fetch_article_comments/_settle_longform_fetch). getattr: house
+        # tests ast-bind _handle_eose onto fakes without longform state.
+        _lf_eose = getattr(self, "_longform_eose", None)
+        if _lf_eose is not None:
+            _lf_eose(sub_id, relay_url)
         token = self._dm_status_by_sub.get(sub_id)
         if token is None:
             return
