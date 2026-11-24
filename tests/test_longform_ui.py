@@ -57,6 +57,24 @@ def _src(path):
         return fh.read()
 
 
+def _bind_referenced_globals(tree, fn, ns):
+    """Auto-bind module-level constants the extracted fn references but the
+    provided namespace lacks (COMMENTS_DEADLINE_MS, DRAFTS_DEADLINE_MS,
+    AdwClamp, ...). Same convention as the relay-economy harness: bind only
+    names the fn actually references and never clobber an already-bound one
+    (e.g. the _ago/_short_pk/_rank helpers compiled below)."""
+    names = {n.id for n in ast.walk(fn) if isinstance(n, ast.Name)}
+    for node in tree.body:
+        if (
+            isinstance(node, ast.Assign)
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id in names
+            and node.targets[0].id not in ns
+        ):
+            exec(compile(ast.Module(body=[node], type_ignores=[]),
+                         "<module-consts>", "exec"), ns)
+
+
 def _class_method(path, class_name, method_name, extra_ns=None):
     """Extract one method from source and compile it standalone."""
     src = _src(path)
@@ -71,6 +89,7 @@ def _class_method(path, class_name, method_name, extra_ns=None):
     ns = {"__package__": "gnostr.ui"}
     if extra_ns:
         ns.update(extra_ns)
+    _bind_referenced_globals(tree, fn, ns)
     exec(compile(ast.Module(body=[fn], type_ignores=[]), path, "exec"), ns)
     return ns[method_name]
 
@@ -84,6 +103,7 @@ def _module_func(path, func_name, extra_ns=None):
     ns = {"__package__": "gnostr.ui"}
     if extra_ns:
         ns.update(extra_ns)
+    _bind_referenced_globals(tree, fn, ns)
     exec(compile(ast.Module(body=[fn], type_ignores=[]), path, "exec"), ns)
     return ns[func_name]
 
@@ -345,7 +365,27 @@ def test_live_arrival_lands_in_pagination_window_top():
 # ---------------------------------------------------------------------------
 
 
-def _fake_reader_self(card=longform.parse_article_event(EV_A_NEW)):
+def _fresh_gtk():
+    """Gtk stand-in whose Box/Label constructions return FRESH mocks that
+    remember their construction kwargs. The plain mock-gi Gtk.Box()/
+    Gtk.Label() return_value is ONE auto-created mock reused by every call
+    in the module, which collapses distinct widgets into a single shared
+    call log — per-widget assertions need fresh objects instead."""
+    gtk = MagicMock()
+    created = []
+
+    def _mk(*args, **kwargs):
+        m = MagicMock()
+        m.construct_kwargs = kwargs
+        created.append(m)
+        return m
+
+    gtk.Box = MagicMock(side_effect=_mk)
+    gtk.Label = MagicMock(side_effect=_mk)
+    return gtk, created
+
+
+def _fake_reader_self(card=longform.parse_article_event(EV_A_NEW), gtk=None):
     fake = MagicMock()
     fake.client = MagicMock()
     fake.db = MagicMock()
@@ -366,6 +406,8 @@ def _fake_reader_self(card=longform.parse_article_event(EV_A_NEW)):
     fake._db_comment_events = []
     fake._fallback_used = False
     ns = dict(_NS)
+    if gtk is not None:
+        ns["Gtk"] = gtk
     render = _class_method(_ARTICLES, "ArticleReaderPage", "_render_comments",
                            ns)
     for m in ("_fetch_comments", "_on_comments_done",
@@ -418,8 +460,9 @@ def test_comments_offline_first_then_fetch_with_watchdog():
     ms, deadline_cb = glib.timeout_add.call_args[0]
     assert ms == 14000
     assert callable(deadline_cb)
-    # Offline-first paint happened BEFORE settling (empty-state visible).
-    assert fake.comments_err.set_visible.called_with(False) or True
+    # Offline-first paint happened BEFORE settling (no cached rows ->
+    # empty-state shown until the fetch settles).
+    fake.comments_empty.set_visible.assert_called_with(True)
 
 
 def test_comments_merge_dedups_by_id_newest_first():
@@ -468,8 +511,10 @@ def test_comments_fallback_shows_only_uppercase_root_binding():
 
 def test_comment_fallback_caption_renders_only_when_fallback_used():
     """fallback_used True -> 3 children per comment (line, text, CAPTION);
-    False -> 2 (no caption)."""
-    fake = _fake_reader_self()
+    False -> 2 (no caption). Uses the fresh-object Gtk factory so each
+    comment box is its own mock (plain mock-gi aliases every Gtk.Box())."""
+    gtk, _created = _fresh_gtk()
+    fake = _fake_reader_self(gtk=gtk)
     fetch_ev = _comment_ev("c" * 63 + "7", 300)
     fake._render_comments([fetch_ev], False)
     first_box = fake.comments_box.append.call_args[0][0]
@@ -478,9 +523,12 @@ def test_comment_fallback_caption_renders_only_when_fallback_used():
     fake._render_comments([fetch_ev], True)
     capped_box = fake.comments_box.append.call_args[0][0]
     assert capped_box.append.call_count == 3  # caption line present
-    captions = [c.args[0].get_text() if hasattr(c.args[0], "get_text")
-                else None for c in capped_box.append.call_args_list]
-    assert any(c is None for c in captions)  # captions are MagicMock labels
+    caption = capped_box.append.call_args_list[2][0][0]
+    # The caption is the constructed label carrying the binding text and
+    # the "caption" css class (root binding: comment's a-tag = article id).
+    assert caption.construct_kwargs.get("label", "").startswith("binds ")
+    assert any(c.args == ("caption",)
+               for c in caption.add_css_class.call_args_list)
     # The count label + empty-state stay consistent with merged count.
     fake.comments_count.set_text.assert_called_with("(1)")
     fake.comments_empty.set_visible.assert_called_with(False)
@@ -531,10 +579,12 @@ def test_draft_rows_newest_first_with_target_kind_caption():
         _draft("w2", 1111, None, 300),
         _draft("w3", 1, "note", 200, nevent=None),
     ])
-    assert rows[0][0] == "(untitled draft)"  # newest first
+    assert rows[0][0] == "(untitled draft)"  # newest first (w2 @ 300)
     assert "kind 1111" in rows[0][1]
-    assert "encrypted" in rows[2][1]  # nevent_id None -> encrypted note
-    assert rows[1][0] == "note"
+    assert rows[1][0] == "note"  # w3 @ 200
+    assert "encrypted" in rows[1][1]  # nevent_id None -> encrypted note
+    assert rows[2][0] == "draft-post"  # w1 @ 100, nevent present
+    assert "encrypted" not in rows[2][1]
 
 
 def test_drafts_no_key_meta_prompts_signin():

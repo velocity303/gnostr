@@ -23,8 +23,8 @@ chain renders no caption. Every async step carries a watchdog + visible
 Retry (GroupDetailPage reliability house rule).
 
 DraftsPage: read-only kind-31234 list (target_kind, d) via
-client.fetch_drafts. NO composer (out of P1 scope), kind-1234 checkpoints
-stays out.
+client.fetch_drafts. NO edit/publish path (out of P1 scope), kind-1234
+checkpoints stay out.
 
 30024 legacy-draft decision (reported): NOT surfaced in P1. The data-layer
 probe audit (longform.py docstring) found live 30024 rows belong to OTHER
@@ -583,7 +583,7 @@ class ArticleReaderPage(Gtk.Box):
 
 
 class DraftsPage(Gtk.Box):
-    """Read-only kind-31234 drafts list (NIP-37 read side). No composer."""
+    """Read-only kind-31234 drafts list (NIP-37 read side). No edit path."""
 
     def __init__(self, main_window):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=0)
@@ -692,7 +692,7 @@ class DraftsPage(Gtk.Box):
         pairs = self._draft_rows(entries)
         for title, sub in pairs:
             r = Adw.ActionRow(title=title, subtitle=sub)
-            r.set_activatable(False)  # read-only: no composer, no open flow
+            r.set_activatable(False)  # read-only: no edit, no open flow
             self.list_box.append(r)
         self._empty.set_text("No drafts.")
         self._empty.set_visible(not pairs)
