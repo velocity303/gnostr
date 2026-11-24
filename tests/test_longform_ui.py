@@ -522,7 +522,9 @@ def test_reader_renders_all_fields_for_fixture_event():
     # literal text (no markdown engine), rendered into a content label.
     body = None
     for m in created:
-        for call in m.set_text.call_args_list:
+        # Production hands markup to labels via set_markup only (set_text
+        # never parses markup in GTK4) — scan both call shapes.
+        for call in (m.set_text.call_args_list + m.set_markup.call_args_list):
             arg = call[0][0]
             if "bold" in arg:
                 body = arg

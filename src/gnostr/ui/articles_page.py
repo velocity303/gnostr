@@ -407,11 +407,13 @@ class ArticleReaderPage(Gtk.Box):
         content.set_selectable(True)
         content.set_xalign(0)
         content.set_yalign(0)
-        content.set_use_markup(True)
         content.set_max_width_chars(90)
         # markdown-as-plaintext: escape, then map **bold** / _italic_ to
-        # Pango markup (house markup module; same rule as the feed renderer).
-        content.set_text(markup.emphasis_to_pango(
+        # Pango markup (house markup module) and hand it over via
+        # set_markup — a bare set_text does NOT parse Pango markup in GTK4
+        # and would render the <b>/<i> tags literally (real-GTK harness
+        # test_longform_gtk_real.py caught this).
+        content.set_markup(markup.emphasis_to_pango(
             GLib.markup_escape_text(card.markdown)))
         body.append(content)
 
@@ -572,9 +574,9 @@ class ArticleReaderPage(Gtk.Box):
             text.set_wrap(True)
             text.set_selectable(True)
             text.set_xalign(0)
-            text.set_use_markup(True)
             text.set_max_width_chars(80)
-            text.set_text(markup.emphasis_to_pango(
+            # Same rule as the body label: markup only via set_markup.
+            text.set_markup(markup.emphasis_to_pango(
                 GLib.markup_escape_text(info.content or "")))
             box.append(text)
             # Fallback set only: show the ROOT binding that matched (the

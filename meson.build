@@ -179,4 +179,11 @@ if xvfb_run.found() and gtk_python.found()
   test('test_relay_settings_gtk_real', xvfb_run,
     args: ['-a', gtk_python, meson.project_source_root() / 'tests/test_relay_settings_gtk_real.py'],
     timeout: 120)
+  # Real-GTK article reader harness (NIPW1123-P1-C1): fixture 30023 renders
+  # all fields in a real reader tree; scroll (ScrolledWindow+Clamp) and
+  # NavigationPage docking verified; cover https-only on real widgets;
+  # comments offline-first paint + merged dedup.
+  test('test_longform_gtk_real', xvfb_run,
+    args: ['-a', gtk_python, meson.project_source_root() / 'tests/test_longform_gtk_real.py'],
+    timeout: 120)
 endif
