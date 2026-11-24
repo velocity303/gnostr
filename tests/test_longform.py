@@ -35,6 +35,7 @@ from gnostr import longform
 from gnostr import nip44, nostr_utils
 from gnostr.database import Database
 from gnostr.service.feed_pagination import backfill_filter, make_source
+from gnostr.zaps.request import verify_event_sig  # C3 publish signature proof
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _CLIENT_PATH = os.path.normpath(
@@ -520,12 +521,17 @@ class _FakeRecRelay:
         self.subs = []       # (sub_id, filters, snapshot, exclusive)
         self.reqs = []       # (sub_id, filters)
         self.closes = []
+        self.published = []  # events handed to relay.publish
 
     def subscribe(self, sub_id, filters, snapshot=False, exclusive=True):
         self.subs.append((sub_id, filters, snapshot, exclusive))
 
     def request_once(self, sub_id, filters):
         self.reqs.append((sub_id, filters))
+
+    def publish(self, event):
+        self.published.append(event)
+        return True  # real RelayClient.publish returns bool ack accepted
 
     def close_sub(self, sub_id):
         self.closes.append(sub_id)
@@ -541,6 +547,7 @@ class FakeLongformClient:
         self.active_relays = {u: _FakeRecRelay(u) for u in urls}
         self._longform_fetches = {}
         self._longform_section_subs = set()
+        self._longform_article_relays = {}  # C3 attribution store
         self.my_keys = {"pubkey": A_PUB, "privatekey": "11" * 32}
         self.closed = []
 
@@ -559,6 +566,9 @@ class FakeLongformClient:
     _settle_longform_fetch = _bound("_settle_longform_fetch")
     _arm_longform_timeout = _bound("_arm_longform_timeout")
     _longform_timeout = _bound("_longform_timeout")
+    # C3 (card): relay attribution + comment publish path
+    _note_article_relay = _bound("_note_article_relay")
+    comment_target_relays = _bound("comment_target_relays")
 
     def _read_relays(self):
         return dict(self.active_relays)
@@ -803,3 +813,217 @@ class TestLiveNosLolParse:
             if longform.parse_article_event(ev) is not None
         )
         assert ok >= 27, f"live parse rate {ok}/30 below 90%"
+
+
+# ---------------------------------------------------------------------------
+# C3 (card t_54e093f7): relay attribution + signed-then-gated comment publish
+# ---------------------------------------------------------------------------
+
+COMMENTER_PRIV = "11" * 32
+COMMENTER_PUB = nostr_utils.get_public_key(COMMENTER_PRIV)
+
+
+def _comment_template():
+    # the commenter signs with their own key; the article author is A_PUB
+    return longform.build_comment_event(
+        COMMENTER_PUB, CANON_ART, "nice writeup", created_at=1700000001
+    )
+
+
+class TestCommentRelayAttribution:
+    def test_note_article_relay_records_host(self):
+        c = FakeLongformClient()
+        c._note_article_relay(ART_ID, "wss://host.example")
+        c._note_article_relay(ART_ID, "wss://host.example")  # idempotent
+        assert c._longform_article_relays[ART_ID] == {"wss://host.example"}
+
+    def test_targets_union_known_with_defaults(self):
+        c = FakeLongformClient()
+        c._note_article_relay(ART_ID, "wss://host.example")
+        # no _write_relays/relay_urls on the bare fake -> known relays only
+        assert c.comment_target_relays(ART_ID) == {"wss://host.example"}
+        assert c.comment_target_relays("unknown-article") == set()
+        # user-configured default publish set participates too
+        c.relay_urls = {"wss://u.example"}
+        assert c.comment_target_relays(ART_ID) == {
+            "wss://host.example", "wss://u.example",
+        }
+        assert c.comment_target_relays("unknown-article") == {"wss://u.example"}
+
+    def test_answered_relays_accumulate_on_settle(self):
+        c = FakeLongformClient()
+        calls = []
+        c.fetch_article_comments(
+            CANON_ART, lambda evs, meta: calls.append((evs, meta))
+        )
+        c._longform_note(CANON_COM, "wss://r1.example")
+        c.eose_all("longform_c_" + ART_ID[:16])
+        assert len(calls) == 1
+        assert c._longform_article_relays[ART_ID] == {
+            "wss://r0.example", "wss://r1.example",
+        }
+
+    def test_seen_survives_the_fallback_phase(self):
+        c = FakeLongformClient()
+        calls = []
+        c.fetch_article_comments(
+            CANON_ART, lambda evs, meta: calls.append((evs, meta))
+        )
+        c.eose_all("longform_c_" + ART_ID[:16])  # primary empty -> fallback
+        c._longform_note(CANON_COM, "wss://r0.example")
+        c.eose_all("longform_cf_" + ART_ID[:16])
+        evs, meta = calls[0]
+        assert meta["fallback_used"] is True
+        # attribution spans BOTH phases: every relay that answered or
+        # produced a match participates in the comment channel
+        assert c._longform_article_relays[ART_ID] == {
+            "wss://r0.example", "wss://r1.example",
+        }
+
+
+class _FakeBunkerSigner:
+    """Non-local backend: sign_event round-trips (real Bunker signs on a
+    worker thread + user approval; here it just signs with the priv key)."""
+
+    def __init__(self, pubkeys, priv):
+        self.is_local = False
+        self.local_provider = None
+        self.pubkeys = set(pubkeys)
+        self.priv = priv
+        self.calls = 0
+
+    def sign_event(self, event):
+        if event.get("pubkey") not in self.pubkeys:
+            raise ValueError("pubkey not in bunker key set")
+        self.calls += 1
+        return nostr_utils.sign_event(event, self.priv)
+
+
+class TestArticleCommentPublish:
+    """publish_article_comment fan: sign ONCE (local inline / bunker on
+    worker), publish to known ∪ write defaults, one _track_publish entry."""
+
+    def _client(self, known=("wss://known.example",), priv=COMMENTER_PRIV):
+        c = FakeLongformClient()
+        c._longform_article_relays = {ART_ID: set(known)}
+        c.my_privkey = priv
+        c.signer = None
+        c.tracked = []
+        c.new_conns = []
+
+        def add_relay_connection(url):
+            c.new_conns.append(url)
+            c.active_relays.setdefault(url, _FakeRecRelay(url))
+
+        c.add_relay_connection = add_relay_connection
+        c._write_relays = lambda: {"wss://w.example": None}
+
+        def _track_publish(event, label, sent_urls=None, candidates=None):
+            c.tracked.append(
+                (event, label, set(sent_urls or ()), set(candidates or ()))
+            )
+
+        c._track_publish = _track_publish
+        c._log_relay = lambda msg: None
+        # instance-bound real methods (FakeLongformClient binds via class
+        # descriptors; these are attached per-instance with MethodType)
+        for m in ("publish_article_comment", "_publish_comment_targets",
+                  "_sign"):
+            setattr(c, m, types.MethodType(_bound(m), c))
+        return c
+
+    def test_local_signer_signs_once_and_fans_targets(self):
+        c = self._client()
+        template = _comment_template()
+        assert c.publish_article_comment(template, ART_ID) is True
+        # known hosting ∪ configured write defaults; plain read relays that
+        # never carried THIS article are deliberately NOT sprayed
+        targets = {"wss://known.example", "wss://w.example"}
+        signed_events = []
+        for url in targets:
+            r = c.active_relays[url]
+            assert len(r.published) == 1
+            signed_events.append(r.published[0])
+        assert c.active_relays["wss://r0.example"].published == []
+        assert c.active_relays["wss://r1.example"].published == []
+        # every fan copy is THE SAME signed event (signed exactly once)
+        ids = {e["id"] for e in signed_events}
+        assert ids == {nostr_utils.compute_event_id(template)}
+        signed = signed_events[0]
+        assert signed["sig"] and verify_event_sig(signed)
+        assert signed["kind"] == 1111
+        # one track entry covering the full candidate set
+        assert len(c.tracked) == 1
+        ev, label, sent, candidates = c.tracked[0]
+        assert label == "Article comment"
+        assert candidates == targets and sent == targets
+        # known relay wasn't connected yet -> on-demand connect happened
+        assert "wss://known.example" in c.new_conns
+        # sign_event fills the template in place (house convention); the
+        # optimistic-row key must equal the signed id (dedup invariant)
+        assert "sig" in template
+        assert template["id"] == signed["id"]
+        assert nostr_utils.compute_event_id(
+            {k: v for k, v in template.items() if k not in ("id", "sig")}
+        ) == signed["id"]
+
+    def test_bunker_backend_signs_once_on_worker(self):
+        c = self._client()
+        bunker = _FakeBunkerSigner({COMMENTER_PUB}, COMMENTER_PRIV)
+        c.signer = bunker
+        c.my_privkey = None  # local fallback must NOT be used
+        template = _comment_template()
+        t0 = time.time()
+        assert c.publish_article_comment(template, ART_ID) is True
+        assert time.time() - t0 < 1.0  # returns immediately (worker signs)
+        deadline = time.time() + 5.0
+        while time.time() < deadline and not c.tracked:
+            time.sleep(0.05)
+        assert bunker.calls == 1
+        assert len(c.tracked) == 1
+        published = [e for r in c.active_relays.values() for e in r.published]
+        # same target set as the local path: known ∪ write defaults
+        assert len(published) == 2 and {e["id"] for e in published} == \
+            {nostr_utils.compute_event_id(template)}
+        assert all(verify_event_sig(e) for e in published)
+
+    def test_local_sign_decline_returns_false(self):
+        c = self._client()
+        c.my_privkey = None
+        template = _comment_template()
+        assert c.publish_article_comment(template, ART_ID) is False
+        assert not c.tracked
+        assert not any(r.published for r in c.active_relays.values())
+
+    def test_no_targets_returns_false(self):
+        c = self._client(known=())
+        c._write_relays = lambda: {}
+        c.active_relays = {}
+        assert c.comment_target_relays(ART_ID) == set()
+        assert c.publish_article_comment(_comment_template(), ART_ID) is False
+
+    def test_build_comment_event_shape_and_tags(self):
+        ev = _comment_template()
+        assert ev["kind"] == 1111
+        assert ev["pubkey"] == COMMENTER_PUB
+        assert ev["content"] == "nice writeup"
+        assert ev["created_at"] == 1700000001
+        assert "id" not in ev and "sig" not in ev  # template, unsigned
+        tags = {(t[0], t[1]) for t in ev["tags"]}
+        assert ("e", ART_ID) in tags and ("E", ART_ID) in tags
+        assert ("a", ART_ADDR) in tags and ("A", ART_ADDR) in tags
+        assert ("p", A_PUB) in tags and ("P", A_PUB) in tags
+        assert ("k", "30023") in tags and ("K", "30023") in tags
+        kinds = [t[1] for t in ev["tags"] if t[0] in ("k", "K")]
+        assert kinds == ["30023", "30023"]  # exactly one lowercase + one root
+        # round-trip through the real client signing funnel -> parser sees a
+        # comment that binds the article both ways (NIP-26 case discipline)
+        signed = nostr_utils.sign_event(ev, COMMENTER_PRIV)
+        assert verify_event_sig(signed)
+        assert longform.comment_matches(signed, ART_ID, ART_ADDR)
+        assert signed["id"] == nostr_utils.compute_event_id(ev)
+
+    def test_build_comment_event_rejects_unbuildable_article(self):
+        assert longform.build_comment_event(
+            A_PUB, {"kind": 30023}, "x") is None
+        assert longform.build_comment_event("", CANON_ART, "x") is None

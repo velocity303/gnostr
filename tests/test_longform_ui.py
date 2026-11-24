@@ -1005,3 +1005,119 @@ def test_row_activation_opens_c1_reader_with_that_card():
     fake2 = _fake_articles_self()
     fake2._on_row_activated(MagicMock(), types.SimpleNamespace(card=None))
     fake2.main_window.show_article_reader.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# C3 (card t_54e093f7): comment composer — gating + signed-then-gated post
+# ---------------------------------------------------------------------------
+
+C3_PRIV = "22" * 32
+C3_PUB = nostr_utils.get_public_key(C3_PRIV)
+
+
+def _reader_with_composer(text="ship it", pub_key=PUB):
+    """Fake reader self extended with the real composer handlers bound."""
+    fake = _fake_reader_self()
+    fake.comment_composer = MagicMock()
+    fake.comment_entry = MagicMock()
+    fake.comment_entry.get_text.return_value = text
+    fake.comment_post_btn = MagicMock()
+    fake.main_window = types.SimpleNamespace(
+        pub_key=pub_key, add_toast=MagicMock()
+    )
+    fake._fetched_events = None
+    for m in ("_sync_composer_visibility", "_on_comment_post"):
+        setattr(fake, m, types.MethodType(
+            _class_method(_ARTICLES, "ArticleReaderPage", m, dict(_NS)), fake))
+    return fake
+
+
+def test_composer_visible_only_when_signed_in():
+    out = _reader_with_composer(pub_key=None)
+    out._sync_composer_visibility()
+    out.comment_composer.set_visible.assert_called_once_with(False)
+
+    in_ = _reader_with_composer(pub_key=C3_PUB)
+    in_._sync_composer_visibility()
+    in_.comment_composer.set_visible.assert_called_once_with(True)
+
+    # empty-string pub_key (backend selected, key not fetched yet) = out
+    mid = _reader_with_composer(pub_key="")
+    mid._sync_composer_visibility()
+    mid.comment_composer.set_visible.assert_called_once_with(False)
+
+    # duck-typed test window without the attribute reads as signed-out
+    duck = _reader_with_composer()
+    duck.main_window = object()
+    duck._sync_composer_visibility()
+    duck.comment_composer.set_visible.assert_called_once_with(False)
+
+
+def test_comment_post_builds_signed_1111_with_correct_tags():
+    """Exit criterion: post click builds the 1111 with e/a/k (+ root) tags
+    and the client-side signing round-trip verifies."""
+    fake = _reader_with_composer(pub_key=C3_PUB)
+    captured = []
+
+    def fake_publish(ev, article_id):
+        # UI must hand over the UNSIGNED template; signing is the client's
+        # job (signed-then-gated: nothing renders until dispatch accepted).
+        assert "sig" not in ev and "id" not in ev
+        assert article_id == fake.card.id
+        captured.append(nostr_utils.sign_event(ev, C3_PRIV))
+        return True
+
+    fake.client.publish_article_comment = fake_publish
+    fake._on_comment_post(None)
+
+    assert len(captured) == 1
+    signed = captured[0]
+    assert signed["kind"] == 1111
+    assert signed["pubkey"] == C3_PUB
+    assert signed["content"] == "ship it"
+    from gnostr.zaps.request import verify_event_sig
+    assert verify_event_sig(signed)
+    tags = {(t[0], t[1]) for t in signed["tags"]}
+    assert ("e", fake.card.id) in tags and ("E", fake.card.id) in tags
+    assert ("a", fake.card.address) in tags
+    assert ("A", fake.card.address) in tags
+    assert ("p", fake.card.pubkey) in tags and ("P", fake.card.pubkey) in tags
+    assert ("k", "30023") in tags and ("K", "30023") in tags
+
+    # optimistic row landed, keyed on the signed id (dedup invariant)
+    assert fake._db_comment_events[0]["id"] == signed["id"]
+    # entry cleared, exactly one row rendered
+    fake.comment_entry.set_text.assert_called_once_with("")
+    assert fake.comments_box.append.call_count == 1
+    fake.comments_count.set_text.assert_called_with("(1)")
+
+    # relay echo (same id via fetch settle) dedups: still ONE row
+    fake._on_comments_done([signed], {"fallback_used": False})
+    assert fake.comments_box.append.call_count == 2  # repaint cycle
+    assert fake._db_comment_events[0]["id"] == signed["id"]
+    assert len(fake._db_comment_events) == 1
+
+
+def test_comment_post_signed_out_is_silent_noop():
+    fake = _reader_with_composer(pub_key=None)
+    fake._on_comment_post(None)
+    fake.client.publish_article_comment.assert_not_called()
+    assert not fake._db_comment_events
+    fake.comment_entry.set_text.assert_not_called()
+
+
+def test_comment_post_empty_or_whitespace_is_noop():
+    blank = _reader_with_composer(text="   \n  ")
+    blank._on_comment_post(None)
+    blank.client.publish_article_comment.assert_not_called()
+    assert not blank._db_comment_events
+
+
+def test_comment_post_dispatch_failure_no_optimistic_row():
+    fake = _reader_with_composer(pub_key=C3_PUB)
+    fake.client.publish_article_comment.return_value = False
+    fake._on_comment_post(None)
+    assert not fake._db_comment_events
+    fake.comment_entry.set_text.assert_not_called()  # text kept for retry
+    # user gets feedback via toast when the window supports one
+    fake.main_window.add_toast.assert_called_once()
