@@ -13,6 +13,7 @@ install_data(
     'dm_recipient_view.py',
     'dm_thread_view.py',
     'groups_page.py',
+    'articles_page.py',
     'icons.py',
     'derive_key.py',
     'compose_box.py',

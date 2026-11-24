@@ -335,6 +335,8 @@ class MainWindow(Adw.ApplicationWindow):
                 self.show_dm_inbox()
         elif r_id == "groups":
             self.show_groups()
+        elif r_id == "articles":
+            self.show_articles()
         self.split_view.set_show_content(True)
 
     @staticmethod
@@ -347,6 +349,45 @@ class MainWindow(Adw.ApplicationWindow):
             )
         except Exception:
             return True
+
+    def show_articles(self):
+        """Open the opt-in Articles section (NIPW P1 longform, kind 30023).
+
+        Opening this row IS the opt-in: the live 30023 sub opens when the
+        page maps and closes when it detaches — the kind-1 feed subs are
+        never broadened (agentic-flood posture).
+        """
+        try:
+            from gnostr.ui.articles_page import ArticlesPage
+        except ImportError:
+            from .ui.articles_page import ArticlesPage
+
+        view = ArticlesPage(self)
+        page = Adw.NavigationPage(title="Articles", child=view)
+        self.content_nav.push(page)
+
+    def show_article_reader(self, card):
+        """Push the long-form reader for one ArticleCard (kind 30023)."""
+        try:
+            from gnostr.ui.articles_page import ArticleReaderPage
+        except ImportError:
+            from .ui.articles_page import ArticleReaderPage
+
+        view = ArticleReaderPage(self, card)
+        title = getattr(card, "title", None) or "Article"
+        page = Adw.NavigationPage(title=title, child=view)
+        self.content_nav.push(page)
+
+    def show_drafts(self):
+        """Open the read-only drafts list (NIP-63 31234; no composer in P1)."""
+        try:
+            from gnostr.ui.articles_page import DraftsPage
+        except ImportError:
+            from .ui.articles_page import DraftsPage
+
+        view = DraftsPage(self)
+        page = Adw.NavigationPage(title="Drafts", child=view)
+        self.content_nav.push(page)
 
     def show_groups(self):
         """Open the Communities page (NIP-29 group registry)."""

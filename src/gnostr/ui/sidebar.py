@@ -45,6 +45,10 @@ class Sidebar(Gtk.Box):
             ("followers", "Follows", "network-transmit-receive"),
             ("messages", "Messages", "mail-unread"),
             ("groups", "Communities", "network-workgroup"),
+            # NIPW P1 longform: opt-in Articles section (kind 30023).
+            # Opening it opens the 30023 live sub; closing detaches it —
+            # the kind-1 feeds are never affected (agentic-flood posture).
+            ("articles", "Articles", "text-x-generic"),
         ]
 
         for r_id, title, icon in items:
