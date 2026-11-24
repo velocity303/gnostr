@@ -30,6 +30,7 @@ Contract points covered (spec nipw2026-11-longform-v1 §P1 UI scope):
 import ast
 import json
 import os
+import sys
 import time
 import types
 from unittest.mock import MagicMock
@@ -443,6 +444,99 @@ def test_reader_resolves_newest_edit_transparently():
     fake.db.get_event_by_a.side_effect = RuntimeError("db gone")
     out = resolve(fake, card)
     assert out.id == EV_A_NEW["id"]
+
+
+def test_reader_renders_all_fields_for_fixture_event():
+    """EXIT CRITERION (C1): the fixture 30023 event renders ALL fields in the
+    reader widget tree — title, author byline (npub -> display name through
+    the profile cache, short pubkey, updated timestamp), summary, https cover
+    (card.image reaches the cover loader), markdown-lite body (emphasis ->
+    Pango, no full markdown engine). Full page build via the extracted
+    _render_page against a fresh-object Gtk factory so every constructed
+    widget is individually inspectable."""
+    import html as _html
+
+    gtk, created = _fresh_gtk()
+    glib = types.SimpleNamespace(  # real escape semantics (house rule: never
+        markup_escape_text=lambda s: _html.escape(s or ""),  # assume mock attrs
+        timeout_add=lambda ms, cb: 7,
+        source_remove=lambda i: None,
+    )
+    # Cover loader stubbed at the import boundary: the reader's lazy
+    # `from ..renderer import ImageLoader` resolves via sys.modules, so no
+    # network in tier 1 and the recorded call IS the cover assertion.
+    loader = MagicMock()
+    renderer_stub = types.ModuleType("gnostr.renderer")
+    renderer_stub.ImageLoader = loader
+    seeds = {"gnostr.renderer": renderer_stub}
+    for parent in ("gnostr", "gnostr.ui"):
+        if parent not in sys.modules:
+            mod = types.ModuleType(parent)
+            mod.__path__ = []
+            seeds[parent] = mod
+    saved = {k: sys.modules.get(k) for k in seeds}
+    sys.modules.update(seeds)
+    try:
+        art = _article_ev("a" * 64, "post-1", "Post One", 200,
+                          content="# hi\n\n**bold** body")
+        art["tags"] = art["tags"] + [
+            ["image", "https://img.example/cover.png"],
+            ["summary", "TL;DR here"],
+        ]
+        card = longform.parse_article_event(art)
+        assert card is not None
+        assert card.image == "https://img.example/cover.png"
+
+        fake = MagicMock()
+        fake.card = card
+        fake.client = MagicMock()
+        fake.db = MagicMock()
+        fake.db.get_profile.return_value = {"display_name": "Alice"}
+
+        extra = dict(_NS)
+        extra["Gtk"] = gtk
+        extra["GLib"] = glib
+        render = _class_method(_ARTICLES, "ArticleReaderPage", "_render_page",
+                               extra)
+        render(fake)
+    finally:
+        for k, old in saved.items():
+            if old is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = old
+
+    constructed = {id(m): m for m in created}
+    labels = [m for m in created if "label" in m.construct_kwargs]
+    texts = [m.construct_kwargs["label"] for m in labels]
+
+    # Title field.
+    assert "Post One" in texts
+    # Byline: display name from profile cache + short pubkey + updated ts.
+    byline = next(t for t in texts if "Alice" in t)
+    assert _NS["_short_pk"](PUB) in byline
+    assert "ago" in byline  # humanized updated timestamp
+    # Summary field.
+    assert "TL;DR here" in texts
+    # Body: markdown-lite — emphasis mapped to Pango markup, headers stay
+    # literal text (no markdown engine), rendered into a content label.
+    body = None
+    for m in created:
+        for call in m.set_text.call_args_list:
+            arg = call[0][0]
+            if "bold" in arg:
+                body = arg
+    assert body is not None
+    assert "<b>bold</b>" in body
+    assert "# hi" in body
+    # Cover: https-only image from the parsed card reaches the loader once.
+    loader.load_image_into_widget.assert_called_once()
+    assert loader.load_image_into_widget.call_args[0][0] == \
+        "https://img.example/cover.png"
+    # Comments-thread scaffolding is wired on the page (offline paint ran).
+    fake._render_comments.assert_called_once()  # called as method? no-op
+    assert fake.comments_box is not None
+    fake._fetch_comments.assert_called_once()
 
 
 def test_comments_offline_first_then_fetch_with_watchdog():

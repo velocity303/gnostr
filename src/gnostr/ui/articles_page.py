@@ -345,6 +345,15 @@ class ArticleReaderPage(Gtk.Box):
         # Edit-replacement transparent: the address point-query already
         # returns newest-only (db.get_event_by_a, NIP-33 replaceable).
         self.card = self._resolve_card(card)
+        self._render_page()
+
+    def _render_page(self):
+        """Build the full reader tree for self.card. Split from __init__ so
+        the standalone harness can exercise the whole render path without
+        instantiating a mocked Gtk.Box base (same reason the DM views keep
+        their build step separate). Covers title, byline (npub -> display
+        name via the profile cache), updated timestamp, summary, https
+        cover, markdown-lite body, and the comments-thread scaffolding."""
         card = self.card
 
         clamp = AdwClamp()
