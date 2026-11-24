@@ -20,7 +20,14 @@ live arrivals (same rule as db.get_event_by_a).
 ArticleReaderPage: title/summary/markdown-as-plaintext (emphasis via
 markup.emphasis_to_pango, selectable), cover, author line. Comments thread
 under the reader: DB rows render offline-first, client.fetch_article_comments
-merges in by event id (dedupe), newest-first. The noisy fallback set
+merges in by event id (dedupe), OLDEST-first (reply order, card C3). The
+composer row (entry + Post) renders only for a signed-in window: posting
+builds the unsigned 1111 template (longform.build_comment_event: e/a/k
+parent + E/A/K/P root pointers) and hands it to
+client.publish_article_comment — the signing happens there
+(signed-then-gated, group-composer pattern), which fans to the article's
+known relays ∪ default write relays; the optimistic row keyed on the
+template id dedups the relay echo by id. The noisy fallback set
 (meta fallback_used — relay-side tag filtering broken, spec Q1) shows each
 comment's UPPERCASE root binding (NIP-26: A/K/P are root pointers) so the
 user can see why a loosely-matched comment is there; the precise primary
@@ -464,6 +471,23 @@ class ArticleReaderPage(Gtk.Box):
         head.append(self.comments_retry)
         body.append(head)
 
+        # --- comment composer (card C3): visible ONLY when signed in.
+        # Single-line entry + Post. Signing lives in the client
+        # (publish_article_comment, signed-then-gated) — this page never
+        # touches keys, keeping the reader free of any signer path.
+        self.comment_composer = Gtk.Box(spacing=8)
+        self.comment_entry = Gtk.Entry()
+        self.comment_entry.set_placeholder_text("Add a comment…")
+        self.comment_entry.set_hexpand(True)
+        self.comment_entry.connect("activate", self._on_comment_post)
+        self.comment_post_btn = Gtk.Button(label="Post")
+        self.comment_post_btn.add_css_class("suggested-action")
+        self.comment_post_btn.connect("clicked", self._on_comment_post)
+        self.comment_composer.append(self.comment_entry)
+        self.comment_composer.append(self.comment_post_btn)
+        self.comment_composer.set_visible(False)  # _sync_composer_visibility decides
+        body.append(self.comment_composer)
+
         self.comments_err = Gtk.Label(label="Comments did not load in time.")
         self.comments_err.add_css_class("error")
         self.comments_err.set_wrap(True)
@@ -485,7 +509,9 @@ class ArticleReaderPage(Gtk.Box):
         self._comments_settled = False
         self._db_comment_events = []
         self._fallback_used = False
+        self._fetched_events = None
         self._render_comments()  # offline first paint (DB rows)
+        self._sync_composer_visibility()
         self._fetch_comments()
 
     # ------------------------------------------------------------------
@@ -525,6 +551,50 @@ class ArticleReaderPage(Gtk.Box):
     def _on_comments_refresh(self, _btn):
         self._fetch_comments()
 
+    def _sync_composer_visibility(self):
+        """Card C3: the composer renders only for a signed-in window. The
+        reader is a transient NavigationPage rebuilt on every open, and
+        login/logout re-push the stack, so evaluating at render time is
+        enough — no live login signal needed here. Duck-typed test windows
+        without pub_key read as signed-out (getattr house rule)."""
+        signed_in = bool(getattr(self.main_window, "pub_key", None))
+        self.comment_composer.set_visible(signed_in)
+
+    def _on_comment_post(self, _source):
+        """Post click / entry-activate (signed-then-gated like the group
+        composer, test_group_join_race conventions): build the unsigned 1111
+        template (longform.build_comment_event — e/a/k parent pointers +
+        E/A/K/P root pointers), hand it to client.publish_article_comment,
+        which signs once through the active backend and publishes to the
+        article's known relays ∪ default write relays. The page never signs.
+
+        compute_event_id(template) == id(signed) (id is signature-independent
+        over the canonical serialization), so the optimistic row we insert
+        under that id dedups against the relay echo on the next
+        fetch/refresh — no double render, no race, no phantom on failure
+        (we only insert after the client accepted the dispatch)."""
+        text = (self.comment_entry.get_text() or "").strip()
+        pk = getattr(self.main_window, "pub_key", None)
+        if not text or not pk:
+            return
+        ev = longform.build_comment_event(pk, self.card, text)
+        if ev is None:
+            return
+        if not self.client.publish_article_comment(ev, self.card.id):
+            toast = getattr(self.main_window, "add_toast", None)
+            if toast is not None:
+                toast(Adw.Toast(title="Could not post comment"))
+            return
+        self.comment_entry.set_text("")
+        pending = dict(ev)
+        pending["id"] = nostr_utils.compute_event_id(ev)
+        self._db_comment_events.append(pending)
+        # Merged re-paint riding the SAME path as a settle (captions kept if
+        # fallback was used). A later fetch settle re-merges the same set;
+        # the id dedup absorbs the relay echo.
+        self._render_comments(getattr(self, "_fetched_events", None),
+                              self._fallback_used)
+
     def _arm_comments_deadline(self):
         self._disarm_comments_deadline()
         self._comments_deadline_id = GLib.timeout_add(
@@ -550,14 +620,16 @@ class ArticleReaderPage(Gtk.Box):
         self._comments_settled = True
         self._disarm_comments_deadline()
         self._fallback_used = bool((meta or {}).get("fallback_used"))
+        self._fetched_events = events  # kept for post-merge re-paints (C3)
         self._render_comments(events, self._fallback_used)
 
     @staticmethod
     def _merge_comments(db_events, fetched_events):
-        """CommentInfo rows merged by event id, newest-first.
+        """CommentInfo rows merged by event id, OLDEST-first (card C3: a
+        comment thread reads top-down in reply order).
 
-        (created_at, id) DESC mirrors the DB's ORDER BY so a re-render is
-        stable against the offline-first paint.
+        (created_at, id) ASC with a stable id tie-break keeps the render
+        order deterministic against the offline-first paint.
         """
         by_id = {}
         for ev in list(db_events) + list(fetched_events or []):
@@ -565,7 +637,7 @@ class ArticleReaderPage(Gtk.Box):
             if info is not None:
                 by_id[info.id] = info
         return sorted(by_id.values(),
-                      key=lambda c: (c.created_at, c.id), reverse=True)
+                      key=lambda c: (c.created_at, c.id))
 
     @staticmethod
     def _binding_caption(info):

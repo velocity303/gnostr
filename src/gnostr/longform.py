@@ -278,6 +278,56 @@ def comments_for_article(events, article_id: str, address: str | None = None):
     return sorted(out.values(), key=lambda c: (c.created_at, c.id), reverse=True)
 
 
+def build_comment_event(pubkey, article, content, created_at=None):
+    """Unsigned kind-1111 template for a top-level comment on an article
+    (NIP-22). `article` is an ArticleCard or a raw 30023 event dict.
+
+    Tags: lowercase parent pointers (a top-level comment's parent IS the
+    article) + the uppercase root pointers E/A/K/P — the live-probed khatru
+    shape (2026-11-23: relays index #E/#A on those tags; #K matches the
+    parent KIND slot, never an event id). This makes the post round-trip
+    findable by comments_primary_filters + comment_matches.
+
+    House unsigned-template pattern (groups.build_join_event convention):
+    no id/sig — the downstream signer fills both, and
+    compute_event_id(template) == id(signed), so an optimistic UI row keyed
+    on the template id dedups against the relay echo. Returns None when the
+    pubkey or article is malformed (a comment must bind a real addressable
+    article — no address, no post).
+    """
+    try:
+        if isinstance(article, dict):
+            article_id = str(article.get("id") or "")
+            address = article_address(article)
+            author_pk = str(article.get("pubkey") or "")
+        else:
+            article_id = str(getattr(article, "id", "") or "")
+            address = getattr(article, "address", None)
+            author_pk = str(getattr(article, "pubkey", "") or "")
+        if not _HEX64.match(article_id) or not _HEX64.match(str(pubkey or "")):
+            return None
+        if not address or not author_pk:
+            return None
+        return nostr_utils.build_event(
+            str(pubkey),
+            KIND_COMMENT,
+            str(content),
+            [
+                ["e", article_id],
+                ["a", address],
+                ["k", str(KIND_ARTICLE)],
+                ["p", author_pk],
+                ["E", article_id],
+                ["A", address],
+                ["K", str(KIND_ARTICLE)],
+                ["P", author_pk],
+            ],
+            created_at=created_at,
+        )
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return None
+
+
 def comments_primary_filters(
     article_id: str, address: str | None, limit: int = COMMENT_FETCH_LIMIT
 ):

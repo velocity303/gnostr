@@ -565,7 +565,9 @@ def test_comments_offline_first_then_fetch_with_watchdog():
     fake.comments_empty.set_visible.assert_called_with(True)
 
 
-def test_comments_merge_dedups_by_id_newest_first():
+def test_comments_merge_dedups_by_id_oldest_first():
+    """Card C3: the thread merges by id and renders OLDEST-first (reply
+    order), junk kinds dropped by the parser."""
     merge = _class_method(_ARTICLES, "ArticleReaderPage", "_merge_comments",
                           dict(_NS))
     db_events = [
@@ -580,7 +582,7 @@ def test_comments_merge_dedups_by_id_newest_first():
     ]
     infos = merge(db_events, fetched)
     ids = [i.id for i in infos]
-    assert ids == ["c" * 63 + "2", "c" * 63 + "3", "c" * 63 + "1"]
+    assert ids == ["c" * 63 + "1", "c" * 63 + "3", "c" * 63 + "2"]
     assert all(longform.comment_matches(
         i, EV_A_NEW["id"], f"30023:{PUB}:post-1") or True for i in infos)
 
@@ -751,11 +753,25 @@ def test_drafts_fetch_wires_callback_and_watchdog():
 
 
 def test_no_composer_anywhere():
-    """P1 drafts list is READ-ONLY: no publish/sign path in the UI file."""
+    """P1 drafts list stays READ-ONLY (no publish/sign path there). The
+    COMMENT composer (card C3) lives in ArticleReaderPage only — signing
+    still never happens in the UI file: signer tokens stay banned
+    file-wide, and the DraftsPage segment stays composer-free."""
     src = _src(_ARTICLES)
     for banned in ("publish_event", "sign_event", "nsec", "privkey",
-                   "Gtk.TextEditor", "EntryBuffer", "composer"):
-        assert banned not in src, f"{banned!r} must not appear (no composer)"
+                   "Gtk.TextEditor", "EntryBuffer"):
+        assert banned not in src, f"{banned!r} must not appear in the UI"
+    drafts_src = None
+    for node in ast.parse(src).body:
+        if isinstance(node, ast.ClassDef) and node.name == "DraftsPage":
+            drafts_src = ast.get_source_segment(src, node)
+            break
+    assert drafts_src is not None and "class DraftsPage" in drafts_src
+    for banned in ("publish", "sign", "composer", "Entry", "TextEditor"):
+        assert banned not in drafts_src, (
+            f"{banned!r} must not appear inside DraftsPage (read-only list)")
+    # ...and the comment composer is real (card C3): reader owns it.
+    assert "comment_composer" in src and "comment_post_btn" in src
 
 
 # ---------------------------------------------------------------------------
