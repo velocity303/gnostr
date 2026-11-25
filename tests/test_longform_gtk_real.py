@@ -948,10 +948,12 @@ def main():
                 not body.has_css_class("dim-label"),
                 body.get_wrap(), meta.get_xalign() == 0)
 
-    opt_lbl = next(l for l in _collect(page3, lambda n: isinstance(n, Gtk.Label))
-                   if l.get_text() == "harness ships it")
-    conf_lbl = next(l for l in _collect(page3, lambda n: isinstance(n, Gtk.Label))
-                    if l.get_text() == "harness comment 00")
+    opt_lbl = next(lab for lab in _collect(
+        page3, lambda n: isinstance(n, Gtk.Label))
+        if lab.get_text() == "harness ships it")
+    conf_lbl = next(lab for lab in _collect(
+        page3, lambda n: isinstance(n, Gtk.Label))
+        if lab.get_text() == "harness comment 00")
     opt_row = _comment_row_of(opt_lbl)
     conf_row = _comment_row_of(conf_lbl)
     check("optimistic row is structurally IDENTICAL to a confirmed row "
