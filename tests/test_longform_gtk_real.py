@@ -177,7 +177,7 @@ def _comment_event(eid, created, content):
 class FakeDb:
     """Reader-side DB stub. zap_msat / zap_rows drive the hero zap line: the
     reader reads totals only through zap_totals_for_events — the same verified
-    9735-receipt lookup the feed chip uses (articles_page._zap_sats) — so a
+    9735-receipt lookup the feed chip uses (articles_page._zap_sats_from_db) — so a
     stub total stands in for receipts the DB already holds. No network here."""
 
     def __init__(self, rows, zap_msat=0, zap_rows=None, profile=None):
@@ -251,14 +251,17 @@ def _load_sidebar():
 # --- C2 list fixtures: three edits of (PUB, post-1) + one other article ---
 
 
-def _list_edit(d, eid, title, created, pubkey=PUB):
+def _list_edit(d, eid, title, created, pubkey=PUB, image=None):
+    tags = [["d", d], ["title", title], ["published_at", str(created)]]
+    if image:
+        tags.append(["image", image])
     return {
         "id": eid,
         "pubkey": pubkey,
         "kind": 30023,
         "created_at": created,
         "content": "body of " + title,
-        "tags": [["d", d], ["title", title], ["published_at", str(created)]],
+        "tags": tags,
         "sig": "0" * 64,  # DB layer is thin (client verifies, not the DB)
     }
 
@@ -267,7 +270,8 @@ LIST_EVS = [
     _list_edit("post-1", "a1" + "1" * 62, "Post One (oldest edit)", 1763000000),
     _list_edit("post-1", "a2" + "2" * 62, "Post One (middle edit)", 1763000100),
     _list_edit("post-1", "a3" + "3" * 62, "Post One (newest edit)", 1763000200),
-    _list_edit("post-2", "b1" + "4" * 62, "Second Post", 1763000150),
+    _list_edit("post-2", "b1" + "4" * 62, "Second Post", 1763000150,
+               image="https://img.example/row.png"),
 ]
 LIST_NEWEST_ID = "a3" + "3" * 62
 LIVE_EDIT = _list_edit("post-1", "a4" + "4" * 62, "Post One (live edit)",
@@ -613,6 +617,54 @@ def main():
           repr(texts))
     check("row meta shows author + humanized updated",
           any("Alice ·" in t and " ago" in t for t in texts), repr(texts))
+
+    # --- LFUX-1 theming (brief §2.1): the row IS the feed idiom. Title is
+    # the only emphasized element (heading), the author/updated line stays a
+    # dim-label, the zap tail is ⚡sats and comes ONLY from verified 9735
+    # receipts (the same zap_totals_for_events lookup the feed chip and the
+    # reader hero chip use), and the cover keeps the 160 px crop slot rather
+    # than the reader's full-column natural aspect.
+    titles = [n for r in rows for n in _collect(r, lambda w: isinstance(w, Gtk.Label))
+              if "heading" in (n.get_css_classes() or [])]
+    check("row title is the only emphasized element (house heading class)",
+          len(titles) == 2, repr(len(titles)))
+    metas = [n for r in rows for n in _collect(r, lambda w: isinstance(w, Gtk.Label))
+             if "dim-label" in (n.get_css_classes() or [])
+             and "Alice ·" in (n.get_text() or "")]
+    check("row author/updated line is a house dim-label",
+          len(metas) == 2, repr(len(metas)))
+    # The list column shares the app's single reading measure so the two-pane
+    # desktop stays coherent (feed_view.py:94 sets the same cap).
+    clamp = page2.list_box.get_parent()
+    check("list column clamps to the house 600 px measure",
+          isinstance(clamp, Adw.Clamp) and clamp.get_maximum_size() == 600,
+          repr(getattr(clamp, "get_maximum_size", lambda: None)()))
+
+    # Seeded verified receipt -> exactly one row gains the ⚡ tail.
+    db.save_zap({"event_id": "z" * 64, "bolt11": "lnbc1" + "1" * 30,
+                 "request_id": "r" * 64, "sender": SELF_KEY, "recipient": PUB,
+                 "target_e": LIST_NEWEST_ID, "amount_msat": 5000,
+                 "comment": "", "ts": 1763000500})
+    page2._reload()
+    rows = _rows_of(page2.list_box)
+    texts = _joined(rows)
+    check("verified 9735 receipts render the ⚡sats tail on their row",
+          any("⚡5" in t for t in texts), repr(texts))
+    check("zapless article keeps no zap tail",
+          all("⚡" not in t for t in texts if "Second Post" in t), repr(texts))
+    row2 = next(r for r in rows if "Second Post" in " ".join(_label_texts(r)))
+    crops = [n for n in _collect(row2, lambda w: isinstance(w, Gtk.Box))
+             if n.get_size_request()[1] == 160]
+    check("row cover keeps the 160 px crop slot (list idiom)",
+          len(crops) == 1 and any(isinstance(c, Gtk.Picture)
+                                  for c in _collect(row2, lambda w: True)),
+          repr([n.get_size_request() for n in crops]))
+    check("row cover is capped by the loader (crop), never full height",
+          any(loader_calls[i] == "https://img.example/row.png"
+              and loader_kwargs[i].get("max_height") == 200
+              for i in range(len(loader_calls))),
+          repr(list(zip(loader_calls, (k.get("max_height")
+                                       for k in loader_kwargs)))[-3:]))
 
     # Row activation hands the card to C1. Call the wired handler directly
     # on the REAL row: activate() on an unrealized (windowless) row queries

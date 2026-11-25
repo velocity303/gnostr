@@ -176,7 +176,10 @@ class ArticlesPage(Gtk.Box):
         bar.append(btn_drafts)
         self.append(bar)
 
-        clamp = AdwClamp()
+        # House reading measure, stated explicitly (feed_view.py:94 precedent):
+        # one column on a 360 px Librem5, a centred 600 px column on desktop,
+        # so the list and the reader share the app's single measure.
+        clamp = AdwClamp(maximum_size=_READING_CLAMP_MAX)
         scroll = Gtk.ScrolledWindow(vexpand=True)
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.list_box = Gtk.ListBox()
