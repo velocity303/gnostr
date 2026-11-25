@@ -61,8 +61,21 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, GLib, Gtk, Pango
 
 from .. import longform, markup, nostr_utils
+from ..util import collapse as collapse_util
 
 AdwClamp = Adw.Clamp
+
+# House reading measure (brief nipw2026-11-longform-theming-v1 §1.2/§3.4):
+# every content column in the app is clamped to 600 px, so the same view is
+# one full-width column on a 360 px Librem5 and a centred 600 px document on
+# desktop — same app, same measure (feed_view.py:94 sets the same cap).
+_READING_CLAMP_MAX = 600
+
+# Reader body collapse cap: the deterministic 500-char house cap from
+# util/collapse.py that the thread hero also uses — deliberately NOT the
+# feed's GSettings value, so reader layout never changes when a feed
+# preference changes (thread_view.py:10-13 precedent, brief §2.2.7).
+_READER_CAP = collapse_util.DEFAULT_COLLAPSE_CHARS
 
 # UI watchdog deadlines: the client settles every longform fetch at
 # LONGFORM_FETCH_TIMEOUT_MS (12s) by construction; the page must show a
@@ -93,6 +106,24 @@ def _short_pk(pk):
 def _rank(card):
     """Recency rank identical to longform.dedupe_articles (published_at wins)."""
     return (card.published_at or card.created_at, card.id)
+
+
+def _zap_sats(db, event_id):
+    """Verified 9735 zap total in whole sats for one event (0 = no chip).
+
+    db.zap_totals_for_events sums only VERIFIED split receipts, so an
+    unverified zap is indistinguishable from absent, and a DB blowup yields
+    no chip rather than a broken row or a blank hero. Reads only what the DB
+    already holds — never a network peek. Single home for the lookup so the
+    list-row meta tail and the reader hero chip cannot disagree (brief
+    §1.4/§2.1.2/§2.2.4).
+    """
+    try:
+        totals = db.zap_totals_for_events([event_id]) or {}
+        msat = int(totals.get(event_id, 0) or 0)
+    except Exception:
+        return 0
+    return msat // 1000
 
 
 class ArticlesPage(Gtk.Box):
@@ -240,16 +271,9 @@ class ArticlesPage(Gtk.Box):
         self._row_by_addr = {}
 
     def _zap_sats(self, event_id):
-        """Received zap total in sats for one row (C2 row spec: "zap count
-        if available"). Verified 9735 receipts only — db.zap_totals_for_events
-        sums split receipts; no receipts means no chip."""
-        try:
-            totals = self.db.zap_totals_for_events([event_id]) or {}
-            msat = int(totals.get(event_id, 0) or 0)
-        except Exception:
-            # Decorative chip: a DB blowup must never kill the row.
-            return 0
-        return msat // 1000
+        """Row zap tail (C2 row spec: "zap count if available") — delegates
+        to the module helper the reader hero also uses."""
+        return _zap_sats(self.db, event_id)
 
     def _render_card(self, card, at_top=False):
         """Append one article row (or replace an older edit in place).
@@ -394,12 +418,22 @@ class ArticleReaderPage(Gtk.Box):
         """Build the full reader tree for self.card. Split from __init__ so
         the standalone harness can exercise the whole render path without
         instantiating a mocked Gtk.Box base (same reason the DM views keep
-        their build step separate). Covers title, byline (npub -> display
-        name via the profile cache), updated timestamp, summary, https
-        cover, markdown-lite body, and the comments-thread scaffolding."""
+        their build step separate).
+
+        Hero composition (brief nipw2026-11-longform-theming-v1 §2.2 — the
+        reader is the app's only DOCUMENT surface: unframed, stock classes
+        only, no new CSS): title-1 headline, optional draft banner, the house
+        byline with an actionable name (flat button -> ProfileView), the hero
+        zap line (verified-9735 chip + the gated zap action), the summary
+        lede, the full-column natural-aspect https cover, the markdown-lite
+        body behind the house 500-char collapse, then the comments thread.
+        Measure: clamp cap 600 (house measure — one column on a 360 px
+        Librem5, centred 600 px on desktop) with 24 px gaps between hero,
+        body and Comments. Nothing here changes behaviour: opt-in gating,
+        subscriptions, watchdog/Retry and composer gating are untouched."""
         card = self.card
 
-        clamp = AdwClamp()
+        clamp = AdwClamp(maximum_size=_READING_CLAMP_MAX)
         scroll = Gtk.ScrolledWindow(vexpand=True)
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
@@ -429,11 +463,81 @@ class ArticleReaderPage(Gtk.Box):
         name = prof.get("display_name") or prof.get("name") or \
             nostr_utils.hex_to_npub(card.pubkey) or _short_pk(card.pubkey)
         updated = card.published_at or card.created_at
-        meta = Gtk.Label(label=f"{name} · {_ago(updated)} · {_short_pk(card.pubkey)}")
-        meta.add_css_class("dim-label")
-        meta.set_wrap(True)
-        meta.set_xalign(0)
-        body.append(meta)
+
+        # Byline (brief §2.2.3 delta): the house shape `{name} · {ago} ·
+        # {short_pk}` as a dim-label, but the NAME segment is actionable — a
+        # flat button into the author's ProfileView, mirroring the feed's
+        # avatar/name buttons (post_widget.py:90-99). No new idiom: flat +
+        # dim-label. A name with no cache entry is still the npub form, so
+        # the button always carries something a human can read.
+        byline = Gtk.Box(spacing=6)
+        byline.set_halign(Gtk.Align.START)
+        self.byline_btn = Gtk.Button(label=name)
+        self.byline_btn.add_css_class("flat")
+        self.byline_btn.add_css_class("dim-label")
+        self.byline_btn.set_halign(Gtk.Align.START)
+        self.byline_btn.connect("clicked", self._on_open_author)
+        byline.append(self.byline_btn)
+        rest = Gtk.Label(label=f"· {_ago(updated)} · {_short_pk(card.pubkey)}")
+        rest.add_css_class("dim-label")
+        rest.set_wrap(True)
+        rest.set_xalign(0)
+        rest.set_valign(Gtk.Align.CENTER)
+        byline.append(rest)
+        body.append(byline)
+
+        # Hero zap line (brief §2.2.4, new): the reaction moves into the
+        # hero so an article's reception is visible without scrolling.
+        # (a) chip — the house 3-widget idiom (post_widget.py:483-505: flat
+        #     button > box > thunderbolt image + caption dim-label "{sats}
+        #     sats"), built ONLY when the DB already holds verified 9735
+        #     sats; the reader is rebuilt on every open, so "hidden at zero"
+        #     is expressed by not building it.
+        # (b) zap action — thunderbolt flat, gated EXACTLY like the feed
+        #     button (post_widget.py:171-187): signed in, not my own article,
+        #     and zapable_profile on the cached profile. A draft has no relay
+        #     address to zap, so the whole line is skipped in draft mode.
+        # Duplication check (brief open question 2): this is ~15 lines, under
+        # the 25-line threshold, so the pattern is copied and PostWidget is
+        # NOT refactored — no new dependency, no shared-helper move.
+        zap_line = Gtk.Box(spacing=6)
+        zap_line.set_halign(Gtk.Align.START)
+        self.zap_chip = None
+        self.zap_btn = None
+        sats = _zap_sats(self.db, card.id)
+        if sats:
+            self.zap_chip = Gtk.Button()
+            chip_box = Gtk.Box(spacing=6)
+            chip_box.append(Gtk.Image.new_from_icon_name(
+                "thunderbolt-symbolic"))
+            chip_lbl = Gtk.Label(label=f"{sats} sats",
+                                 css_classes=["caption", "dim-label"])
+            chip_box.append(chip_lbl)
+            self.zap_chip.set_child(chip_box)
+            self.zap_chip.add_css_class("flat")
+            self.zap_chip.set_halign(Gtk.Align.START)
+            self.zap_chip.set_tooltip_text("Zap receipts")
+            self.zap_chip.connect("clicked", self._on_zap_receipts)
+            zap_line.append(self.zap_chip)
+        if not getattr(self, "_draft", False):
+            try:
+                my_pk = getattr(self.main_window, "pub_key", None)
+                if my_pk and card.pubkey != my_pk:
+                    from ..zaps.lnurl import zapable_profile
+                    if zapable_profile(prof):
+                        self.zap_btn = Gtk.Button(
+                            icon_name="thunderbolt-symbolic",
+                            css_classes=["flat"])
+                        self.zap_btn.set_tooltip_text(
+                            "Zap (1000 sats default)")
+                        self.zap_btn.connect("clicked", self._on_zap_article)
+                        zap_line.append(self.zap_btn)
+            except Exception:
+                # An optional affordance must never blank the article
+                # (post_widget.py:186-187 precedent).
+                self.zap_btn = None
+        if self.zap_chip is not None or self.zap_btn is not None:
+            body.append(zap_line)
 
         if card.summary:
             summ = Gtk.Label(label=card.summary)
@@ -442,15 +546,22 @@ class ArticleReaderPage(Gtk.Box):
             summ.add_css_class("dim-label")
             body.append(summ)
 
+        # Cover (brief §2.2.5 delta): the reader cover spans the FULL clamped
+        # column at its natural aspect — no fixed 200 px box and no
+        # max_height cap (that fixed crop is the list row's idiom, §2.1.3).
+        # Passing no max_height makes the loader CONTAIN-size the picture to
+        # the column width (renderer.py:233-257). Unframed: no border, no
+        # card class. https-only stays enforced by the parser, and no cover
+        # means no box at all (never a placeholder).
         if card.image:
             img_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-            img_box.set_size_request(-1, 200)
             img_box.set_halign(Gtk.Align.FILL)
+            img_box.set_hexpand(True)
             body.append(img_box)
             from ..renderer import ImageLoader
 
             ImageLoader.load_image_into_widget(
-                card.image, img_box, None, max_height=260,
+                card.image, img_box, None,
                 author_pk=card.pubkey,
             )
 
@@ -460,14 +571,39 @@ class ArticleReaderPage(Gtk.Box):
         content.set_xalign(0)
         content.set_yalign(0)
         content.set_max_width_chars(90)
+        # Hero -> body gap: 12 px margin on top of the container's 12 px
+        # spacing = the 24 px section gap §3.2 sanctions (lists stay at 12).
+        content.set_margin_top(12)
+        # Body (brief §2.2.7 delta): the house collapse at the deterministic
+        # 500-char cap (util/collapse.py — same helper and cap as the thread
+        # hero), cut on the SOURCE markdown before the emphasis mapping so a
+        # **bold** token, URL or mention is never sliced in half. A
+        # 4000-word article must not bury its own comments on a phone. Body
+        # text stays normal weight — never dim-label.
+        full_markdown = card.markdown or ""
+        shown_markdown = collapse_util.safe_truncate(full_markdown, _READER_CAP)
+        self._body_collapsed = shown_markdown != full_markdown
         # markdown-as-plaintext: escape, then map **bold** / _italic_ to
         # Pango markup (house markup module) and hand it over via
         # set_markup — a bare set_text does NOT parse Pango markup in GTK4
         # and would render the <b>/<i> tags literally (real-GTK harness
         # test_longform_gtk_real.py caught this).
         content.set_markup(markup.emphasis_to_pango(
-            GLib.markup_escape_text(card.markdown)))
+            GLib.markup_escape_text(shown_markdown)))
+        self.body_label = content
         body.append(content)
+
+        # Flat "Show more" at the 44 px minimum touch height (§1.2/§5 — the
+        # feed's collapse row is the same height, post_widget.py:220-222).
+        # No Gtk.Expander anywhere in this app, so none here either.
+        self.body_toggle = None
+        if self._body_collapsed:
+            self.body_toggle = Gtk.Button(label="Show more",
+                                          css_classes=["flat"])
+            self.body_toggle.set_halign(Gtk.Align.START)
+            self.body_toggle.set_size_request(-1, 44)
+            self.body_toggle.connect("clicked", self._on_body_toggle)
+            body.append(self.body_toggle)
 
         if getattr(self, "_draft", False) is True:
             # Card C4 draft mode: stop at the body. An unpublished draft has
@@ -535,6 +671,61 @@ class ArticleReaderPage(Gtk.Box):
         self._render_comments()  # offline first paint (DB rows)
         self._sync_composer_visibility()
         self._fetch_comments()
+
+    # ------------------------------------------------------------------
+    # Hero actions (composition only — no behaviour change anywhere)
+    # ------------------------------------------------------------------
+
+    def _on_open_author(self, _btn):
+        """Byline name -> the author's ProfileView (brief §2.2.3). Same
+        routing the feed's avatar/name buttons use (post_widget.py:90-99);
+        the reader is a page in the Adw.NavigationView, so opening a profile
+        pushes on top of it and one back returns to the article."""
+        show = getattr(self.main_window, "show_profile", None)
+        if show is not None:
+            show(self.card.pubkey)
+
+    def _on_zap_receipts(self, _btn):
+        """Chip tap -> the house ZapReceiptsDialog over the VERIFIED 9735
+        receipts for this article — same dialog and same DB read as the feed
+        chip (post_widget.py:512-517). Nothing is fetched: an empty chip was
+        never built, so an empty list here means the receipts went away."""
+        from ..zaps.ui import ZapReceiptsDialog
+        try:
+            rows = self.db.zaps_for_event(self.card.id) or []
+        except Exception:
+            return
+        if not rows:
+            return
+        ZapReceiptsDialog(self.main_window, rows).present()
+
+    def _on_zap_article(self, _btn):
+        """Zap action: the SAME entry point the feed button uses
+        (zaps.ui.start_zap -> ZapFlow, 1000-sat default; the custom-amount
+        sheet is deferred per brief §5). The event pointer carries THIS
+        article's id and kind 30023 so the 9734 request and the 9735 receipt
+        target the article, not a kind-1 post. start_zap owns every toast and
+        dialog in the flow (spec zaps-payments-v1 §5) — this page adds none,
+        and signs nothing."""
+        from ..zaps.ui import start_zap
+        start_zap(self.main_window, self.card.pubkey,
+                  event=(self.card.id, longform.KIND_ARTICLE))
+
+    def _on_body_toggle(self, _btn):
+        """House collapse toggle (post_widget.py:529-541 / thread_view hero):
+        expand in place — same label object, full markup, toggle button
+        removed. One-way per page: the reader is rebuilt on every open, so no
+        reused widget is left showing a stale cap."""
+        if not getattr(self, "_body_collapsed", False) or self.body_toggle is None:
+            return
+        self._body_collapsed = False
+        self.body_label.set_markup(markup.emphasis_to_pango(
+            GLib.markup_escape_text(self.card.markdown or "")))
+        btn = self.body_toggle
+        self.body_toggle = None
+        parent = btn.get_parent()
+        if parent is not None:
+            parent.remove(btn)
 
     # ------------------------------------------------------------------
     # Edit replacement

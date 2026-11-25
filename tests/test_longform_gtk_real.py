@@ -3,18 +3,20 @@
 Verifies the Article reader against REAL Gtk4/Adw widgets (mock-gi tier-1
 cannot catch widget-level failures — the FLX1 bug class):
 
-  1. Fixture 30023 renders every field into the reader tree: title, byline
-     (npub -> profile-cache display name + short pubkey + humanized
-     updated timestamp), summary, markdown-lite body (headers literal,
-     emphasis -> Pango).
+  1. Fixture 30023 renders every field into the reader tree: title-1, byline
+     (ACTIONABLE flat dim-label name button -> ProfileView + a dim-label
+     "· {ago} · {short_pk}" tail), summary, markdown-lite body (headers
+     literal, emphasis -> Pango), all inside the house 600 px reading clamp.
   2. The reader opens and scrolls: a real Gtk.ScrolledWindow with vertical
-     AUTOMATIC policy wraps a real AdwClamp, and the page docks into an
-     Adw.NavigationPage (the main-window list-selection open path).
-  3. Cover URL shows only when https: https cover -> real cover box (200px
-     height request) + loader invoked with the URL; http cover -> parser
-     drops it and the reader renders NO cover box and never calls the
-     loader. (Loader is stubbed at the module boundary so no network runs;
-     the real box/picture wiring is real.)
+     AUTOMATIC policy wraps a real AdwClamp maximum_size=600, and the page
+     docks into an Adw.NavigationPage (the main-window list-selection open
+     path).
+  3. Cover URL shows only when https: https cover -> real FULL-COLUMN cover
+     box (hexpand, no fixed height request — natural aspect) + loader invoked
+     with the URL and NO max_height cap; http cover -> parser drops it and
+     the reader renders NO cover box and never calls the loader. (Loader is
+     stubbed at the module boundary so no network runs; the real box/picture
+     wiring is real.)
   4. Comments thread: offline-first DB rows paint immediately, then the
      stubbed live fetch merges + dedups by id into real label rows; the
      count label matches; empty-state hides.
@@ -32,7 +34,16 @@ cannot catch widget-level failures — the FLX1 bug class):
      30023 rebuilt from the draft (title/content/t-tags carried), row
      removal, confirmation toasts on a real Adw.ToastOverlay, and the
      draft-mode reader (banner, no comments) on a real Adw.NavigationView.
-  8. No GTK error/critical log records during the run.
+  8. Hero actions on real widgets (brief §2.2.3/§2.2.4/§2.2.7), each driven
+     by a REAL 'clicked' signal emission rather than a direct handler call:
+     the byline button routes to the window's show_profile; the zap chip is
+     built only from verified 9735 receipts (label "{sats} sats") and opens
+     the receipts dialog; the zap action appears only when the feed gate
+     passes (signed in, not my own article, zapable profile) and hands
+     exactly one start_zap with the (id, 30023) event pointer; a >500-char
+     body paints at the house collapse cap with a flat 44px 'Show more' that
+     expands in place and then disappears. A draft reader has no zap line.
+  9. No GTK error/critical log records during the run.
 
 Standalone run (NOT under the pytest suite — conftest mocks gi):
     xvfb-run -a python3 tests/test_longform_gtk_real.py
@@ -96,12 +107,14 @@ sys.modules["gnostr.ui"] = _ui
 # records the URL and appends a REAL Gtk.Picture so the widget wiring
 # around the cover stays real; nothing touches the network.
 loader_calls = []
+loader_kwargs = []
 
 
 class _RecordingImageLoader:
     @staticmethod
     def load_image_into_widget(url, target, *args, **kwargs):
         loader_calls.append(url)
+        loader_kwargs.append(kwargs)
         target.append(Gtk.Picture())
 
 
@@ -162,11 +175,25 @@ def _comment_event(eid, created, content):
 
 
 class FakeDb:
-    def __init__(self, rows):
+    """Reader-side DB stub. zap_msat / zap_rows drive the hero zap line: the
+    reader reads totals only through zap_totals_for_events — the same verified
+    9735-receipt lookup the feed chip uses (articles_page._zap_sats) — so a
+    stub total stands in for receipts the DB already holds. No network here."""
+
+    def __init__(self, rows, zap_msat=0, zap_rows=None, profile=None):
         self.rows = rows
+        self.zap_msat = zap_msat
+        self.zap_rows = zap_rows or []
+        self.profile = profile if profile is not None else {"display_name": "Alice"}
 
     def get_profile(self, pk):
-        return {"display_name": "Alice"} if pk == PUB else {}
+        return dict(self.profile) if pk == PUB else {}
+
+    def zap_totals_for_events(self, ids):
+        return {i: self.zap_msat for i in ids} if self.zap_msat else {}
+
+    def zaps_for_event(self, event_id):
+        return list(self.zap_rows)
 
     def get_event_by_a(self, kind, pk, d):
         return None  # no newer edit under test
@@ -268,6 +295,15 @@ def _label_texts(root):
             for lbl in _collect(root, lambda n: isinstance(n, Gtk.Label))]
 
 
+def _click(widget):
+    """Emit the REAL 'clicked' signal so a connected handler runs with the
+    arity a button press delivers it. activate() no-ops on unrealized
+    (windowless) widgets — the C2 row precedent in this harness — so emit()
+    is the house way to drive a click here."""
+    widget.emit("clicked")
+    return True
+
+
 def main():
     Adw.init()
     failed = 0
@@ -281,6 +317,7 @@ def main():
             print("FAIL: %s%s" % (name, (" (%s)" % detail) if detail else ""))
 
     db_rows = [_comment_event("e" * 64, 1763000001, "cached comment")]
+    profiles_opened = []
     fetched = [
         _comment_event("f" * 64, 1763000100, "nice post"),
         _comment_event("e" * 64, 1763000001, "cached comment"),  # duplicate
@@ -291,19 +328,33 @@ def main():
         print("FAIL: fixture 30023 did not parse")
         return 1
 
-    mw = types.SimpleNamespace(client=FakeClient(fetched), db=FakeDb(db_rows))
+    mw = types.SimpleNamespace(client=FakeClient(fetched), db=FakeDb(db_rows),
+                               show_profile=lambda pk: profiles_opened.append(pk))
     page = articles_page.ArticleReaderPage(mw, card)
     texts = _label_texts(page)
 
     # 1. Every field rendered into the real tree.
     check("title renders", "Post One" in texts)
-    bylines = [t for t in texts if "Alice" in t]
-    check("byline uses profile-cache display name", len(bylines) == 1)
-    if bylines:
-        check("byline carries short pubkey", "bbbbbbbb…bbbbbbbb" in bylines[0],
-              bylines[0])
-        check("byline carries updated timestamp", " ago" in bylines[0],
-              bylines[0])
+    # Byline (brief §2.2.3): the house meta shape, but the author is
+    # actionable — a real flat dim-label Button (the feed's affordance,
+    # post_widget.py:90-99) plus one dim-label "· {ago} · {short_pk}" tail.
+    buttons = _collect(page, lambda n: isinstance(n, Gtk.Button))
+    byline_btns = [n for n in buttons if n.get_label() == "Alice"]
+    check("byline name is exactly one real button", len(byline_btns) == 1,
+          repr([n.get_label() for n in buttons]))
+    if byline_btns:
+        check("byline button carries the house flat + dim-label classes",
+              byline_btns[0].has_css_class("flat")
+              and byline_btns[0].has_css_class("dim-label"),
+              repr(byline_btns[0].get_css_classes()))
+        check("byline cluster is start-aligned like every meta line",
+              byline_btns[0].get_parent().get_halign() == Gtk.Align.START)
+    tails = [t for t in texts if t.startswith("·") and " ago" in t]
+    check("byline tail carries updated timestamp + short pubkey",
+          len(tails) == 1 and "bbbbbbbb…bbbbbbbb" in tails[0], repr(tails))
+    check("byline click opens the author's ProfileView (real signal)",
+          bool(byline_btns) and _click(byline_btns[0])
+          and profiles_opened == [card.pubkey], repr(profiles_opened))
     check("summary renders", "TL;DR here" in texts)
     body = [t for t in texts if "# hi" in t]
     check("body renders long-form markdown literal headers", len(body) == 1)
@@ -324,20 +375,37 @@ def main():
         if isinstance(inner, Gtk.Viewport):  # non-scrollable child is wrapped
             inner = inner.get_child()
         check("content wrapped in real AdwClamp", isinstance(inner, Adw.Clamp))
+        check("reader uses the house 600 px reading measure",
+              isinstance(inner, Adw.Clamp) and inner.get_maximum_size() == 600,
+              repr(getattr(inner, "get_maximum_size", lambda: None)()))
         check("scroller expands to fill", sw.get_vexpand())
     nav = Adw.NavigationPage(title="Article", child=page)  # main.py idiom
     check("reader docks as navigation page (list-selection open path)",
           page.get_parent() is nav)
 
-    # 3. Cover https-only policy, on real widgets.
+    # 3. Cover https-only policy on real widgets, at the READER measure
+    #    (brief §2.2.5): full clamped column, natural aspect — no fixed height
+    #    request and no max_height cap. The fixed crop stays the list ROW's
+    #    idiom (§2.1.3), never the hero's.
     check("https cover reaches loader exactly once",
           loader_calls == ["https://img.example/cover.png"],
           repr(loader_calls))
+    check("reader cover loader gets no max_height cap (natural aspect)",
+          all("max_height" not in kw for kw in loader_kwargs),
+          repr(loader_kwargs))
     cover_boxes = [n for n in _collect(page, lambda n: isinstance(n, Gtk.Box))
-                   if n.get_size_request()[1] == 200]
+                   if isinstance(n.get_first_child(), Gtk.Picture)]
     check("https cover builds real cover box + picture",
-          len(cover_boxes) == 1 and cover_boxes
-          and isinstance(cover_boxes[0].get_first_child(), Gtk.Picture))
+          len(cover_boxes) == 1, repr(cover_boxes))
+    if cover_boxes:
+        cbox = cover_boxes[0]
+        check("cover spans the column (hexpand, FILL, no fixed height)",
+              cbox.get_hexpand() and cbox.get_halign() == Gtk.Align.FILL
+              and cbox.get_size_request()[1] == -1,
+              repr((cbox.get_hexpand(), cbox.get_halign(),
+                    cbox.get_size_request())))
+        check("cover stays unframed (no card class)",
+              not cbox.has_css_class("card"), repr(cbox.get_css_classes()))
 
     http_card = longform.parse_article_event(
         _article_fixture("http://evil.example/cover.png"))
@@ -350,8 +418,133 @@ def main():
           repr(loader_calls))
     http_cover_boxes = [n for n
                         in _collect(page_http, lambda n: isinstance(n, Gtk.Box))
-                        if n.get_size_request()[1] == 200]
+                        if isinstance(n.get_first_child(), Gtk.Picture)]
     check("http cover renders no cover box", len(http_cover_boxes) == 0)
+
+    # 3b. Hero actions on real widgets (brief §2.2.4 + §2.2.7), every handler
+    #     driven by a REAL 'clicked' emission (house rule: a handler is only
+    #     proven when a real signal delivers its arity — never a direct call).
+    #     zaps.ui is stubbed at the MODULE boundary: the reader's lazy
+    #     `from ..zaps.ui import start_zap` resolves through sys.modules, so
+    #     recording here keeps LNURL + signing out of the harness while the
+    #     widget tree, gating and signal delivery stay real.
+    import gnostr.zaps.ui as zaps_ui
+
+    zap_calls = []
+    receipt_calls = []
+
+    class _RecordingZapDialog:
+        def __init__(self, parent, rows):
+            self.parent, self.rows = parent, rows
+
+        def present(self):
+            receipt_calls.append((self.parent, list(self.rows)))
+
+    zaps_ui.start_zap = lambda mw, pk, event=None: zap_calls.append((pk, event))
+    zaps_ui.ZapReceiptsDialog = _RecordingZapDialog
+
+    zap_db = FakeDb([], zap_msat=12_000,
+                    zap_rows=[{"id": "z" * 64, "kind": 9735}],
+                    profile={"display_name": "Alice",
+                             "lud16": "alice@pay.example"})
+    page_zap = articles_page.ArticleReaderPage(
+        types.SimpleNamespace(client=FakeClient([]), db=zap_db,
+                              pub_key=SELF_KEY), card)
+    zap_buttons = _collect(page_zap, lambda n: isinstance(n, Gtk.Button))
+    check("hero zap chip built only from verified 9735 receipts",
+          page_zap.zap_chip is not None and page_zap.zap_chip in zap_buttons)
+    if page_zap.zap_chip is not None:
+        check("chip is the house flat 3-widget idiom (bolt + sats label)",
+              page_zap.zap_chip.has_css_class("flat")
+              and isinstance(page_zap.zap_chip.get_child(), Gtk.Box)
+              and any(isinstance(n, Gtk.Image)
+                      for n in _collect(page_zap.zap_chip, lambda x: True)),
+              repr(page_zap.zap_chip.get_css_classes()))
+        check("chip label is the house sats form",
+              _label_texts(page_zap.zap_chip) == ["12 sats"],
+              repr(_label_texts(page_zap.zap_chip)))
+        _click(page_zap.zap_chip)
+        check("chip click opens the receipts dialog exactly once",
+              len(receipt_calls) == 1
+              and [r["id"] for r in receipt_calls[0][1]] == ["z" * 64],
+              repr(receipt_calls))
+    check("hero zap action appears when the feed gate passes",
+          page_zap.zap_btn is not None and page_zap.zap_btn in zap_buttons)
+    if page_zap.zap_btn is not None:
+        check("zap action is flat like every in-page action",
+              page_zap.zap_btn.has_css_class("flat"),
+              repr(page_zap.zap_btn.get_css_classes()))
+        _click(page_zap.zap_btn)
+        check("zap click hands exactly one start_zap with the 30023 pointer",
+              zap_calls == [(PUB, (card.id, longform.KIND_ARTICLE))],
+              repr(zap_calls))
+
+    # Gate negatives — the SAME conditions the feed button uses
+    # (post_widget.py:171-187): signed in, not my own article, zapable cache.
+    page_own = articles_page.ArticleReaderPage(
+        types.SimpleNamespace(client=FakeClient([]), db=zap_db, pub_key=PUB),
+        card)
+    check("no zap action on my own article", page_own.zap_btn is None)
+    page_out = articles_page.ArticleReaderPage(
+        types.SimpleNamespace(client=FakeClient([]), db=zap_db), card)
+    check("no zap action while signed out", page_out.zap_btn is None)
+    page_plain = articles_page.ArticleReaderPage(
+        types.SimpleNamespace(client=FakeClient([]), db=FakeDb([]),
+                              pub_key=SELF_KEY), card)
+    check("no chip without verified receipts", page_plain.zap_chip is None)
+    check("no zap action when the cached profile is not zapable",
+          page_plain.zap_btn is None)
+
+    # Body collapse (brief §2.2.7): deterministic 500-char house cap, cut on
+    # the SOURCE markdown, flat 44px 'Show more'.
+    long_body = "\n\n".join(
+        "paragraph %d mentions **alpha** and https://example.com/x%d" % (i, i)
+        for i in range(24))
+    long_ev = dict(_article_fixture("https://img.example/cover.png"))
+    long_ev["content"] = long_body
+    long_card = longform.parse_article_event(long_ev)
+    check("long-body fixture parses past the cap",
+          long_card is not None and len(long_card.markdown) > 500,
+          repr(len(long_card.markdown)))
+    page_long = articles_page.ArticleReaderPage(
+        types.SimpleNamespace(client=FakeClient([]), db=FakeDb([])), long_card)
+    body_labels = [n for n in _collect(page_long, lambda n: isinstance(n, Gtk.Label))
+                   if (n.get_text() or "").startswith("paragraph 0")]
+    check("long body paints exactly one body label", len(body_labels) == 1,
+          repr(len(body_labels)))
+    if body_labels:
+        shown = body_labels[0].get_text()
+        check("body collapses at the cap (tail hidden + ellipsis)",
+              "paragraph 23" not in shown and shown.endswith("…"),
+              repr(shown[-40:]))
+        check("collapse cap is soft, not brutal (kept whole tokens)",
+              500 <= len(shown) <= 600, repr(len(shown)))
+        trimmed = shown[:-1]
+        urls = [w for w in trimmed.split() if w.startswith("https://")]
+        check("cut never splits a URL (each shown URL is whole)",
+              bool(urls) and all(w in long_body for w in urls),
+              repr(urls[-2:]))
+        check("cut never leaves an orphan ** emphasis marker",
+              shown.count("**") % 2 == 0, repr(shown.count("**")))
+        check("body text keeps normal weight (never dim-label)",
+              not body_labels[0].has_css_class("dim-label"),
+              repr(body_labels[0].get_css_classes()))
+    toggles = [n for n in _collect(page_long, lambda n: isinstance(n, Gtk.Button))
+               if n.get_label() == "Show more"]
+    check("flat 'Show more' at the 44 px touch height",
+          len(toggles) == 1 and toggles[0].has_css_class("flat")
+          and toggles[0].get_size_request()[1] == 44,
+          repr([(n.get_label(), n.get_size_request()) for n in toggles]))
+    if toggles:
+        _click(toggles[0])
+        check("Show more expands the SAME label in place",
+              bool(body_labels) and "paragraph 23" in body_labels[0].get_text())
+        check("toggle removes itself after expanding (one-way per page)",
+              page_long.body_toggle is None and toggles[0].get_parent() is None
+              and not [n for n in _collect(page_long,
+                                           lambda n: isinstance(n, Gtk.Button))
+                       if n.get_label() == "Show more"])
+    check("short body renders no collapse toggle", page.body_toggle is None)
 
     # 4. Comments thread: offline paint + merged dedup (2 unique ids).
     check("offline comment row paints", "cached comment" in texts)
