@@ -1177,6 +1177,26 @@ def main():
           all(len(_row_buttons(r, lbl)) == 1 for r in rows4
               for lbl in ("View", "Publish", "Delete")), repr(texts4))
 
+    # NIPW-LFUX-3 (brief §2.3 verb semantics, asserted on real widgets):
+    # the affirmative verb Publish is suggested-action; the destructive verb
+    # Delete keeps destructive-action; View stays plain flat. One verb
+    # language across the app: Publish == Join == Post == Publish(comment).
+    def _has_class(btn, cls):
+        return cls in btn.get_css_classes()
+
+    check("draft verb semantics (Publish suggested-action, Delete "
+          "destructive-action, View plain)",
+          all(_has_class(b, "suggested-action")
+              and not _has_class(b, "destructive-action")
+              for r in rows4 for b in _row_buttons(r, "Publish"))
+          and all(_has_class(b, "destructive-action")
+                  and not _has_class(b, "suggested-action")
+                  for r in rows4 for b in _row_buttons(r, "Delete"))
+          and all(not _has_class(b, "suggested-action")
+                  and not _has_class(b, "destructive-action")
+                  for r in rows4 for b in _row_buttons(r, "View")),
+          repr(texts4))
+
     # View click -> C1 reader in draft mode on the REAL nav stack: preview
     # banner present, comments thread absent (drafts are unpublished).
     row_wrap = _row_for("My Draft Title")

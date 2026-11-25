@@ -115,6 +115,11 @@ def _extract(name, is_method=True):
         ns["client_pk"] = _extract("client_pk", is_method=False)
         ns["_short_pk"] = _extract("_short_pk", is_method=False)
         ns["_ago"] = _extract("_ago", is_method=False)
+        # NIPW-LFUX-3: _append_timeline_event now reaches Pango.EllipsizeMode
+        # for the 4-line body cap (Label.set_lines only bites with ellipsize
+        # END). The tier-1 fake never inspects the enum — a stand-in keeps
+        # the extracted method name-resolvable, same as Adw/Gtk/GLib.
+        ns["Pango"] = MagicMock()
     exec(compile(ast.Module(body=[fn], type_ignores=[]), _PAGE_PATH, "exec"), ns)
     return ns[name]
 

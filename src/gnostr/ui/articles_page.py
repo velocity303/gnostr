@@ -1059,6 +1059,15 @@ class DraftsPage(Gtk.Box):
             btn_view.connect("clicked",
                              lambda b, en=entry, ro=r: self._on_view(b, en, ro))
             btn_pub = Gtk.Button(label="Publish")
+            # NIPW-LFUX-3 (brief §2.3 delta, carried open question resolved
+            # on librem5/Phosh grim evidence): Publish is the Drafts
+            # surface's single affirmative verb -> suggested-action, the same
+            # verb language as Join (group detail) and Post (group + comment
+            # composers). Delete stays destructive-action; View stays plain
+            # flat. suggested-action + destructive-action coexisting in one
+            # Adw.ActionRow suffix cluster is the brief §2.3 device question:
+            # confirmed legible on Phosh (see LFUX-3 kanban evidence).
+            btn_pub.add_css_class("suggested-action")
             btn_pub.connect("clicked",
                             lambda b, en=entry, ro=r: self._on_publish(b, en,
                                                                        ro))
