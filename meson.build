@@ -154,6 +154,15 @@ if xvfb_run.found() and gtk_python.found()
   test('test_group_revisit_gtk_real', xvfb_run,
     args: ['-a', gtk_python, meson.project_source_root() / 'tests/test_group_revisit_gtk_real.py'],
     timeout: 120)
+  # Real-GTK Communities contract (NIPW-LFUX-3, brief §2.1–§2.4.4): the
+  # GroupDetailPage header card (title-2, dim relay/status/flags), verb
+  # semantics (Join suggested / Leave destructive / Post suggested), apply-
+  # driven posting, recipe IDENTITY between a group activity row and a
+  # longform comment row, and the GroupsPage list idiom + navigation —
+  # all on real widgets driven by real signals.
+  test('test_groups_gtk_real', xvfb_run,
+    args: ['-a', gtk_python, meson.project_source_root() / 'tests/test_groups_gtk_real.py'],
+    timeout: 120)
   # Real-GTK recipient-picker smoke (Phase A2): construct + filter +
   # paste-pin + activate against real Gtk/Adw.
   test('test_dm_recipient_gtk_real', xvfb_run,

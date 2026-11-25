@@ -13,8 +13,10 @@ same class as NIPW-P1 Bug A / NIPW-P2 notify::).
 Harness: construct the REAL GroupDetailPage under real GTK with a real
 GObject client stub, then emit the real 'group-event-received' signal with
 kind-1/7/9 events (full path: signal signature + handler + row build +
-append). Assert rows landed in the timeline with the 4-line subtitle cap.
-A swallowed AttributeError inside the handler means zero rows appended —
+append). Assert rows land in the timeline as comment-shape rows (NIPW-LFUX-3,
+brief §2.4.4): dim-label meta line `{verb} · {author8} · {ago}` over a
+normal-weight body, body capped at 4 lines (set_lines + ellipsize END) and
+500 chars. A swallowed error inside the handler means zero rows appended —
 the check fails on the count.
 
 Runs standalone (NOT under the pytest suite: conftest mocks gi).
@@ -36,7 +38,7 @@ try:
 
     gi.require_version("Gtk", "4.0")
     gi.require_version("Adw", "1")
-    from gi.repository import Adw, GLib, GObject
+    from gi.repository import Adw, GLib, GObject, Gtk, Pango
 except Exception as e:
     print("SKIP: real GTK4/Adw unavailable (%s)" % e)
     sys.exit(77)
@@ -200,30 +202,66 @@ def _ev(eid, kind, content="hello group"):
     return {"id": eid, "kind": kind, "pubkey": AUTHOR_PK, "content": content}
 
 
+def _row_parts(row):
+    """(meta_label, body_label_or_None) of a comment-shape timeline row
+    (NIPW-LFUX-3, brief §2.4.4): ListBoxRow -> vertical Box -> dim-label
+    meta Label first, normal-weight body Label second (absent when the verb
+    carries no body, e.g. reactions/zaps)."""
+    box = row.get_child()
+    assert isinstance(box, Gtk.Box), (
+        "timeline row is not a content Box — the comment-shape recipe "
+        "(dim meta over normal body) was not applied"
+    )
+    meta = box.get_first_child()
+    assert isinstance(meta, Gtk.Label), "timeline meta line is not a Label"
+    assert "dim-label" in meta.get_css_classes(), (
+        "timeline meta line must be dim-label (longform row weights)"
+    )
+    body = meta.get_next_sibling()
+    if body is not None:
+        assert "dim-label" not in body.get_css_classes(), (
+            "timeline body must be normal weight — body text is never "
+            "dim-label (brief §1.1, same rule as longform bodies)"
+        )
+    return meta, body
+
+
 def _short(pk):
     return f"{pk[:8]}…{pk[-4:]}"
 
 
 def check_timeline_appends_rows():
-    """Real signal emission of kind-1/7/9 events must land one
-    Adw.ActionRow per event in the timeline (the FLX1 bug appended zero).
-    NIPW-P3-ACTIVITY: rows are verb-labelled and NEWEST FIRST (insert 0),
-    so the live tail is under the "Recent activity" header on a phone."""
+    """Real signal emission of kind-1/7/9 events must land one comment-shape
+    row per event in the timeline (the FLX1 bug appended zero).
+    NIPW-P3-ACTIVITY: rows are verb-labelled and NEWEST FIRST (insert 0), so
+    the live tail is under the "Recent activity" header on a phone.
+    NIPW-LFUX-3 (brief §2.4.4 consistency pass): the row shape is the longform
+    comment recipe — dim-label meta line over a normal-weight body."""
     client, page = _build_page()
     client.emit("group-event-received", RELAY, json.dumps(_ev("a1", 1)))
     client.emit("group-event-received", RELAY, json.dumps(_ev("a2", 7, "+")))
     client.emit("group-event-received", RELAY, json.dumps(_ev("a3", 9, "")))
     rows = _timeline_rows(page)
     assert len(rows) == 3, "expected 3 timeline rows, got %d" % len(rows)
-    assert all(isinstance(r, Adw.ActionRow) for r in rows)
+    assert all(isinstance(r, Gtk.ListBoxRow) for r in rows)
     author = _short(AUTHOR_PK)
-    assert rows[0].get_title() == "📁 shared a file · %s" % author
-    assert rows[1].get_title() == "❤ reacted · %s" % author
-    assert rows[2].get_title() == "posted · %s" % author
-    assert rows[2].get_subtitle() == "hello group"
-    # The 4-line cap the old (crashing) subtitle-label calls intended.
-    assert rows[2].get_subtitle_lines() == 4, "subtitle line cap not applied"
-    print("PASS: kind-1/7/9 emit verb-labelled rows, newest first")
+    meta0, _ = _row_parts(rows[0])
+    meta1, body1 = _row_parts(rows[1])
+    meta2, body2 = _row_parts(rows[2])
+    assert meta0.get_text() == "📁 shared a file · %s" % author
+    assert meta1.get_text() == "❤ reacted · %s" % author
+    assert body1 is None, "a reaction carries no body — no body label at all"
+    assert meta2.get_text() == "posted · %s" % author
+    assert body2 is not None, "kind-1 post must carry a body label"
+    assert body2.get_text() == "hello group"
+    # The 4-line cap the old (crashing) subtitle-label calls intended: now a
+    # Gtk.Label cap — set_lines(4) with ellipsize END (GTK4 multi-line
+    # ellipsis mode, the same visual cap the ActionRow subtitle gave).
+    assert body2.get_lines() == 4, "body line cap not applied"
+    assert body2.get_ellipsize() == Pango.EllipsizeMode.END, (
+        "body cap must ellipsize (set_lines only bites with ellipsize END)"
+    )
+    print("PASS: kind-1/7/9 emit comment-shape rows, newest first")
 
 
 def check_activity_kinds_from_live_audit():
@@ -251,16 +289,18 @@ def check_activity_kinds_from_live_audit():
         client.emit("group-event-received", RELAY, json.dumps(e))
     rows = _timeline_rows(page)
     assert len(rows) == 5, "activity kinds emitted %d rows" % len(rows)
-    titles = [r.get_title() for r in rows]
+    parts = [_row_parts(r) for r in rows]
+    metas = [m.get_text() for m, _ in parts]
     # newest first: zap(10s) at top ... repost(2h) at bottom
-    assert titles[0].startswith("⚡ zapped ·") and "just now" in titles[0], titles[0]
-    assert titles[1].startswith("💬 commented ·") and titles[1].endswith("just now")
-    assert titles[2].startswith("🎥 shared a video ·") and "10m ago" in titles[2]
-    assert rows[2].get_subtitle() == "jensen huang dancing"
-    assert titles[3].startswith("📁 shared a file ·")
-    assert rows[3].get_subtitle() == "release.iso"
-    assert titles[4].startswith("🔁 reposted ·") and "2h ago" in titles[4], titles[4]
-    assert "invoice" not in titles[0] + rows[0].get_subtitle(), "9734 invoice leaked"
+    assert metas[0].startswith("⚡ zapped ·") and "just now" in metas[0], metas[0]
+    assert metas[1].startswith("💬 commented ·") and metas[1].endswith("just now")
+    assert metas[2].startswith("🎥 shared a video ·") and "10m ago" in metas[2]
+    assert parts[2][1].get_text() == "jensen huang dancing"
+    assert metas[3].startswith("📁 shared a file ·")
+    assert parts[3][1].get_text() == "release.iso"
+    assert metas[4].startswith("🔁 reposted ·") and "2h ago" in metas[4], metas[4]
+    assert parts[0][1] is None, "9734 body must never be built"
+    assert "invoice" not in metas[0], "9734 invoice leaked"
     print("PASS: kind 6/9/11/1111/9734 render labelled rows, newest first, invoice hidden")
 
 
@@ -284,7 +324,8 @@ def check_long_subtitle_row_survives():
     client.emit("group-event-received", RELAY, json.dumps(_ev("c1", 1, "x" * 600)))
     rows = _timeline_rows(page)
     assert len(rows) == 1
-    assert len(rows[0].get_subtitle()) == 500, "content not capped at 500"
+    _, body = _row_parts(rows[0])
+    assert len(body.get_text()) == 500, "content not capped at 500"
     print("PASS: long post body renders capped at 500 chars")
 
 

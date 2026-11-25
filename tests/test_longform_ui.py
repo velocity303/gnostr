@@ -38,6 +38,7 @@ from unittest.mock import MagicMock
 import gnostr.longform as longform
 import gnostr.markup as markup
 import gnostr.nostr_utils as nostr_utils
+from gnostr.util import collapse as collapse_util
 
 _UI_DIR = os.path.normpath(
     os.path.join(
@@ -119,13 +120,20 @@ _NS = {
     "Adw": MagicMock(),
     "Pango": MagicMock(),
     "time": time,
+    # Reader body collapse uses the house helper module (articles_page.py
+    # imports it as collapse_util; _READER_CAP reads DEFAULT_COLLAPSE_CHARS
+    # from it), so the standalone namespace must carry the real module.
+    "collapse_util": collapse_util,
 }
 
 # Module-level helpers the extracted methods reference (_render_card ->
 # _ago/_short_pk, _binding_caption -> _short_pk, _render_card -> _rank,
-# _draft_rows -> _ago): extract them from source like the methods, so the
-# standalone namespace mirrors the real module's globals.
-for _helper in ("_ago", "_short_pk", "_rank"):
+# _draft_rows -> _ago, the row/hero zap chips -> _zap_sats_from_db): extract
+# them from source like the methods, so the standalone namespace mirrors the
+# real module's globals. NB _zap_sats_from_db is NOT the method `_zap_sats` —
+# a module helper sharing a method's name would resolve to the method in this
+# flat namespace and recurse forever.
+for _helper in ("_ago", "_short_pk", "_rank", "_zap_sats_from_db"):
     # Compile the helpers against _NS itself so their __globals__ resolve
     # module-level names (time, nostr_utils) at CALL time — dict(_NS)
     # copies elsewhere share the same function objects.
@@ -380,14 +388,21 @@ def _fresh_gtk():
     gtk = MagicMock()
     created = []
 
-    def _mk(*args, **kwargs):
-        m = MagicMock()
-        m.construct_kwargs = kwargs
-        created.append(m)
-        return m
+    def _mk(kind):
+        def _factory(*args, **kwargs):
+            m = MagicMock()
+            m.construct_kwargs = kwargs
+            m.widget_kind = kind
+            created.append(m)
+            return m
+        return _factory
 
-    gtk.Box = MagicMock(side_effect=_mk)
-    gtk.Label = MagicMock(side_effect=_mk)
+    gtk.Box = MagicMock(side_effect=_mk("Box"))
+    gtk.Label = MagicMock(side_effect=_mk("Label"))
+    # Buttons are tracked too: the reader byline name and the "Show more"
+    # affordance are Buttons, not Labels (brief §2.2.3/§2.2.7), so tier 1
+    # can assert the actionable half of the composition exists.
+    gtk.Button = MagicMock(side_effect=_mk("Button"))
     return gtk, created
 
 
@@ -511,15 +526,24 @@ def test_reader_renders_all_fields_for_fixture_event():
             else:
                 sys.modules[k] = old
 
-    labels = [m for m in created if "label" in m.construct_kwargs]
+    labels = [m for m in created
+              if "label" in m.construct_kwargs and m.widget_kind == "Label"]
+    buttons = [m for m in created if m.widget_kind == "Button"]
     texts = [m.construct_kwargs["label"] for m in labels]
 
     # Title field.
     assert "Post One" in texts
-    # Byline: display name from profile cache + short pubkey + updated ts.
-    byline = next(t for t in texts if "Alice" in t)
-    assert _NS["_short_pk"](PUB) in byline
+    # Byline (brief §2.2.3 sanctioned delta): the author NAME is actionable —
+    # a flat Button carrying the display name from the profile cache, routed
+    # to ProfileView by _on_open_author (mirrors the feed's name buttons) —
+    # and the house `{ago} · {short_pk}` tail stays a dim-label. Tier 1
+    # asserts both halves exist and the page keeps the actionable widget.
+    assert "Alice" in [m.construct_kwargs.get("label") for m in buttons]
+    assert fake.byline_btn in buttons
+    byline = next(t for t in texts if _NS["_short_pk"](PUB) in t)
     assert "ago" in byline  # humanized updated timestamp
+    # No verified 9735 receipts -> no hero zap chip (unverified == absent).
+    assert fake.zap_chip is None
     # Summary field.
     assert "TL;DR here" in texts
     # Body: markdown-lite — emphasis mapped to Pango markup, headers stay

@@ -1051,14 +1051,41 @@ class GroupDetailPage(Gtk.Box):
         verb, body = self._activity_row_content(ev)
         author = _short_pk(ev.get("pubkey", ""))
         ts = ev.get("created_at")
-        title = f"{verb} · {author}" + (f" · {_ago(ts)}" if ts else "")
-        row = Adw.ActionRow(title=title, subtitle=body)
-        # Adw.ActionRow has NO get_subtitle_label() accessor — the old
-        # subtitle-label calls raised AttributeError per event (FLX1 device
-        # test) BEFORE the append, so the timeline stayed empty.
-        # set_subtitle_lines caps the (wrapping-by-default) subtitle at 4
-        # lines with ellipsis. Guarded by tests/test_group_timeline_gtk_real.py.
-        row.set_subtitle_lines(4)
+        meta_text = f"{verb} · {author}" + (f" · {_ago(ts)}" if ts else "")
+        # NIPW-LFUX-3 (brief nipw2026-11-longform-theming-v1 §1.3/§1.4
+        # meta grammar + §2.4.4 consistency pass): an activity row reads
+        # EXACTLY like a longform comment row (articles_page.py
+        # _render_comments): a dim-label meta line `{verb} · {author8} ·
+        # {ago}` over a normal-weight wrapped body, vertical Box spacing 4.
+        # The Adw.ActionRow variant inverted the weights — the meta got
+        # title prominence while the body sat in the private dim subtitle
+        # style — so a group post and a longform comment looked like two
+        # different apps. Stock classes only (dim-label + normal), no new
+        # CSS; row activation unchanged (timeline rows were never clickable:
+        # the ListBox has no row-activated handler).
+        # Caps preserved verbatim: 500-char body cap stays in
+        # _activity_row_content; the 4-line cap becomes Label.set_lines(4),
+        # which requires ellipsize END + wrap (GTK4 multi-line ellipsis —
+        # the same visual cap the ActionRow subtitle gave). The FLX1 lesson
+        # stands: Adw.ActionRow's private title/subtitle labels are
+        # unreachable, and this recipe needs neither. Name-first author8
+        # (_short_pk on hex pubkey) unchanged. Guarded by
+        # tests/test_group_timeline_gtk_real.py (row shape) and
+        # tests/test_groups_gtk_real.py (cross-surface recipe identity).
+        row = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        meta_lbl = Gtk.Label(label=meta_text)
+        meta_lbl.add_css_class("dim-label")
+        meta_lbl.set_wrap(True)
+        meta_lbl.set_xalign(0)
+        row.append(meta_lbl)
+        if body:
+            text = Gtk.Label(label=body)
+            text.set_wrap(True)
+            text.set_ellipsize(Pango.EllipsizeMode.END)
+            text.set_lines(4)
+            text.set_xalign(0)
+            text.set_max_width_chars(80)  # house body measure (comment rows)
+            row.append(text)
         # Newest first: "recent activity" is not recent if 100 stale rows
         # must be scrolled past on a phone to reach the live tail.
         self.timeline.insert(row, 0)
