@@ -108,8 +108,15 @@ def _rank(card):
     return (card.published_at or card.created_at, card.id)
 
 
-def _zap_sats(db, event_id):
+def _zap_sats_from_db(db, event_id):
     """Verified 9735 zap total in whole sats for one event (0 = no chip).
+
+    NB: deliberately NOT named `_zap_sats` — the tier-1 AST-extract harness
+    (tests/test_longform_ui.py) compiles ArticlesPage methods into a flat
+    namespace, where a module helper with the same name as the calling
+    method resolves to the method itself and recurses forever. Module
+    helpers in this file (`_rank`, `_short_pk`, `_ago`) are distinct names
+    for the same reason.
 
     db.zap_totals_for_events sums only VERIFIED split receipts, so an
     unverified zap is indistinguishable from absent, and a DB blowup yields
@@ -273,7 +280,7 @@ class ArticlesPage(Gtk.Box):
     def _zap_sats(self, event_id):
         """Row zap tail (C2 row spec: "zap count if available") — delegates
         to the module helper the reader hero also uses."""
-        return _zap_sats(self.db, event_id)
+        return _zap_sats_from_db(self.db, event_id)
 
     def _render_card(self, card, at_top=False):
         """Append one article row (or replace an older edit in place).
@@ -504,7 +511,7 @@ class ArticleReaderPage(Gtk.Box):
         zap_line.set_halign(Gtk.Align.START)
         self.zap_chip = None
         self.zap_btn = None
-        sats = _zap_sats(self.db, card.id)
+        sats = _zap_sats_from_db(self.db, card.id)
         if sats:
             self.zap_chip = Gtk.Button()
             chip_box = Gtk.Box(spacing=6)

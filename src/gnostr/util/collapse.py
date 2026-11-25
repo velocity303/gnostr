@@ -68,6 +68,7 @@ def safe_truncate(content, cap):
     out = []
     pos = 0
     n = len(content)
+    used = 0
     while pos < n:
         m = _PROTECTED_RE.match(content, pos)
         if m:
@@ -82,10 +83,17 @@ def safe_truncate(content, cap):
             while end < n and not content[end].isspace():
                 end += 1
             chunk = content[pos:end]
-        if out and len(out[-1]) + len(chunk) > cap:
+        # Budget against EVERYTHING emitted so far. (The break used to compare
+        # only the last chunk, so a run of ordinary words never exceeded the
+        # per-chunk test and the "cut" returned the whole content plus an
+        # ellipsis — a card that looked collapsed was not one.) A chunk that
+        # starts inside the cap is still kept whole: the cap is soft, tokens
+        # are not.
+        if used and used + len(chunk) > cap:
             break
         out.append(chunk)
         pos += len(chunk)
+        used += len(chunk)
     body = "".join(out).rstrip()
     if not body:
         # Degenerate: the first token alone exceeds the cap — hard-cut rather

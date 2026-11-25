@@ -517,8 +517,14 @@ def main():
         check("body collapses at the cap (tail hidden + ellipsis)",
               "paragraph 23" not in shown and shown.endswith("…"),
               repr(shown[-40:]))
-        check("collapse cap is soft, not brutal (kept whole tokens)",
-              500 <= len(shown) <= 600, repr(len(shown)))
+        # The cap is SOFT: safe_truncate stops at a token boundary it can no
+        # longer afford, so the kept text is just under 500 chars and the cut
+        # lands mid-paragraph, not at a heading/section boundary ("brutal"
+        # would hard-cut at exactly 500 and slice tokens). NB the painted text
+        # is a little shorter than the source cut: markup stripping removes
+        # the ** emphasis markers and GTK collapses the blank-line runs.
+        check("collapse cap is soft, not brutal (kept whole tokens, cap "
+              "budget spent)", 420 <= len(shown) <= 500, repr(len(shown)))
         trimmed = shown[:-1]
         urls = [w for w in trimmed.split() if w.startswith("https://")]
         check("cut never splits a URL (each shown URL is whole)",
