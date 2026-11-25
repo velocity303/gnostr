@@ -28,6 +28,20 @@ cannot catch widget-level failures — the FLX1 bug class):
      window's reader path. Opt-in lifecycle: map opens the articles sub
      once, unmap closes it. Sidebar Articles row starts hidden and only
      set_articles_visible can reveal it.
+  6. (LFUX-2) Comments + reactions theming (brief §1.3/§1.7/§2.2.8 + §5
+     zap vectors): comment rows are the feed meta idiom on real widgets
+     (dim-label "{name} · {ago}" over a normal-weight wrapped body, npub
+     name fallback); the fallback-matched set paints one A/K/P root-binding
+     caption per comment (dim-label + caption, start-aligned) while the
+     precise primary chain paints none; the composer is the house
+     Adw.EntryRow "Add a comment…" + suggested-action Post (groups_page
+     shape) with Enter driven by a REAL 'apply' emission; the optimistic
+     row after a REAL Post click is structurally identical to a confirmed
+     row (same container, same label classes, same meta shape); a stalled
+     fetch hits the REAL GLib watchdog — error-class label + visible Retry,
+     a real Retry click redrives the fetch, a settle clears both; and the
+     brief's 1234-sat list-row vector paints the exact " · ⚡1234" meta
+     tail.
   7. (C4) Drafts: real DraftsPage rows for a decrypted 31234 wrap (real
      NIP-44 parse) + a legacy 30024 row labeled 'legacy'; real
      View/Publish/Delete buttons clicked drive the full flows — unsigned
@@ -54,6 +68,7 @@ display is unavailable.
 import importlib.util
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -145,6 +160,10 @@ COMMENT_PUB = "c" * 64
 ARTICLE_ID = "a" * 64
 ARTICLE_ADDR = "30023:%s:post-1" % PUB
 
+# The house meta shape (brief §1.3): "{name} · {ago}" with the phone buckets
+# of _ago — used to assert every comment row's meta line on real widgets.
+_META_RE = re.compile(r"^npub1\S+ · (?:just now|\d+[mhd] ago)$")
+
 
 def _article_fixture(image_url):
     return {
@@ -163,14 +182,14 @@ def _article_fixture(image_url):
     }
 
 
-def _comment_event(eid, created, content):
+def _comment_event(eid, created, content, tags=None):
     return {
         "id": eid,
         "pubkey": COMMENT_PUB,
         "kind": 1111,
         "created_at": created,
         "content": content,
-        "tags": [["a", ARTICLE_ADDR]],
+        "tags": tags if tags is not None else [["a", ARTICLE_ADDR]],
     }
 
 
@@ -214,6 +233,25 @@ class FakeClient:
     def fetch_article_comments(self, card, cb):
         self.calls += 1
         cb(self.fetched, {"fallback_used": False})
+
+
+class StallClient:
+    """fetch_article_comments records the callback and never completes it —
+    the exact state a stalled relay leaves the reader in. The watchdog must
+    surface it; a real Retry click must redrive the fetch, and the harness
+    settles it by INVOKING the recorded callback with the real client
+    signature (events, meta)."""
+
+    def __init__(self):
+        self.calls = 0
+        self.pending = []
+
+    def fetch_article_comments(self, card, cb):
+        self.calls += 1
+        self.pending.append(cb)
+
+    def publish_article_comment(self, ev, article_id):
+        return True
 
 
 class SectionClient:
@@ -666,6 +704,30 @@ def main():
           repr(list(zip(loader_calls, (k.get("max_height")
                                        for k in loader_kwargs)))[-3:]))
 
+    # --- LFUX-2 (brief §5 vector): a verified total of 1234 sats must paint
+    # the meta label with the EXACT tail ' · ⚡1234' — whole-sat rendering
+    # (no msat leakage, no thousands separator), inside the single dim meta
+    # line, same _zap_sats_from_db helper the reader chip uses.
+    db.save_zap({"event_id": "z2" + "2" * 62, "bolt11": "lnbc12" + "2" * 28,
+                 "request_id": "r2" + "2" * 62, "sender": SELF_KEY,
+                 "recipient": PUB, "target_e": "b1" + "4" * 62,
+                 "amount_msat": 1_234_000, "comment": "", "ts": 1763000600})
+    page2._reload()
+    rows = _rows_of(page2.list_box)  # re-capture: reload replaced the rows
+    texts = _joined(rows)
+    metas2 = [n for r in rows for n in _collect(r, lambda w: isinstance(w, Gtk.Label))
+              if "dim-label" in (n.get_css_classes() or [])
+              and "Alice ·" in (n.get_text() or "")]
+    check("1234 verified sats paint the exact ' · ⚡1234' meta tail",
+          any((n.get_text() or "").endswith(" · ⚡1234") for n in metas2),
+          repr([n.get_text() for n in metas2]))
+    check("the ⚡tail lives in the single dim meta line (no second line, "
+          "no plain-text variant)",
+          len([n for n in metas2 if "⚡1234" in (n.get_text() or "")]) == 1
+          and not any("1234" in t for r in rows for t in _label_texts(r)
+                      if t not in [n.get_text() for n in metas2]),
+          repr(texts))
+
     # Row activation hands the card to C1. Call the wired handler directly
     # on the REAL row: activate() on an unrealized (windowless) row queries
     # root focus — a harness artifact the real app never hits, and the
@@ -759,16 +821,63 @@ def main():
     check("compact rows: author line carries npub + ago",
           any("npub" in t and " ago" in t for t in texts3))
 
-    # Composer is a real entry+button row once signed in.
+    # --- LFUX-2 (brief §1.3/§2.2.8): every comment row is the FEED META
+    # IDIOM on real widgets — a dim-label "{name} · {ago}" line,
+    # start-aligned, over a normal-weight wrapped body. No profile row in
+    # the DB -> the name falls down the chain to npub (display_name ->
+    # name -> npub, brief §1.3). Rows stay plain Boxes: the brief's closer
+    # for §2.2.8 keeps click semantics untouched.
+    crows = []
+    c = page3.comments_box.get_first_child()
+    while c is not None:
+        if isinstance(c, Gtk.Box):
+            crows.append(c)
+        c = c.get_next_sibling()
+    check("comments render as plain non-activatable thread rows (Box rows "
+          "in a Box container — click semantics unchanged per brief §2.2.8)",
+          len(crows) == 30 and not isinstance(page3.comments_box, Gtk.ListBox))
+    cmetas = [r.get_first_child() for r in crows]
+    cbodies = [m.get_next_sibling() if m is not None else None
+               for m in cmetas]
+    check("each row opens with a meta label; every meta line is dim-label, "
+          "start-aligned, and EXACTLY '{name} · {ago}' with the npub name "
+          "fallback",
+          all(isinstance(m, Gtk.Label) and m.has_css_class("dim-label")
+              and m.get_xalign() == 0 and _META_RE.match(m.get_text() or "")
+              for m in cmetas),
+          repr([m.get_text() if isinstance(m, Gtk.Label) else m
+                for m in cmetas[:2]]))
+    check("comment bodies stay normal-weight (never dim-label), wrapped, "
+          "start-aligned",
+          all(isinstance(b, Gtk.Label) and not b.has_css_class("dim-label")
+              and b.get_wrap() and b.get_xalign() == 0 for b in cbodies))
+
+    # --- LFUX-2 (brief §2.2.8): the composer is the HOUSE composer row —
+    # Adw.EntryRow "Add a comment…" + the surface's single suggested-action
+    # verb, the groups_page.py:349-361 shape the phone already ships (a
+    # bare Gtk.Entry would make this the only off-idiom composer left in
+    # the app). Post is valign-center against the taller row; the row
+    # keeps the house 8 px composer spacing.
     check("signed-in reader shows the composer row",
           page3.comment_composer.get_visible())
-    entries = [n for n in _collect(page3, lambda n: isinstance(n, Gtk.Entry))]
+    entries = [n for n in _collect(page3, lambda n: isinstance(n, Adw.EntryRow))]
     posts = [n for n in _collect(page3, lambda n: isinstance(n, Gtk.Button))
              if n.get_label() == "Post"]
-    check("composer carries the real entry + Post button",
-          page3.comment_entry in entries and len(posts) == 1
-          and page3.comment_post_btn in posts,
+    check("composer is a real Adw.EntryRow + Post button (house composer idiom)",
+          page3.comment_entry in entries and len(entries) == 1
+          and len(posts) == 1 and page3.comment_post_btn in posts,
           repr((len(entries), len(posts))))
+    if entries:
+        check("EntryRow carries the brief's affordance text",
+              page3.comment_entry.get_title() == "Add a comment…",
+              repr(page3.comment_entry.get_title()))
+    check("composer keeps the house 8 px composer spacing",
+          page3.comment_composer.get_spacing() == 8)
+    if posts:
+        check("Post is the surface's suggested-action verb, centered "
+              "against the taller row (groups composer shape)",
+              posts[0].has_css_class("suggested-action")
+              and posts[0].get_valign() == Gtk.Align.CENTER)
 
     # Real click -> handler -> unsigned 1111 template handed to the client
     # (signing is the client's job; tier-1 proves the signed round-trip).
@@ -814,6 +923,140 @@ def main():
           texts_dedup[-1] == "harness ships it"
           or "harness ships it" in texts_dedup[-2:],
           repr(texts_dedup[-2:]))
+
+    # --- LFUX-2 (brief §2.2.8): optimistic-row VISUAL PARITY. The pending
+    # row is not special chrome — it goes through the same
+    # _render_comments path as confirmed rows, so on real widgets it must
+    # be structurally identical: same container, same two-label shape (dim
+    # meta "{name} · {ago}" + normal-weight wrapped body), nothing that a
+    # confirmed row lacks.
+    def _comment_row_of(label):
+        n = label.get_parent()
+        while n is not None and n.get_parent() is not page3.comments_box:
+            n = n.get_parent()
+        return n
+
+    def _row_shape(row):
+        if row is None:
+            return None
+        labs = _collect(row, lambda n: isinstance(n, Gtk.Label))
+        if len(labs) != 2:
+            return ("label-count", len(labs))
+        meta, body = labs
+        return (meta.has_css_class("dim-label"),
+                bool(_META_RE.match(meta.get_text() or "")),
+                not body.has_css_class("dim-label"),
+                body.get_wrap(), meta.get_xalign() == 0)
+
+    opt_lbl = next(l for l in _collect(page3, lambda n: isinstance(n, Gtk.Label))
+                   if l.get_text() == "harness ships it")
+    conf_lbl = next(l for l in _collect(page3, lambda n: isinstance(n, Gtk.Label))
+                    if l.get_text() == "harness comment 00")
+    opt_row = _comment_row_of(opt_lbl)
+    conf_row = _comment_row_of(conf_lbl)
+    check("optimistic row is structurally IDENTICAL to a confirmed row "
+          "(dim meta + plain non-dim body, same shape)",
+          _row_shape(opt_row) == _row_shape(conf_row)
+          == (True, True, True, True, True),
+          repr((_row_shape(opt_row), _row_shape(conf_row))))
+    check("optimistic row sits in the SAME thread container as confirmed rows",
+          opt_row.get_parent() is conf_row.get_parent() is page3.comments_box)
+
+    # --- LFUX-2: Enter on the EntryRow drives the same post handler
+    # through EntryRow's real 'apply' signal (the Gtk.Entry 'activate'
+    # equivalent). Emission is real (probe-verified: Adw's default apply
+    # closure leaves the text intact for the connected handler).
+    page3.comment_entry.set_text("via apply")
+    page3.comment_entry.emit("apply")
+    check("EntryRow 'apply' (Enter) drives the same post handler",
+          len(mw3.client.published) == 2
+          and mw3.client.published[1][0]["content"] == "via apply",
+          str(len(mw3.client.published)))
+    box_tail = _label_texts(page3.comments_box)[-3:]
+    counts4 = [t for t in _label_texts(page3) if t.startswith("(")]
+    check("apply dispatch lands its own optimistic row at the thread tail",
+          "via apply" in box_tail and "harness ships it" in box_tail
+          and counts4 == ["(32)"],
+          repr((box_tail, counts4)))
+    check("apply cleared the entry like the button path",
+          page3.comment_entry.get_text() == "")
+
+    # --- LFUX-2 (brief §2.2.8, NIP-26 pointers): FALLBACK-CAPTION
+    # styling. When the fetch settles with meta fallback_used (relay-side
+    # tag filtering broken), each comment carries a dim caption naming WHY
+    # it matched: the UPPERCASE root binding — A/K live form (whole
+    # address), E + K id form, or P-only author form. The precise primary
+    # chain (fallback_used False) renders NO caption anywhere.
+    fb_events = [
+        _comment_event("f1" + "1" * 62, 1763000411, "binds by address",
+                       tags=[["A", ARTICLE_ADDR], ["K", "30023"]]),
+        _comment_event("f2" + "2" * 62, 1763000412, "binds by id",
+                       tags=[["E", "f" * 64], ["K", "30023"]]),
+        _comment_event("f3" + "3" * 62, 1763000413, "binds by pubkey",
+                       tags=[["P", PUB]]),
+    ]
+    fb_client = StallClient()
+    page_fb = articles_page.ArticleReaderPage(
+        types.SimpleNamespace(client=fb_client, db=FakeDb([])), card)
+    fb_client.pending[-1](fb_events, {"fallback_used": True})
+    page_fb._disarm_comments_deadline()
+    caps = [n for n in _collect(page_fb, lambda n: isinstance(n, Gtk.Label))
+            if n.has_css_class("caption")]
+    check("fallback-matched set paints exactly one binding caption per comment",
+          len(caps) == 3, repr([c.get_text() for c in caps]))
+    cap_texts = sorted(c.get_text() or "" for c in caps)
+    want_caps = sorted(["binds 30023:%s:post-1" % PUB,
+                        "binds kind 30023 " + "f" * 12 + "…",
+                        "binds P bbbbbbbb…bbbbbbbb"])
+    check("captions carry the A/K, E+K and P root-binding pointers "
+          "(NIP-26 uppercase forms, brief §2.2.8)",
+          cap_texts == want_caps, repr(cap_texts))
+    check("captions are house-styled: dim-label + caption class, "
+          "start-aligned, wrapped, normal-weight",
+          all(c.has_css_class("dim-label") and c.has_css_class("caption")
+              and c.get_xalign() == 0 and c.get_wrap() for c in caps))
+    check("precise primary chain renders NO binding caption anywhere",
+          not [n for n in _collect(page, lambda n: isinstance(n, Gtk.Label))
+               if n.has_css_class("caption")])
+
+    # --- LFUX-2 (brief §1.7 'visible, never silent'): watchdog/Retry
+    # affordance driven for REAL. The stall client never settles the
+    # fetch; the REAL one-shot GLib deadline (production arm site, just a
+    # shorter constant) fires on the main loop -> error-class label +
+    # visible Retry button. A REAL 'clicked' emission on Retry redrives
+    # the fetch (affordance clears while in flight, never stale-visible);
+    # a settle through the recorded client callback clears both for good.
+    saved_deadline = articles_page.COMMENTS_DEADLINE_MS
+    articles_page.COMMENTS_DEADLINE_MS = 300
+    try:
+        stall = StallClient()
+        page_wd = articles_page.ArticleReaderPage(
+            types.SimpleNamespace(client=stall, db=FakeDb([]),
+                                  pub_key=HARNESS_PUB), card)
+        loop = GLib.MainLoop()
+        GLib.timeout_add(1200, loop.quit)
+        loop.run()
+        check("real GLib watchdog surfaces a stalled fetch visibly "
+              "(error-class label + visible Retry — never silent 'loading')",
+              page_wd.comments_err.get_visible()
+              and page_wd.comments_err.has_css_class("error")
+              and page_wd.comments_retry.get_visible())
+        page_wd.comments_retry.emit("clicked")
+        check("Retry click (real signal) redrives the fetch",
+              stall.calls == 2, str(stall.calls))
+        check("affordance clears while the retry fetch is in flight",
+              not page_wd.comments_err.get_visible()
+              and not page_wd.comments_retry.get_visible())
+        stall.pending[-1]([_comment_event("ad" + "a" * 62, 1763000414,
+                                          "late but settled")],
+                          {"fallback_used": False})
+        check("a settle after Retry clears the failure affordance for good",
+              not page_wd.comments_err.get_visible()
+              and not page_wd.comments_retry.get_visible()
+              and "late but settled" in _label_texts(page_wd.comments_box))
+        page_wd._disarm_comments_deadline()
+    finally:
+        articles_page.COMMENTS_DEADLINE_MS = saved_deadline
 
     # 7. (C4) Draft management on real widgets: DraftsPage renders a
     #    decrypted 31234 wrap (real NIP-44 self↔self parse through the

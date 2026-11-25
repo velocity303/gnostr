@@ -21,7 +21,8 @@ ArticleReaderPage: title/summary/markdown-as-plaintext (emphasis via
 markup.emphasis_to_pango, selectable), cover, author line. Comments thread
 under the reader: DB rows render offline-first, client.fetch_article_comments
 merges in by event id (dedupe), OLDEST-first (reply order, card C3). The
-composer row (entry + Post) renders only for a signed-in window: posting
+composer row (Adw.EntryRow + Post, house composer idiom, brief §2.2.8)
+renders only for a signed-in window: posting
 builds the unsigned 1111 template (longform.build_comment_event: e/a/k
 parent + E/A/K/P root pointers) and hands it to
 client.publish_article_comment — the signing happens there
@@ -640,16 +641,24 @@ class ArticleReaderPage(Gtk.Box):
         body.append(head)
 
         # --- comment composer (card C3): visible ONLY when signed in.
-        # Single-line entry + Post. Signing lives in the client
-        # (publish_article_comment, signed-then-gated) — this page never
-        # touches keys, keeping the reader free of any signer path.
+        # House composer idiom (brief §2.2.8, group precedent
+        # groups_page.py:349-361): an Adw.EntryRow composer card —
+        # "Add a comment…" carries the row's own title label (EntryRow has
+        # no placeholder; the title IS its affordance text) — plus the
+        # surface's single suggested-action verb. "apply" is EntryRow's
+        # Enter signal (what Gtk.Entry's "activate" was): same handler,
+        # same arity. EntryRow is the composer shape the phone (~360 px
+        # column, brief §1.10) already ships on Groups/DMs. Signing lives
+        # in the client (publish_article_comment, signed-then-gated) —
+        # this page never touches keys, keeping the reader free of any
+        # signer path.
         self.comment_composer = Gtk.Box(spacing=8)
-        self.comment_entry = Gtk.Entry()
-        self.comment_entry.set_placeholder_text("Add a comment…")
+        self.comment_entry = Adw.EntryRow(title="Add a comment…")
         self.comment_entry.set_hexpand(True)
-        self.comment_entry.connect("activate", self._on_comment_post)
+        self.comment_entry.connect("apply", self._on_comment_post)
         self.comment_post_btn = Gtk.Button(label="Post")
         self.comment_post_btn.add_css_class("suggested-action")
+        self.comment_post_btn.set_valign(Gtk.Align.CENTER)  # groups_page.py:356
         self.comment_post_btn.connect("clicked", self._on_comment_post)
         self.comment_composer.append(self.comment_entry)
         self.comment_composer.append(self.comment_post_btn)
@@ -786,7 +795,7 @@ class ArticleReaderPage(Gtk.Box):
         self.comment_composer.set_visible(signed_in)
 
     def _on_comment_post(self, _source):
-        """Post click / entry-activate (signed-then-gated like the group
+        """Post click / EntryRow apply (signed-then-gated like the group
         composer, test_group_join_race conventions): build the unsigned 1111
         template (longform.build_comment_event — e/a/k parent pointers +
         E/A/K/P root pointers), hand it to client.publish_article_comment,
